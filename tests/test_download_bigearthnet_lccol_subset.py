@@ -68,6 +68,29 @@ def test_lccol_converter_uses_real_hdf5_arrays(monkeypatch) -> None:
     assert adapter.load_sample(0)["image"].shape == (9, 6, 6)
 
 
+def test_lccol_converter_reuses_decompressed_cache(monkeypatch) -> None:
+    module = _load_lccol_module()
+    source = Path("outputs/test_lccol_cache_source")
+    csv_path, gz_path = _write_tiny_lccol_files(source)
+    cache = Path("outputs/test_lccol_cache")
+    cache.mkdir(parents=True, exist_ok=True)
+    cached_hdf5 = cache / "bigearthnet_train_p0.hdf5"
+    with gzip.open(gz_path, "rb") as src, cached_hdf5.open("wb") as dst:
+        dst.write(src.read())
+
+    calls = []
+
+    def fake_download(filename: str, cache_dir: Path) -> Path:
+        calls.append(filename)
+        return csv_path if filename.endswith(".csv") else gz_path
+
+    monkeypatch.setattr(module, "_download_file", fake_download)
+    module.convert_lccol_subset(Path("outputs/test_lccol_cache_subset"), max_samples=2, cache_dir=cache)
+
+    assert module.TRAIN_CSV in calls
+    assert module.TRAIN_SHARD_GZ not in calls
+
+
 def test_lccol_converter_fails_without_image_arrays(monkeypatch) -> None:
     module = _load_lccol_module()
     source = Path("outputs/test_lccol_no_image_source")

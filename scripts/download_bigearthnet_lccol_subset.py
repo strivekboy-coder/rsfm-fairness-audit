@@ -17,11 +17,19 @@ TRAIN_SHARD_GZ = "bigearthnet_train_p0.hdf5.gz"
 TRAIN_SHARD = "bigearthnet_train_p0.hdf5"
 
 
+DEFAULT_CACHE_DIR = Path("data/_cache/lc_col_bigearthnet")
+
+
 def _download_file(filename: str, cache_dir: Path) -> Path:
     try:
         from huggingface_hub import hf_hub_download
     except ImportError as exc:
         raise RuntimeError("Install huggingface_hub first: python -m pip install huggingface_hub") from exc
+    local_name = cache_dir / filename
+    if local_name.exists() and local_name.stat().st_size > 0:
+        print(f"[info] Using cached {filename}: {local_name}")
+        return local_name
+    print(f"[info] Downloading {filename} from {SOURCE_DATASET}")
     path = hf_hub_download(
         repo_id=SOURCE_DATASET,
         filename=filename,
@@ -33,10 +41,11 @@ def _download_file(filename: str, cache_dir: Path) -> Path:
 
 def _ensure_hdf5(cache_dir: Path) -> Path:
     cache_dir.mkdir(parents=True, exist_ok=True)
-    gz_path = _download_file(TRAIN_SHARD_GZ, cache_dir)
     hdf5_path = cache_dir / TRAIN_SHARD
     if hdf5_path.exists() and hdf5_path.stat().st_size > 0:
+        print(f"[info] Using cached decompressed HDF5: {hdf5_path}")
         return hdf5_path
+    gz_path = _download_file(TRAIN_SHARD_GZ, cache_dir)
     print(f"[info] Decompressing {gz_path.name} -> {hdf5_path}")
     with gzip.open(gz_path, "rb") as src, hdf5_path.open("wb") as dst:
         copyfileobj(src, dst)
@@ -152,7 +161,7 @@ def _label_fields(label_dataset: Any | None, index: int) -> tuple[int, str, str]
 def convert_lccol_subset(output_dir: Path, max_samples: int = 64, seed: int = 42, cache_dir: Path | None = None) -> Path:
     if max_samples > 5000:
         raise ValueError("This Phase 1 lc-col downloader supports at most --max-samples 5000 from one shard.")
-    cache_dir = cache_dir or (output_dir / "_hf_cache")
+    cache_dir = cache_dir or DEFAULT_CACHE_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
     chip_dir = output_dir / "chips"
     chip_dir.mkdir(exist_ok=True)
@@ -234,7 +243,7 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, default=Path("data/bigearthnet_lccol_subset"))
     parser.add_argument("--max-samples", type=int, default=64)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--cache-dir", type=Path)
+    parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
     args = parser.parse_args()
     convert_lccol_subset(args.output_dir, max_samples=args.max_samples, seed=args.seed, cache_dir=args.cache_dir)
 

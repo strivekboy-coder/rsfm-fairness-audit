@@ -115,6 +115,7 @@ adapter format:
 ```bash
 python scripts/download_bigearthnet_lccol_subset.py \
   --output-dir data/bigearthnet_lccol_subset \
+  --cache-dir data/_cache/lc_col_bigearthnet \
   --max-samples 64 \
   --seed 42
 ```
@@ -164,6 +165,7 @@ prepare a larger converted subset:
 ```bash
 python scripts/download_bigearthnet_lccol_subset.py \
   --output-dir data/bigearthnet_lccol_subset512 \
+  --cache-dir data/_cache/lc_col_bigearthnet \
   --max-samples 512 \
   --seed 42
 
@@ -181,6 +183,7 @@ For the completed Phase 1 run:
 ```bash
 python scripts/download_bigearthnet_lccol_subset.py \
   --output-dir data/bigearthnet_lccol_subset5000 \
+  --cache-dir data/_cache/lc_col_bigearthnet \
   --max-samples 5000 \
   --seed 42
 
@@ -190,7 +193,9 @@ python -m rsfm_fairness_audit.cli run-real \
   --dataset-root data/bigearthnet_lccol_subset5000 \
   --config configs/models/dofa.yaml \
   --max-samples 5000 \
-  --output-dir outputs/dofa_bigearthnet_lccol5000
+  --output-dir outputs/dofa_bigearthnet_lccol5000 \
+  --chunk-size 256 \
+  --streaming-embeddings true
 ```
 
 The downloader reuses Hugging Face cache files when available and does not

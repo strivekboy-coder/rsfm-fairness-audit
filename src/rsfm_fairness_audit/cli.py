@@ -13,6 +13,14 @@ def _parse_wavelengths(value: str | None) -> list[float] | None:
     return [float(item.strip()) for item in value.split(",") if item.strip()]
 
 
+def _parse_bool(value: str | bool | None) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).lower() in {"1", "true", "yes", "y", "on"}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rsfm-audit")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -32,6 +40,8 @@ def build_parser() -> argparse.ArgumentParser:
     real.add_argument("--split", choices=["train", "val", "test", "all"], default="all")
     real.add_argument("--sensor-mode", choices=["S1", "S2", "S1+S2"], default="S2")
     real.add_argument("--output-dir", type=Path, default=Path("outputs/runs/dofa_bigearthnet_subset"))
+    real.add_argument("--chunk-size", type=int, default=256)
+    real.add_argument("--streaming-embeddings", default="false", help="true/false; write embedding chunks during extraction.")
     real.add_argument("--model-config", "--config", dest="model_config", type=Path, help="YAML config for the real model adapter.")
     real.add_argument(
         "--dofa-wavelengths",
@@ -78,7 +88,15 @@ def main() -> None:
             allow_torch_hub_download=args.allow_torch_hub_download,
             model_config=args.model_config,
         )
-        artifacts = run_real_pipeline(dataset, model, args.output_dir, args.dataset, args.model)
+        artifacts = run_real_pipeline(
+            dataset,
+            model,
+            args.output_dir,
+            args.dataset,
+            args.model,
+            chunk_size=args.chunk_size,
+            streaming_embeddings=_parse_bool(args.streaming_embeddings),
+        )
         print(f"Real smoke audit complete: {args.output_dir}")
         for name, path in artifacts.items():
             print(f"{name}: {path}")

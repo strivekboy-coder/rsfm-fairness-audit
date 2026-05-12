@@ -10,7 +10,7 @@ from rsfm_fairness_audit.adapters.bigearthnet import BigEarthNetDatasetAdapter
 from rsfm_fairness_audit.adapters.dofa import DOFAAdapter
 from rsfm_fairness_audit.adapters.dummy import DummyDatasetConfig, DummyEODataset, DummyModelAdapter
 from rsfm_fairness_audit.config import load_yaml
-from rsfm_fairness_audit.embedding import extract_embeddings
+from rsfm_fairness_audit.embedding import extract_embeddings, extract_embeddings_to_chunks
 from rsfm_fairness_audit.io import ensure_dir, write_csv
 from rsfm_fairness_audit.metrics import classwise_metrics, group_metrics, raw_vs_balanced_gap, summarize_gap
 from rsfm_fairness_audit.probes import NearestCentroidProbe, evaluate_probe_suite
@@ -105,9 +105,21 @@ def run_real_pipeline(
     dataset_name: str,
     model_name: str,
     seed: int = 13,
+    chunk_size: int = 256,
+    streaming_embeddings: bool = False,
 ) -> dict[str, Path]:
     output = ensure_dir(output_dir)
-    embeddings, labels, metadata = extract_embeddings(dataset, model, batch_size=int(getattr(model, "batch_size", 32)))
+    batch_size = int(getattr(model, "batch_size", 32))
+    if streaming_embeddings:
+        embeddings, labels, metadata = extract_embeddings_to_chunks(
+            dataset,
+            model,
+            output / "embedding_chunks",
+            batch_size=batch_size,
+            chunk_size=chunk_size,
+        )
+    else:
+        embeddings, labels, metadata = extract_embeddings(dataset, model, batch_size=batch_size)
     probe = NearestCentroidProbe().fit(embeddings, labels)
     predictions = probe.predict(embeddings)
 

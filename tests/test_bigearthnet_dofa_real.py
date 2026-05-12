@@ -183,6 +183,28 @@ def test_run_real_with_mock_dofa_writes_expected_artifacts() -> None:
     assert len(read_csv_rows(artifacts["predictions"])) == 6
 
 
+def test_run_real_streaming_embeddings_writes_chunks() -> None:
+    root = Path("outputs/test_real_pipeline_streaming_fixture")
+    metadata_path = _write_fixture(root, count=8)
+    dataset = BigEarthNetDatasetAdapter(root, metadata_path=metadata_path, subset_size=6, sensor_mode="S2")
+    model = DOFAAdapter(sensor_mode="S2", model=MockDOFAModel())
+
+    artifacts = run_real_pipeline(
+        dataset,
+        model,
+        "outputs/test_real_pipeline_streaming",
+        "bigearthnet",
+        "dofa",
+        chunk_size=2,
+        streaming_embeddings=True,
+    )
+
+    chunks = list(Path("outputs/test_real_pipeline_streaming/embedding_chunks").glob("chunk_*.npz"))
+    assert len(chunks) == 3
+    assert artifacts["embeddings"].exists()
+    assert artifacts["predictions"].exists()
+
+
 def test_run_real_writes_fallback_map_when_coordinates_are_unverified() -> None:
     root = Path("outputs/test_real_pipeline_no_coords_fixture")
     metadata_path = _write_fixture(root, count=8, include_coordinates=False)
