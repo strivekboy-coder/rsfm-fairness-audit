@@ -156,21 +156,45 @@ python -m rsfm_fairness_audit.cli run-real \
   --output-dir outputs/dofa_bigearthnet_lccol64
 ```
 
-## 9. Run Sanity Test
+## 9. Run Sanity And Phase 1 Runs
 
-After the 32-sample smoke run succeeds:
+After the 64-sample smoke run succeeds, reuse the same downloaded HDF5 cache and
+prepare a larger converted subset:
 
 ```bash
+python scripts/download_bigearthnet_lccol_subset.py \
+  --output-dir data/bigearthnet_lccol_subset512 \
+  --max-samples 512 \
+  --seed 42
+
 python -m rsfm_fairness_audit.cli run-real \
   --dataset bigearthnet \
   --model dofa \
-  --data-root /content/prepared_bigearthnet_subset \
-  --model-config configs/models/dofa.yaml \
-  --subset-size 500 \
-  --output-dir outputs/runs/dofa_bigearthnet_real_sanity_500
+  --dataset-root data/bigearthnet_lccol_subset512 \
+  --config configs/models/dofa.yaml \
+  --max-samples 512 \
+  --output-dir outputs/dofa_bigearthnet_lccol512
 ```
 
-For a larger sanity run, use `--subset-size 1000`.
+For the completed Phase 1 run:
+
+```bash
+python scripts/download_bigearthnet_lccol_subset.py \
+  --output-dir data/bigearthnet_lccol_subset5000 \
+  --max-samples 5000 \
+  --seed 42
+
+python -m rsfm_fairness_audit.cli run-real \
+  --dataset bigearthnet \
+  --model dofa \
+  --dataset-root data/bigearthnet_lccol_subset5000 \
+  --config configs/models/dofa.yaml \
+  --max-samples 5000 \
+  --output-dir outputs/dofa_bigearthnet_lccol5000
+```
+
+The downloader reuses Hugging Face cache files when available and does not
+re-download the shard unnecessarily.
 
 ## 10. Inspect Outputs
 
@@ -181,13 +205,18 @@ Expected files:
 - `fairness_matrix_region.csv`
 - `fairness_matrix_sensor.csv`
 - `raw_vs_balanced_gap.csv`
+- `tables/classwise_metrics.csv`
+- `tables/probe_comparison.csv`
 - `average_vs_worst.png`
+- `figures/average_vs_worst_group.png`
+- `figures/raw_vs_balanced_gap.png`
 - `sensor_fairness_heatmap.png`
 - `representation_shift.png`
-- `fairness_map.png`, only if verified coordinates exist
+- `figures/fairness_map.png`, a fallback-group visualization for lc-col
 - `report.md`
 
-If coordinates are missing, map generation is skipped and the report states why.
+For lc-col, `fairness_map.png` is explicitly a fallback-group visualization,
+not a real geographic map.
 
 ## 11. Download Outputs
 

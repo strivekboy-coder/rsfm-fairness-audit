@@ -20,15 +20,42 @@ def _import_pyplot():
 def plot_average_vs_worst(summary_rows: Sequence[dict], path: str | Path) -> None:
     plt = _import_pyplot()
     fig, ax = plt.subplots(figsize=(6, 4))
-    for row in summary_rows:
+    for index, row in enumerate(summary_rows):
         ax.scatter(row["average_performance"], row["worst_region_performance"], s=64)
-        ax.annotate(row["gap_name"], (row["average_performance"], row["worst_region_performance"]), fontsize=8)
+        ax.annotate(
+            row["gap_name"],
+            (row["average_performance"], row["worst_region_performance"]),
+            xytext=(6, 6 + 8 * (index % 3)),
+            textcoords="offset points",
+            fontsize=7,
+            bbox={"boxstyle": "round,pad=0.18", "fc": "white", "ec": "0.8", "alpha": 0.8},
+        )
     ax.plot([0, 1], [0, 1], color="0.7", linewidth=1)
     ax.set_xlabel("Average performance")
     ax.set_ylabel("Worst-group performance")
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.grid(True, alpha=0.25)
+    fig.tight_layout()
+    fig.savefig(path, dpi=160)
+    plt.close(fig)
+
+
+def plot_raw_vs_balanced_gap(gap_rows: Sequence[dict], path: str | Path) -> None:
+    plt = _import_pyplot()
+    names = [str(row["slice_name"]) for row in gap_rows]
+    raw = [float(row["raw_fairness_gap"]) for row in gap_rows]
+    balanced = [float(row["balanced_fairness_gap"]) for row in gap_rows]
+    x = np.arange(len(names))
+    fig, ax = plt.subplots(figsize=(6, 4))
+    width = 0.36
+    ax.bar(x - width / 2, raw, width, label="Raw")
+    ax.bar(x + width / 2, balanced, width, label="Balanced")
+    ax.set_xticks(x, labels=names)
+    ax.set_ylabel("Best-worst gap")
+    ax.set_ylim(0, max(raw + balanced + [1e-6]) * 1.2)
+    ax.legend()
+    ax.grid(True, axis="y", alpha=0.2)
     fig.tight_layout()
     fig.savefig(path, dpi=160)
     plt.close(fig)

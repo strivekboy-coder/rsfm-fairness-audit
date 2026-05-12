@@ -12,13 +12,14 @@ from rsfm_fairness_audit.adapters.dummy import DummyDatasetConfig, DummyEODatase
 from rsfm_fairness_audit.config import load_yaml
 from rsfm_fairness_audit.embedding import extract_embeddings
 from rsfm_fairness_audit.io import ensure_dir, write_csv
-from rsfm_fairness_audit.metrics import group_metrics, raw_vs_balanced_gap, summarize_gap
-from rsfm_fairness_audit.probes import NearestCentroidProbe
+from rsfm_fairness_audit.metrics import classwise_metrics, group_metrics, raw_vs_balanced_gap, summarize_gap
+from rsfm_fairness_audit.probes import NearestCentroidProbe, evaluate_probe_suite
 from rsfm_fairness_audit.report import write_real_report, write_static_report
 from rsfm_fairness_audit.sampling import balanced_indices
 from rsfm_fairness_audit.viz import (
     plot_average_vs_worst,
     plot_fairness_map,
+    plot_raw_vs_balanced_gap,
     plot_representation_shift,
     plot_sensor_heatmap,
 )
@@ -57,7 +58,10 @@ def run_dummy_pipeline(output_dir: str | Path, num_samples: int = 240, seed: int
         "task_matrix": output / "fairness_matrix_task.csv",
         "summary": output / "fairness_summary.csv",
         "gap_table": output / "raw_vs_balanced_gap.csv",
+        "classwise_metrics": output / "classwise_metrics.csv",
+        "probe_comparison": output / "probe_comparison.csv",
         "average_vs_worst": output / "average_vs_worst.png",
+        "raw_vs_balanced_gap_plot": output / "raw_vs_balanced_gap.png",
         "sensor_heatmap": output / "sensor_fairness_heatmap.png",
         "representation_shift": output / "representation_shift.png",
         "report": output / "report.md",
@@ -68,7 +72,10 @@ def run_dummy_pipeline(output_dir: str | Path, num_samples: int = 240, seed: int
     write_csv(artifacts["task_matrix"], task_rows)
     write_csv(artifacts["summary"], summary_rows)
     write_csv(artifacts["gap_table"], gap_rows)
+    write_csv(artifacts["classwise_metrics"], classwise_metrics(labels, predictions))
+    write_csv(artifacts["probe_comparison"], evaluate_probe_suite(embeddings, labels))
     plot_average_vs_worst(summary_rows, artifacts["average_vs_worst"])
+    plot_raw_vs_balanced_gap(gap_rows, artifacts["raw_vs_balanced_gap_plot"])
     plot_sensor_heatmap(sensor_rows, artifacts["sensor_heatmap"])
     plot_representation_shift(embeddings, metadata, artifacts["representation_shift"])
     write_static_report(output, summary_rows, gap_rows)
@@ -128,7 +135,10 @@ def run_real_pipeline(
         "task_matrix": output / "fairness_matrix_task.csv",
         "summary": output / "fairness_summary.csv",
         "gap_table": output / "raw_vs_balanced_gap.csv",
+        "classwise_metrics": output / "classwise_metrics.csv",
+        "probe_comparison": output / "probe_comparison.csv",
         "average_vs_worst": output / "average_vs_worst.png",
+        "raw_vs_balanced_gap_plot": output / "raw_vs_balanced_gap.png",
         "sensor_heatmap": output / "sensor_fairness_heatmap.png",
         "representation_shift": output / "representation_shift.png",
         "fairness_map": output / "fairness_map.png",
@@ -148,7 +158,10 @@ def run_real_pipeline(
     write_csv(artifacts["task_matrix"], task_rows)
     write_csv(artifacts["summary"], summary_rows)
     write_csv(artifacts["gap_table"], gap_rows)
+    write_csv(artifacts["classwise_metrics"], classwise_metrics(labels, predictions))
+    write_csv(artifacts["probe_comparison"], evaluate_probe_suite(embeddings, labels))
     plot_average_vs_worst(summary_rows, artifacts["average_vs_worst"])
+    plot_raw_vs_balanced_gap(gap_rows, artifacts["raw_vs_balanced_gap_plot"])
     plot_sensor_heatmap(sensor_rows, artifacts["sensor_heatmap"])
     plot_representation_shift(embeddings, metadata, artifacts["representation_shift"])
     map_generated = plot_fairness_map(metadata, predictions, labels, artifacts["fairness_map"])
@@ -158,10 +171,18 @@ def run_real_pipeline(
     tables_dir = ensure_dir(output / "tables")
     figures_dir = ensure_dir(output / "figures")
     artifacts["tables_fairness_matrix"] = tables_dir / "fairness_matrix.csv"
+    artifacts["tables_raw_vs_balanced_gap"] = tables_dir / "raw_vs_balanced_gap.csv"
+    artifacts["tables_classwise_metrics"] = tables_dir / "classwise_metrics.csv"
+    artifacts["tables_probe_comparison"] = tables_dir / "probe_comparison.csv"
     artifacts["figures_average_vs_worst_group"] = figures_dir / "average_vs_worst_group.png"
+    artifacts["figures_raw_vs_balanced_gap"] = figures_dir / "raw_vs_balanced_gap.png"
     artifacts["figures_fairness_map"] = figures_dir / "fairness_map.png"
     copyfile(artifacts["region_matrix"], artifacts["tables_fairness_matrix"])
+    copyfile(artifacts["gap_table"], artifacts["tables_raw_vs_balanced_gap"])
+    copyfile(artifacts["classwise_metrics"], artifacts["tables_classwise_metrics"])
+    copyfile(artifacts["probe_comparison"], artifacts["tables_probe_comparison"])
     copyfile(artifacts["average_vs_worst"], artifacts["figures_average_vs_worst_group"])
+    copyfile(artifacts["raw_vs_balanced_gap_plot"], artifacts["figures_raw_vs_balanced_gap"])
     if "fairness_map" in artifacts:
         copyfile(artifacts["fairness_map"], artifacts["figures_fairness_map"])
     return artifacts

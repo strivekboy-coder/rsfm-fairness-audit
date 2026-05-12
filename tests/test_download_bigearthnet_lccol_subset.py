@@ -61,6 +61,7 @@ def test_lccol_converter_uses_real_hdf5_arrays(monkeypatch) -> None:
     assert len(rows) == 4
     assert rows[0]["source_dataset"] == "lc-col/bigearthnet"
     assert rows[0]["source_shard"] == "bigearthnet_train_p0.hdf5"
+    assert rows[0]["band_profile"] == "sentinel2_12_lccol"
     assert (output / rows[0]["chip_path"]).exists()
 
     adapter = BigEarthNetDatasetAdapter(output, subset_size=2, sensor_mode="S2")

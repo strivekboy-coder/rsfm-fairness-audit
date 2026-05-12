@@ -95,3 +95,28 @@ def raw_vs_balanced_gap(
         "raw_worst_group": raw["worst_group"],
         "balanced_worst_group": balanced["worst_group"],
     }
+
+
+def classwise_metrics(labels: np.ndarray, predictions: np.ndarray) -> list[dict[str, float | int]]:
+    rows = []
+    for cls in sorted(np.unique(labels).tolist()):
+        mask = labels == cls
+        pred_mask = predictions == cls
+        tp = int(np.sum(mask & pred_mask))
+        fp = int(np.sum(~mask & pred_mask))
+        fn = int(np.sum(mask & ~pred_mask))
+        support = int(np.sum(mask))
+        precision = tp / max(tp + fp, 1)
+        recall = tp / max(tp + fn, 1)
+        f1 = 2 * precision * recall / max(precision + recall, 1e-12)
+        rows.append(
+            {
+                "class_id": int(cls),
+                "support": support,
+                "accuracy_one_vs_rest": float(np.mean(mask == pred_mask)),
+                "precision": float(precision),
+                "recall": float(recall),
+                "f1": float(f1),
+            }
+        )
+    return rows

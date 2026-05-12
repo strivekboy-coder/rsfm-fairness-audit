@@ -7,6 +7,7 @@ from typing import Any, Callable, Mapping, Sequence
 import numpy as np
 
 from rsfm_fairness_audit.adapters.base import ModelAdapter
+from rsfm_fairness_audit.band_profiles import get_band_profile
 from rsfm_fairness_audit.config import load_yaml
 
 
@@ -41,6 +42,7 @@ class DOFAAdapter(ModelAdapter):
         model_variant: str = "vit_base_dofa",
         device: str = "cpu",
         batch_size: int = 32,
+        band_profile: str | None = None,
         expected_bands: int | None = None,
         image_size: int | None = None,
         embedding_layer: str = "forward_features",
@@ -58,6 +60,7 @@ class DOFAAdapter(ModelAdapter):
         self.model_variant = model_variant
         self.device = device
         self.batch_size = batch_size
+        self.band_profile = band_profile
         self.expected_bands = expected_bands
         self.image_size = image_size
         self.embedding_layer = embedding_layer
@@ -69,6 +72,7 @@ class DOFAAdapter(ModelAdapter):
         self.model_loader = model_loader
         self.allow_torch_hub_download = allow_torch_hub_download
         self._torch_device: Any | None = None
+        self._logged_profile = False
 
     @classmethod
     def from_config_file(
@@ -87,20 +91,27 @@ class DOFAAdapter(ModelAdapter):
         model: Any | None = None,
         model_loader: Callable[[], Any] | None = None,
     ) -> "DOFAAdapter":
+        profile_name = data.get("band_profile")
+        profile = get_band_profile(str(profile_name)) if profile_name else {}
+        merged = dict(profile)
+        merged.update({key: value for key, value in data.items() if value is not None})
+        if "wavelengths" in merged and "wavelength_list" not in merged:
+            raise DOFAConfigurationError("Use 'wavelength_list' in DOFA config; legacy 'wavelengths' is ignored.")
         return cls(
-            checkpoint_path=data.get("checkpoint_path"),
-            repo_path=data.get("repo_path"),
-            torch_hub_repo=str(data.get("torch_hub_repo", "zhu-xlab/DOFA")),
-            model_variant=str(data.get("model_variant", "vit_base_dofa")),
-            device=str(data.get("device", "cpu")),
-            batch_size=int(data.get("batch_size", 32)),
-            expected_bands=data.get("expected_bands"),
-            image_size=data.get("image_size"),
-            embedding_layer=str(data.get("embedding_layer", "forward_features")),
-            normalization_mean=data.get("normalization_mean"),
-            normalization_std=data.get("normalization_std"),
-            sensor_mode=str(data.get("input_modality", data.get("sensor_mode", "S2"))),
-            wavelengths=data.get("wavelength_list"),
+            checkpoint_path=merged.get("checkpoint_path"),
+            repo_path=merged.get("repo_path"),
+            torch_hub_repo=str(merged.get("torch_hub_repo", "zhu-xlab/DOFA")),
+            model_variant=str(merged.get("model_variant", "vit_base_dofa")),
+            device=str(merged.get("device", "cpu")),
+            batch_size=int(merged.get("batch_size", 32)),
+            band_profile=str(profile_name) if profile_name else None,
+            expected_bands=merged.get("expected_bands"),
+            image_size=merged.get("image_size"),
+            embedding_layer=str(merged.get("embedding_layer", "forward_features")),
+            normalization_mean=merged.get("normalization_mean"),
+            normalization_std=merged.get("normalization_std"),
+            sensor_mode=str(merged.get("input_modality", merged.get("sensor_mode", "S2"))),
+            wavelengths=merged.get("wavelength_list"),
             model=model,
             model_loader=model_loader,
             allow_torch_hub_download=bool(data.get("allow_torch_hub_download", False)),
@@ -225,7 +236,9 @@ class DOFAAdapter(ModelAdapter):
             raise DOFAConfigurationError(
                 f"Configured expected_bands={self.expected_bands} but input has {array.shape[1]} channels."
             )
+        self._log_profile(array.shape[1])
         wavelengths = self._resolve_wavelengths(array.shape[1])
+        self._validate_normalization_lengths(array.shape[1])
         array = self._normalize(array)
         array = self._resize_if_needed(array)
         return {"images": array, "metadata": batch["metadata"], "wavelengths": wavelengths}
@@ -246,6 +259,27 @@ class DOFAAdapter(ModelAdapter):
         mean_arr = np.asarray(mean, dtype=np.float32)[None, :, None, None]
         std_arr = np.asarray(std, dtype=np.float32)[None, :, None, None]
         return (array - mean_arr) / np.maximum(std_arr, 1e-8)
+
+    def _validate_normalization_lengths(self, channels: int) -> None:
+        mean = self.normalization_mean if self.normalization_mean is not None else self.official_means.get(self.sensor_mode)
+        std = self.normalization_std if self.normalization_std is not None else self.official_stds.get(self.sensor_mode)
+        if mean is not None and len(mean) != channels:
+            raise DOFAConfigurationError(
+                f"normalization_mean length ({len(mean)}) does not match input channels ({channels})."
+            )
+        if std is not None and len(std) != channels:
+            raise DOFAConfigurationError(
+                f"normalization_std length ({len(std)}) does not match input channels ({channels})."
+            )
+
+    def _log_profile(self, channels: int) -> None:
+        if self._logged_profile:
+            return
+        print(
+            "[info] DOFA band profile: "
+            f"{self.band_profile or 'custom'} expected_bands={self.expected_bands} input_channels={channels}"
+        )
+        self._logged_profile = True
 
     def _resize_if_needed(self, array: np.ndarray) -> np.ndarray:
         if self.image_size is None:

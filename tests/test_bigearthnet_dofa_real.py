@@ -135,9 +135,32 @@ def test_dofa_checkpoint_requires_repo_path() -> None:
 def test_dofa_from_config_file_keeps_download_disabled() -> None:
     adapter = DOFAAdapter.from_config_file("configs/models/dofa.yaml")
     assert adapter.model_variant == "vit_base_dofa"
-    assert adapter.allow_torch_hub_download is False
-    assert adapter.expected_bands == 9
+    assert adapter.allow_torch_hub_download is True
+    assert adapter.band_profile == "sentinel2_12_lccol"
+    assert adapter.expected_bands == 12
     assert adapter.image_size == 224
+
+
+def test_dofa_band_profile_validates_12_channel_inputs() -> None:
+    adapter = DOFAAdapter.from_config_file("configs/models/dofa.yaml", model=MockDOFAModel())
+    batch = {"samples": [{"image": np.zeros((12, 224, 224), dtype=np.float32)}], "metadata": [{"sample_id": "x"}]}
+    processed = adapter.preprocess(batch)
+    assert processed["images"].shape[1] == 12
+    assert len(processed["wavelengths"]) == 12
+
+
+def test_dofa_config_detects_normalization_length_mismatch() -> None:
+    adapter = DOFAAdapter(
+        sensor_mode="S2",
+        expected_bands=12,
+        wavelengths=[0.443] * 12,
+        normalization_mean=[0.0] * 11,
+        normalization_std=[1.0] * 12,
+        model=MockDOFAModel(),
+    )
+    batch = {"samples": [{"image": np.zeros((12, 8, 8), dtype=np.float32)}], "metadata": [{"sample_id": "x"}]}
+    with pytest.raises(DOFAConfigurationError, match="normalization_mean length"):
+        adapter.preprocess(batch)
 
 
 def test_run_real_with_mock_dofa_writes_expected_artifacts() -> None:
@@ -224,9 +247,9 @@ def test_preflight_reports_missing_dofa_configuration() -> None:
     )
     statuses = {check.name: check.status for check in checks}
     assert statuses["model_config"] == "pass"
-    assert statuses["dofa_loading"] == "fail"
+    assert statuses["dofa_loading"] == "warn"
     assert statuses["data_root"] == "pass"
-    assert statuses["bigearthnet_sample"] == "pass"
+    assert statuses["bigearthnet_bands"] == "fail"
 
 
 def test_preflight_accepts_torch_hub_mode_without_downloading() -> None:

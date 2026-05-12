@@ -150,8 +150,8 @@ def _label_fields(label_dataset: Any | None, index: int) -> tuple[int, str, str]
 
 
 def convert_lccol_subset(output_dir: Path, max_samples: int = 64, seed: int = 42, cache_dir: Path | None = None) -> Path:
-    if max_samples > 512:
-        raise ValueError("This first lc-col smoke downloader supports at most --max-samples 512.")
+    if max_samples > 5000:
+        raise ValueError("This Phase 1 lc-col downloader supports at most --max-samples 5000 from one shard.")
     cache_dir = cache_dir or (output_dir / "_hf_cache")
     output_dir.mkdir(parents=True, exist_ok=True)
     chip_dir = output_dir / "chips"
@@ -193,6 +193,7 @@ def convert_lccol_subset(output_dir: Path, max_samples: int = 64, seed: int = 42
                     "labels": labels,
                     "label_names": labels,
                     "sensor": "S2",
+                    "band_profile": "sentinel2_12_lccol",
                     "region": fallback_group,
                     "fallback_group": fallback_group,
                     "source_dataset": SOURCE_DATASET,
@@ -213,6 +214,7 @@ def convert_lccol_subset(output_dir: Path, max_samples: int = 64, seed: int = 42
         "labels",
         "label_names",
         "sensor",
+        "band_profile",
         "region",
         "fallback_group",
         "source_dataset",
