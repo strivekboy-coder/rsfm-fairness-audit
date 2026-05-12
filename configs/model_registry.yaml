@@ -91,7 +91,10 @@ models:
     license:
       model_repository: mit
       code_repository: mit
-    supported_modalities: [sentinel-1_sar, sentinel-2_multispectral, joint_sentinel-1_sentinel-2]
+    supported_modalities:
+      official_wrapper_modes: [optical, SAR, both]
+      phase_2a_enabled: sentinel-2_multispectral_optical_only
+      phase_2b_requires_verified_dual_modal_data: [sentinel-1_sar, sentinel-2_multispectral, joint_sentinel-1_sentinel-2]
     expected_input_bands:
       sentinel-1_sar: 2_channels
       sentinel-2_multispectral: 12_channels_remove_cirrus_if_necessary
@@ -106,15 +109,19 @@ models:
     checkpoint_loading_plan:
       - use official CROMA_base.pt for first reproduction
       - use CROMA_large.pt only after base adapter is validated
-    first_minimal_reproduction_target: Extract SAR_GAP, optical_GAP, and joint_GAP on a tiny aligned S1/S2 BigEarthNet v2 subset.
+      - allow_hf_download may download only antofuller/CROMA with CROMA_base.pt or CROMA_large.pt
+      - official use_croma.py source must be provided through source_file_path or repo_path
+    first_minimal_reproduction_target: Phase 2A extracts optical_GAP on the real lc-col BigEarthNet S2-only subset; Phase 2B adds SAR_GAP and joint_GAP only after a verified aligned S1/S2 subset exists.
     adapter_integration_plan:
-      - vendor or import use_croma.py according to repository license
-      - load PretrainedCROMA with modality='both' for fused embeddings
-      - support sentinel-1-only and sentinel-2-only paths for fairness ablations
+      - import official use_croma.py from explicit source_file_path or repo_path
+      - load PretrainedCROMA with modality='optical' for Phase 2A
+      - reject SAR and both modes until Phase 2B has verified dual-modal data
+      - expose optical_GAP as the default embedding_key for probe training
     known_risks:
       - CROMA requires spatially aligned radar-optical inputs for joint features
       - BigEarthNet v2 S2 band conventions must be mapped carefully to 12-channel CROMA expectation
-      - official code examples assume CUDA, but Milestone 2 does not run the model
+      - lc-col BigEarthNet is third-party S2-only and valid only for first real-data smoke/scaling, not true sensor fairness
+      - official code examples assume CUDA; Colab GPU is recommended
     sources:
       - https://github.com/antofuller/CROMA
       - https://huggingface.co/antofuller/CROMA

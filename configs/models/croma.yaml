@@ -1,0 +1,14 @@
+model_size: base
+checkpoint_path: null
+repo_path: null
+source_file_path: null
+hf_repo_id: antofuller/CROMA
+hf_checkpoint_filename: CROMA_base.pt
+allow_hf_download: true
+device: auto
+batch_size: 4
+input_modality: optical
+expected_bands: 12
+image_size: 120
+embedding_key: optical_GAP
+preprocessing: official_croma_channel_scale

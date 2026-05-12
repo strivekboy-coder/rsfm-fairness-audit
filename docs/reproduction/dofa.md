@@ -58,4 +58,8 @@ The default project config is:
 configs/models/dofa.yaml
 ```
 
-It leaves `repo_path`, `checkpoint_path`, and `allow_torch_hub_download` unset/false so no checkpoint is downloaded automatically.
+For the current Colab Phase 1 path, `configs/models/dofa.yaml` sets
+`allow_torch_hub_download: true` with `repo_path: null` and
+`checkpoint_path: null`, so the first real run may download the official DOFA
+checkpoint through torch.hub. Set `allow_torch_hub_download: false` only when
+you are using a local official repo plus an explicit checkpoint path.

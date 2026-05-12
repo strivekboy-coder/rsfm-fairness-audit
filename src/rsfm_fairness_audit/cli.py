@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from rsfm_fairness_audit.pipeline import build_real_adapters, run_dummy_pipeline, run_real_pipeline
+from rsfm_fairness_audit.pipeline import compare_model_runs, build_real_adapters, run_dummy_pipeline, run_real_pipeline
 from rsfm_fairness_audit.preflight import checks_to_json, run_real_preflight
 
 
@@ -32,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     real = subparsers.add_parser("run-real", help="Run a subset-first real dataset/model smoke audit.")
     real.add_argument("--dataset", choices=["bigearthnet"], required=True)
-    real.add_argument("--model", choices=["dofa"], required=True)
+    real.add_argument("--model", choices=["dofa", "croma"], required=True)
     real.add_argument("--data-root", "--dataset-root", dest="data_root", type=Path, required=True)
     real.add_argument("--metadata-path", type=Path)
     real.add_argument("--subset-size", "--max-samples", dest="subset_size", type=int)
@@ -56,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     check = subparsers.add_parser("check-real", help="Preflight-check a real dataset/model smoke run.")
     check.add_argument("--dataset", choices=["bigearthnet"], required=True)
-    check.add_argument("--model", choices=["dofa"], required=True)
+    check.add_argument("--model", choices=["dofa", "croma"], required=True)
     check.add_argument("--model-config", type=Path, required=True)
     check.add_argument("--data-root", type=Path, required=True)
     check.add_argument("--metadata-path", type=Path)
@@ -64,6 +64,16 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--split", choices=["train", "val", "test", "all"], default="all")
     check.add_argument("--sensor-mode", choices=["S1", "S2", "S1+S2"], default="S2")
     check.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+
+    compare = subparsers.add_parser("compare-runs", help="Create a compact model comparison table from completed runs.")
+    compare.add_argument("--dataset", default="bigearthnet")
+    compare.add_argument(
+        "--run",
+        action="append",
+        required=True,
+        help="Model/run pair in the form model_name=path_to_output_dir. Repeat for DOFA and CROMA.",
+    )
+    compare.add_argument("--output-dir", type=Path, default=Path("outputs/model_comparison"))
     return parser
 
 
@@ -118,6 +128,17 @@ def main() -> None:
                 print(f"[{check.status.upper()}] {check.name}: {check.message}")
         if any(check.status == "fail" for check in checks):
             raise SystemExit(1)
+    elif args.command == "compare-runs":
+        runs = {}
+        for item in args.run:
+            if "=" not in item:
+                raise SystemExit("--run must use the form model_name=path_to_output_dir")
+            model_name, run_dir = item.split("=", 1)
+            runs[model_name.strip()] = Path(run_dir.strip())
+        artifacts = compare_model_runs(runs, args.output_dir, dataset_name=args.dataset)
+        print(f"Model comparison complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
 
 
 if __name__ == "__main__":

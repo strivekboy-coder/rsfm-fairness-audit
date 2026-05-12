@@ -5,7 +5,7 @@ import csv
 import gzip
 import json
 from pathlib import Path
-from shutil import copyfileobj
+from shutil import copy2, copyfileobj
 from typing import Any
 
 import numpy as np
@@ -26,6 +26,7 @@ def _download_file(filename: str, cache_dir: Path) -> Path:
     except ImportError as exc:
         raise RuntimeError("Install huggingface_hub first: python -m pip install huggingface_hub") from exc
     local_name = cache_dir / filename
+    cache_dir.mkdir(parents=True, exist_ok=True)
     if local_name.exists() and local_name.stat().st_size > 0:
         print(f"[info] Using cached {filename}: {local_name}")
         return local_name
@@ -36,7 +37,12 @@ def _download_file(filename: str, cache_dir: Path) -> Path:
         repo_type="dataset",
         cache_dir=str(cache_dir),
     )
-    return Path(path)
+    downloaded = Path(path)
+    if filename.endswith(".csv") and downloaded != local_name:
+        copy2(downloaded, local_name)
+        print(f"[info] Cached {filename}: {local_name}")
+        return local_name
+    return downloaded
 
 
 def _ensure_hdf5(cache_dir: Path) -> Path:
@@ -127,13 +133,18 @@ def _to_chw(array: np.ndarray) -> np.ndarray:
     array = np.asarray(array)
     if array.ndim == 2:
         array = array[None, :, :]
-    elif array.ndim == 3 and array.shape[0] > 64 and array.shape[-1] <= 64:
-        array = np.moveaxis(array, -1, 0)
+    elif array.ndim == 3:
+        looks_chw = array.shape[0] <= 32 and array.shape[1] == array.shape[2]
+        looks_hwc = array.shape[-1] <= 32 and not looks_chw
+        if looks_hwc:
+            array = np.moveaxis(array, -1, 0)
     elif array.ndim != 3:
         array = np.squeeze(array)
         if array.ndim != 3:
             raise ValueError(f"Expected one image chip with 2D/3D shape, got {array.shape}")
-        if array.shape[0] > 64 and array.shape[-1] <= 64:
+        looks_chw = array.shape[0] <= 32 and array.shape[1] == array.shape[2]
+        looks_hwc = array.shape[-1] <= 32 and not looks_chw
+        if looks_hwc:
             array = np.moveaxis(array, -1, 0)
     return array.astype(np.float32)
 

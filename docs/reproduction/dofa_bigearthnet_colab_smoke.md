@@ -1,8 +1,9 @@
-# Colab Smoke Run: DOFA + BigEarthNet-Style Subset
+# Colab Phase 1 Run: DOFA + lc-col BigEarthNet Subset
 
-This guide runs the first real-model smoke experiment on Google Colab. It does
-not download full BigEarthNet v2.0 and does not download DOFA weights unless you
-explicitly choose torch.hub mode or provide the checkpoint yourself.
+This guide runs the Phase 1 real-data experiment on Google Colab with DOFA and
+real Sentinel-2 chips from `lc-col/bigearthnet`. It does not download full
+BigEarthNet v2.0. In the current Colab path, DOFA uses torch.hub mode and may
+download the official checkpoint on the first run.
 
 ## 1. Start Colab
 
@@ -14,10 +15,10 @@ Runtime -> Change runtime type -> T4 GPU or better
 
 ## 2. Clone Your Repo
 
-Replace the URL with your GitHub repository after pushing:
+Use your GitHub repository URL:
 
 ```bash
-git clone https://github.com/<your-user>/rsfm-fairness-audit.git
+git clone https://github.com/strivekboy-coder/rsfm-fairness-audit.git
 cd rsfm-fairness-audit
 ```
 
@@ -43,42 +44,22 @@ use the official PyTorch install selector rather than guessing a version.
 
 Edit `configs/models/dofa.yaml`.
 
-### Option A: Local Official Repo + Explicit Checkpoint
-
-Clone the official DOFA implementation:
-
-```bash
-git clone https://github.com/zhu-xlab/DOFA.git /content/DOFA
-```
-
-Provide the official checkpoint yourself, for example by uploading it to Drive
-or downloading it manually from an official source:
-
-- Hugging Face file: https://huggingface.co/earthflow/DOFA/blob/main/DOFA_ViT_base_e100.pth
-- Zenodo record: https://zenodo.org/records/11002557
-
-Then set:
-
-```yaml
-repo_path: /content/DOFA
-checkpoint_path: /content/drive/MyDrive/<path>/DOFA_ViT_base_e100.pth
-allow_torch_hub_download: false
-device: auto
-```
-
-### Option B: Torch Hub
-
-If you are comfortable letting the first run download the official checkpoint:
+Use the current torch.hub path:
 
 ```yaml
 torch_hub_repo: zhu-xlab/DOFA
 model_variant: vit_base_dofa
+repo_path: null
+checkpoint_path: null
+band_profile: sentinel2_12_lccol
+expected_bands: 12
 allow_torch_hub_download: true
 device: auto
 ```
 
-This may download an approximately 448 MB checkpoint. The project default is
-`false` so this never happens accidentally.
+This may download the official DOFA checkpoint on the first run. Do not clone
+the DOFA repo manually for this Colab workflow unless you are deliberately
+testing the local-repo path.
 
 ## 5. Obtain Official BigEarthNet Metadata And Data
 
@@ -157,28 +138,10 @@ python -m rsfm_fairness_audit.cli run-real \
   --output-dir outputs/dofa_bigearthnet_lccol64
 ```
 
-## 9. Run Sanity And Phase 1 Runs
+## 9. Run The 5000-Sample Phase 1 Run
 
 After the 64-sample smoke run succeeds, reuse the same downloaded HDF5 cache and
-prepare a larger converted subset:
-
-```bash
-python scripts/download_bigearthnet_lccol_subset.py \
-  --output-dir data/bigearthnet_lccol_subset512 \
-  --cache-dir data/_cache/lc_col_bigearthnet \
-  --max-samples 512 \
-  --seed 42
-
-python -m rsfm_fairness_audit.cli run-real \
-  --dataset bigearthnet \
-  --model dofa \
-  --dataset-root data/bigearthnet_lccol_subset512 \
-  --config configs/models/dofa.yaml \
-  --max-samples 512 \
-  --output-dir outputs/dofa_bigearthnet_lccol512
-```
-
-For the completed Phase 1 run:
+prepare the completed Phase 1 subset:
 
 ```bash
 python scripts/download_bigearthnet_lccol_subset.py \
@@ -223,17 +186,53 @@ Expected files:
 For lc-col, `fairness_map.png` is explicitly a fallback-group visualization,
 not a real geographic map.
 
-## 11. Download Outputs
+## 11. Package Final Outputs
 
-```bash
-zip -r dofa_bigearthnet_outputs.zip outputs/runs/dofa_bigearthnet_real_smoke
-```
+Package only the final 5000-sample report artifacts. Do not include
+`embeddings.npz`, `predictions.csv`, `embedding_chunks/`, `data/`, or the HDF5
+cache in the final zip.
 
 In Colab:
 
 ```python
+from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 from google.colab import files
-files.download("dofa_bigearthnet_outputs.zip")
+
+final_run = Path("outputs/dofa_bigearthnet_lccol5000")
+zip_path = Path("dofa_bigearthnet_phase1_results.zip")
+root_artifacts = [
+    "report.md",
+    "fairness_summary.csv",
+    "fairness_matrix_region.csv",
+    "fairness_matrix_sensor.csv",
+    "fairness_matrix_task.csv",
+    "raw_vs_balanced_gap.csv",
+    "classwise_metrics.csv",
+    "probe_comparison.csv",
+]
+files_to_zip = [final_run / name for name in root_artifacts if (final_run / name).exists()]
+for folder_name in ["tables", "figures"]:
+    folder = final_run / folder_name
+    if folder.exists():
+        files_to_zip.extend(sorted(path for path in folder.rglob("*") if path.is_file()))
+
+with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as archive:
+    for path in files_to_zip:
+        archive.write(path, path.relative_to(final_run).as_posix())
+files.download(str(zip_path))
+```
+
+Optional cleanup after the zip has downloaded successfully:
+
+```bash
+rm -rf data/bigearthnet_lccol_subset*
+rm -rf data/_cache/lc_col_bigearthnet
+rm -rf outputs/dofa_bigearthnet_lccol64
+rm -rf outputs/dofa_bigearthnet_lccol512
+rm -rf outputs/dofa_bigearthnet_lccol5000/embedding_chunks
+rm -f outputs/dofa_bigearthnet_lccol5000/embeddings.npz
+rm -f outputs/dofa_bigearthnet_lccol5000/predictions.csv
 ```
 
 ## Common Errors
@@ -247,7 +246,7 @@ files.download("dofa_bigearthnet_outputs.zip")
 
 : Upload or mount the checkpoint and update `configs/models/dofa.yaml`.
 
-`First chip has N bands but DOFA config expects 9`
+`First chip has N bands but DOFA config expects 12`
 
 : Your prepared subset band count/order does not match the config. Verify the
   band order and update `expected_bands`, `wavelength_list`, and normalization

@@ -91,6 +91,35 @@ def test_lccol_converter_reuses_decompressed_cache(monkeypatch) -> None:
     assert module.TRAIN_SHARD_GZ not in calls
 
 
+def test_lccol_download_caches_csv_to_stable_path(monkeypatch) -> None:
+    pytest.importorskip("huggingface_hub")
+    module = _load_lccol_module()
+    root = Path("outputs/test_lccol_download_cache_csv")
+    hub_cache_file = root / "hub" / "snapshots" / "abc" / module.TRAIN_CSV
+    hub_cache_file.parent.mkdir(parents=True, exist_ok=True)
+    hub_cache_file.write_text("s2_folder,s2_hdf5_file,index\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "huggingface_hub.hf_hub_download",
+        lambda **kwargs: str(hub_cache_file),
+    )
+
+    cache_dir = root / "cache"
+    path = module._download_file(module.TRAIN_CSV, cache_dir)
+
+    assert path == cache_dir / module.TRAIN_CSV
+    assert path.read_text(encoding="utf-8").startswith("s2_folder")
+
+
+def test_lccol_to_chw_handles_64_pixel_hwc_chips() -> None:
+    module = _load_lccol_module()
+    image = np.zeros((64, 64, 12), dtype=np.float32)
+
+    converted = module._to_chw(image)
+
+    assert converted.shape == (12, 64, 64)
+
+
 def test_lccol_converter_fails_without_image_arrays(monkeypatch) -> None:
     module = _load_lccol_module()
     source = Path("outputs/test_lccol_no_image_source")

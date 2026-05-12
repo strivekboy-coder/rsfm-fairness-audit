@@ -68,8 +68,11 @@ python -m rsfm_fairness_audit.cli run-real `
   --output-dir outputs/runs/dofa_bigearthnet_real_sanity
 ```
 
-No large checkpoint or dataset is downloaded automatically. Optional DOFA
-runtime dependencies are listed in `requirements-dofa.txt`.
+The current Phase 1 Colab config uses `allow_torch_hub_download: true`, so the
+first real DOFA run may download the official DOFA checkpoint. Large datasets
+are still not downloaded automatically; the lc-col subset downloader fetches one
+explicit HDF5 shard only when you run the script. Optional DOFA runtime
+dependencies are listed in `requirements-dofa.txt`.
 
 ## Running Real DOFA Smoke Test On Colab
 
@@ -88,3 +91,57 @@ python -m rsfm_fairness_audit.cli check-real `
   --model-config configs/models/dofa.yaml `
   --data-root <prepared_subset_path>
 ```
+
+## Phase 2A CROMA On lc-col BigEarthNet S2
+
+CROMA is integrated for optical-only Phase 2A runs on the same real
+lc-col/BigEarthNet Sentinel-2 subset used for DOFA. Install optional
+dependencies separately:
+
+```powershell
+python -m pip install -r requirements-croma.txt
+```
+
+Configure [croma.yaml](D:/Codex/rsfm-fairness-audit/configs/models/croma.yaml)
+with `repo_path` or `source_file_path` pointing to the official
+`antofuller/CROMA` implementation. The checkpoint download path is restricted
+to official `antofuller/CROMA` weights.
+
+```powershell
+python -m rsfm_fairness_audit.cli run-real `
+  --dataset bigearthnet `
+  --model croma `
+  --data-root data/bigearthnet_lccol_subset `
+  --model-config configs/models/croma.yaml `
+  --subset-size 64 `
+  --output-dir outputs/croma_bigearthnet_lccol64
+```
+
+For the 5000-sample Phase 2A run, reuse the lc-col HDF5 cache and chunk
+embedding extraction:
+
+```powershell
+python -m rsfm_fairness_audit.cli run-real `
+  --dataset bigearthnet `
+  --model croma `
+  --data-root data/bigearthnet_lccol_subset5000 `
+  --model-config configs/models/croma.yaml `
+  --subset-size 5000 `
+  --output-dir outputs/croma_bigearthnet_lccol5000 `
+  --chunk-size 256 `
+  --streaming-embeddings true
+```
+
+Compare completed DOFA and CROMA runs:
+
+```powershell
+python -m rsfm_fairness_audit.cli compare-runs `
+  --dataset bigearthnet `
+  --run dofa=outputs/dofa_bigearthnet_lccol5000 `
+  --run croma=outputs/croma_bigearthnet_lccol5000 `
+  --output-dir outputs/dofa_vs_croma_lccol5000
+```
+
+True CROMA sensor fairness is Phase 2B and requires a verified aligned S1/S2
+dataset. The lc-col smoke path is S2-only and must not be used to claim
+SAR-vs-optical fairness.

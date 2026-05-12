@@ -2,16 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 from shutil import copyfile
+from typing import Mapping
 
 import numpy as np
 
 from rsfm_fairness_audit.adapters.base import DatasetAdapter, ModelAdapter
 from rsfm_fairness_audit.adapters.bigearthnet import BigEarthNetDatasetAdapter
+from rsfm_fairness_audit.adapters.croma import CROMAAdapter
 from rsfm_fairness_audit.adapters.dofa import DOFAAdapter
 from rsfm_fairness_audit.adapters.dummy import DummyDatasetConfig, DummyEODataset, DummyModelAdapter
 from rsfm_fairness_audit.config import load_yaml
 from rsfm_fairness_audit.embedding import extract_embeddings, extract_embeddings_to_chunks
-from rsfm_fairness_audit.io import ensure_dir, write_csv
+from rsfm_fairness_audit.io import ensure_dir, read_csv_rows, write_csv
 from rsfm_fairness_audit.metrics import classwise_metrics, group_metrics, raw_vs_balanced_gap, summarize_gap
 from rsfm_fairness_audit.probes import NearestCentroidProbe, evaluate_probe_suite
 from rsfm_fairness_audit.report import write_real_report, write_static_report
@@ -214,9 +216,9 @@ def build_real_adapters(
     model_config: str | Path | None = None,
 ) -> tuple[DatasetAdapter, ModelAdapter]:
     if dataset_name != "bigearthnet":
-        raise ValueError("Milestone 3 only implements dataset='bigearthnet'.")
-    if model_name != "dofa":
-        raise ValueError("Milestone 3 only implements model='dofa'.")
+        raise ValueError("Real smoke runs currently implement dataset='bigearthnet'.")
+    if model_name not in {"dofa", "croma"}:
+        raise ValueError("Real smoke runs currently implement model='dofa' or model='croma'.")
     dataset = BigEarthNetDatasetAdapter(
         data_root=data_root,
         metadata_path=metadata_path,
@@ -225,18 +227,96 @@ def build_real_adapters(
         split=split,
         sensor_mode=sensor_mode,
     )
-    if model_config is not None:
+    if model_name == "dofa":
+        if model_config is not None:
+            config = load_yaml(model_config)
+            config.setdefault("input_modality", sensor_mode)
+            if dofa_wavelengths is not None:
+                config["wavelength_list"] = dofa_wavelengths
+            if allow_torch_hub_download:
+                config["allow_torch_hub_download"] = True
+            model = DOFAAdapter.from_config(config)
+        else:
+            model = DOFAAdapter(
+                sensor_mode=sensor_mode,
+                wavelengths=dofa_wavelengths,
+                allow_torch_hub_download=allow_torch_hub_download,
+            )
+    elif model_config is not None:
         config = load_yaml(model_config)
-        config.setdefault("input_modality", sensor_mode)
-        if dofa_wavelengths is not None:
-            config["wavelength_list"] = dofa_wavelengths
-        if allow_torch_hub_download:
-            config["allow_torch_hub_download"] = True
-        model = DOFAAdapter.from_config(config)
+        model = CROMAAdapter.from_config(config)
     else:
-        model = DOFAAdapter(
-            sensor_mode=sensor_mode,
-            wavelengths=dofa_wavelengths,
-            allow_torch_hub_download=allow_torch_hub_download,
-        )
+        model = CROMAAdapter(device="auto", allow_hf_download=False)
     return dataset, model
+
+
+def _float_or_nan(row: dict[str, str], key: str) -> float:
+    try:
+        return float(row.get(key, "nan"))
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+def _gap_value(rows: list[dict[str, str]], name: str) -> float:
+    if name in {"raw_fairness_gap", "balanced_fairness_gap", "residual_gap_after_balancing"} and rows:
+        return _float_or_nan(rows[0], name)
+    for row in rows:
+        if row.get("gap_name") == name:
+            return _float_or_nan(row, "gap")
+    return float("nan")
+
+
+def compare_model_runs(
+    runs: Mapping[str, str | Path],
+    output_dir: str | Path,
+    dataset_name: str = "bigearthnet",
+) -> dict[str, Path]:
+    output = ensure_dir(output_dir)
+    tables_dir = ensure_dir(output / "tables")
+    figures_dir = ensure_dir(output / "figures")
+    rows: list[dict[str, object]] = []
+    for model_name, run_dir_value in runs.items():
+        run_dir = Path(run_dir_value)
+        summary_path = run_dir / "fairness_summary.csv"
+        gap_path = run_dir / "raw_vs_balanced_gap.csv"
+        if not summary_path.exists():
+            raise FileNotFoundError(f"Missing fairness summary for {model_name}: {summary_path}")
+        summary_rows = read_csv_rows(summary_path)
+        gap_rows = read_csv_rows(gap_path) if gap_path.exists() else []
+        raw_region = next((row for row in summary_rows if row.get("gap_name") == "raw_region_gap"), {})
+        rows.append(
+            {
+                "model": model_name,
+                "dataset": dataset_name,
+                "run_dir": str(run_dir),
+                "subset_size": "",
+                "average_performance": _float_or_nan(raw_region, "average_performance"),
+                "worst_group": raw_region.get("worst_group", ""),
+                "worst_group_performance": _float_or_nan(raw_region, "worst_region_performance"),
+                "best_worst_gap": _float_or_nan(raw_region, "best_worst_gap"),
+                "balanced_gap": _gap_value(gap_rows, "balanced_fairness_gap"),
+                "sensor_group_notes": "lc-col BigEarthNet Phase 2A uses S2-only optical inputs; true CROMA sensor fairness is Phase 2B.",
+            }
+        )
+    comparison_path = tables_dir / "model_comparison.csv"
+    write_csv(comparison_path, rows)
+    figure_path = figures_dir / "dofa_vs_croma_average_vs_worst.png"
+    _plot_model_comparison(rows, figure_path)
+    return {"model_comparison": comparison_path, "comparison_figure": figure_path}
+
+
+def _plot_model_comparison(rows: list[dict[str, object]], output_path: Path) -> None:
+    import matplotlib.pyplot as plt
+
+    ensure_dir(output_path.parent)
+    fig, ax = plt.subplots(figsize=(7, 5))
+    for row in rows:
+        ax.scatter(row["average_performance"], row["worst_group_performance"], s=80)
+        ax.annotate(str(row["model"]), (row["average_performance"], row["worst_group_performance"]), xytext=(5, 5), textcoords="offset points")
+    ax.set_xlabel("Average performance")
+    ax.set_ylabel("Worst-group performance")
+    ax.set_title("DOFA vs CROMA Average vs Worst Group")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
