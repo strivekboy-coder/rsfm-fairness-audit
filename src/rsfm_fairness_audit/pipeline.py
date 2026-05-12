@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from shutil import copyfile
 
 import numpy as np
 
@@ -154,6 +155,15 @@ def run_real_pipeline(
     if not map_generated:
         artifacts.pop("fairness_map")
     write_real_report(output, dataset_name, model_name, summary_rows, gap_rows, map_generated)
+    tables_dir = ensure_dir(output / "tables")
+    figures_dir = ensure_dir(output / "figures")
+    artifacts["tables_fairness_matrix"] = tables_dir / "fairness_matrix.csv"
+    artifacts["figures_average_vs_worst_group"] = figures_dir / "average_vs_worst_group.png"
+    artifacts["figures_fairness_map"] = figures_dir / "fairness_map.png"
+    copyfile(artifacts["region_matrix"], artifacts["tables_fairness_matrix"])
+    copyfile(artifacts["average_vs_worst"], artifacts["figures_average_vs_worst_group"])
+    if "fairness_map" in artifacts:
+        copyfile(artifacts["fairness_map"], artifacts["figures_fairness_map"])
     return artifacts
 
 

@@ -25,14 +25,14 @@ def build_parser() -> argparse.ArgumentParser:
     real = subparsers.add_parser("run-real", help="Run a subset-first real dataset/model smoke audit.")
     real.add_argument("--dataset", choices=["bigearthnet"], required=True)
     real.add_argument("--model", choices=["dofa"], required=True)
-    real.add_argument("--data-root", type=Path, required=True)
+    real.add_argument("--data-root", "--dataset-root", dest="data_root", type=Path, required=True)
     real.add_argument("--metadata-path", type=Path)
-    real.add_argument("--subset-size", type=int)
+    real.add_argument("--subset-size", "--max-samples", dest="subset_size", type=int)
     real.add_argument("--subset-manifest-path", type=Path)
     real.add_argument("--split", choices=["train", "val", "test", "all"], default="all")
     real.add_argument("--sensor-mode", choices=["S1", "S2", "S1+S2"], default="S2")
     real.add_argument("--output-dir", type=Path, default=Path("outputs/runs/dofa_bigearthnet_subset"))
-    real.add_argument("--model-config", type=Path, help="YAML config for the real model adapter.")
+    real.add_argument("--model-config", "--config", dest="model_config", type=Path, help="YAML config for the real model adapter.")
     real.add_argument(
         "--dofa-wavelengths",
         type=str,

@@ -194,6 +194,7 @@ class BigEarthNetDatasetAdapter(DatasetAdapter):
             item["label_names"] = _parse_value(item.get("label_names") or item.get("labels")) or []
             item["region"] = str(
                 item.get("region")
+                or item.get("fallback_group")
                 or item.get("country")
                 or item.get("tile")
                 or item.get("split")
@@ -210,7 +211,7 @@ class BigEarthNetDatasetAdapter(DatasetAdapter):
     def load_sample(self, index: int) -> Mapping[str, Any]:
         row = self.load_metadata()[index]
         if self.sensor_mode == "S2":
-            image = self._load_array(row, ["s2_path", "s2_file", "file_path", "path"])
+            image = self._load_array(row, ["s2_path", "chip_path", "s2_file", "file_path", "path"])
         elif self.sensor_mode == "S1":
             image = self._load_array(row, ["s1_path", "s1_file", "file_path", "path"])
         else:

@@ -80,59 +80,83 @@ device: auto
 This may download an approximately 448 MB checkpoint. The project default is
 `false` so this never happens accidentally.
 
-## 5. Prepare a Tiny BigEarthNet-Compatible Subset
+## 5. Obtain Official BigEarthNet Metadata And Data
 
-The adapter expects a prepared local subset:
+Use official BigEarthNet v2.0 sources:
 
-```text
-prepared_bigearthnet_subset/
-  metadata.csv
-  chips/
-    BEN-000001_s2.npy
-```
+- Homepage: https://bigearth.net/
+- Zenodo record: https://zenodo.org/records/10891137
+- Description PDF: https://bigearth.net/static/documents/Description_BigEarthNet_v2.pdf
 
-See `docs/datasets/bigearthnet_subset_setup.md` for the manifest schema.
+BigEarthNet v2.0 is large. Do not download the full archive into a temporary
+Colab runtime unless you know the storage budget is enough. Prefer one of these
+workflows:
 
-If you already have chips and a CSV/JSON/JSONL manifest with `s2_path`:
+1. Download official metadata first, inspect columns, and prepare a small
+   subset from already available Sentinel chips.
+2. Store a manageable real subset in Google Drive, then mount Drive in Colab.
+3. Use Colab only for model inference after preparing real `.npy`/`.npz` chips
+   elsewhere.
+
+The official dataset is licensed under CDLA-Permissive-1.0. Keep the source
+metadata and any data access notes with your experiment outputs.
+
+## 6. Prepare A Real lc-col BigEarthNet Smoke Subset
+
+For the first real-data smoke result, use the third-party
+`lc-col/bigearthnet` HDF5 export. This is not official BigEarthNet v2.0, but it
+contains real Sentinel-2 BigEarthNet chips and is acceptable for a first
+pipeline smoke test.
+
+This command downloads exactly one train HDF5 shard from Hugging Face, prints
+the HDF5 keys, extracts the first 64 real Sentinel-2 samples, and writes the
+adapter format:
 
 ```bash
-python scripts/prepare_bigearthnet_subset.py \
-  --source-root <source_root> \
-  --metadata-path <source_metadata.csv> \
-  --output-root /content/prepared_bigearthnet_subset \
-  --subset-size 32 \
-  --sensor-mode S2
+python scripts/download_bigearthnet_lccol_subset.py \
+  --output-dir data/bigearthnet_lccol_subset \
+  --max-samples 64 \
+  --seed 42
 ```
 
-If country or coordinates are not verified from official metadata, leave them
-blank or use `to_verify`. Do not infer geographic metadata from filenames.
+Expected output:
 
-## 6. Run Preflight
+```text
+data/bigearthnet_lccol_subset/
+  metadata.csv
+  chips/*.npz
+```
+
+`lc-col/bigearthnet` does not provide verified country/latitude/longitude in
+this export. The pipeline therefore uses `fallback_group=lc_col_train_p0` and
+labels the generated `fairness_map.png` as fallback grouping, not geography.
+
+## 7. Run Preflight
 
 ```bash
 python -m rsfm_fairness_audit.cli check-real \
   --model dofa \
   --dataset bigearthnet \
   --model-config configs/models/dofa.yaml \
-  --data-root /content/prepared_bigearthnet_subset
+  --data-root data/bigearthnet_lccol_subset
 ```
 
 Fix any `[FAIL]` lines before running inference. `[WARN]` lines are usually
 acceptable when they explain optional dependencies or CPU-only fallback.
 
-## 7. Run Smoke Test
+## 8. Run Smoke Test
 
 ```bash
 python -m rsfm_fairness_audit.cli run-real \
   --dataset bigearthnet \
   --model dofa \
-  --data-root /content/prepared_bigearthnet_subset \
+  --dataset-root data/bigearthnet_lccol_subset \
   --model-config configs/models/dofa.yaml \
-  --subset-size 32 \
-  --output-dir outputs/runs/dofa_bigearthnet_real_smoke
+  --max-samples 64 \
+  --output-dir outputs/dofa_bigearthnet_lccol64
 ```
 
-## 8. Run Sanity Test
+## 9. Run Sanity Test
 
 After the 32-sample smoke run succeeds:
 
@@ -148,7 +172,7 @@ python -m rsfm_fairness_audit.cli run-real \
 
 For a larger sanity run, use `--subset-size 1000`.
 
-## 9. Inspect Outputs
+## 10. Inspect Outputs
 
 Expected files:
 
@@ -165,7 +189,7 @@ Expected files:
 
 If coordinates are missing, map generation is skipped and the report states why.
 
-## 10. Download Outputs
+## 11. Download Outputs
 
 ```bash
 zip -r dofa_bigearthnet_outputs.zip outputs/runs/dofa_bigearthnet_real_smoke
@@ -198,6 +222,17 @@ files.download("dofa_bigearthnet_outputs.zip")
 `No BigEarthNet metadata found`
 
 : Put `metadata.csv` under `data_root` or pass `--metadata-path`.
+
+`Metadata is missing required column(s)`
+
+: Pass explicit `--sample-id-column`, `--s1-path-column`, `--s2-path-column`,
+  `--label-column`, `--label-vector-column`, or `--region-column` values that
+  match your official metadata export.
+
+`Missing S2 source for sample ...`
+
+: The metadata row points to a chip path that does not exist under
+  `--source-root`. Fix the path column or source root.
 
 `CUDA is not available`
 

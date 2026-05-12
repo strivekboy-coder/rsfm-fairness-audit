@@ -160,7 +160,7 @@ def test_run_real_with_mock_dofa_writes_expected_artifacts() -> None:
     assert len(read_csv_rows(artifacts["predictions"])) == 6
 
 
-def test_run_real_skips_map_when_coordinates_are_unverified() -> None:
+def test_run_real_writes_fallback_map_when_coordinates_are_unverified() -> None:
     root = Path("outputs/test_real_pipeline_no_coords_fixture")
     metadata_path = _write_fixture(root, count=8, include_coordinates=False)
     dataset = BigEarthNetDatasetAdapter(root, metadata_path=metadata_path, subset_size=6, sensor_mode="S2")
@@ -168,8 +168,10 @@ def test_run_real_skips_map_when_coordinates_are_unverified() -> None:
 
     artifacts = run_real_pipeline(dataset, model, "outputs/test_real_pipeline_no_coords", "bigearthnet", "dofa")
 
-    assert "fairness_map" not in artifacts
-    assert "Map visualization skipped" in artifacts["report"].read_text(encoding="utf-8")
+    assert "fairness_map" in artifacts
+    assert artifacts["fairness_map"].exists()
+    assert artifacts["figures_fairness_map"].exists()
+    assert artifacts["tables_fairness_matrix"].exists()
 
 
 def test_run_real_command_exists() -> None:

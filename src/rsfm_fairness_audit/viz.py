@@ -82,10 +82,30 @@ def plot_fairness_map(metadata: Sequence[dict], predictions: np.ndarray, labels:
             values.append(float(labels[index] == predictions[index]))
         except (TypeError, ValueError):
             continue
-    if not coords:
-        return False
-
     plt = _import_pyplot()
+    if not coords:
+        groups = sorted({str(row.get("fallback_group") or row.get("region") or "to_verify") for row in metadata})
+        values_by_group = []
+        for group in groups:
+            indices = [
+                index
+                for index, row in enumerate(metadata)
+                if str(row.get("fallback_group") or row.get("region") or "to_verify") == group
+            ]
+            values_by_group.append(float(np.mean(labels[indices] == predictions[indices])) if indices else 0.0)
+        fig, ax = plt.subplots(figsize=(7, 4))
+        ax.bar(groups, values_by_group, color="#4C78A8")
+        ax.set_ylim(0, 1)
+        ax.set_ylabel("Accuracy")
+        ax.set_xlabel("Fallback group")
+        ax.set_title("Fallback grouping only - not a geographic map")
+        ax.tick_params(axis="x", rotation=30)
+        ax.grid(True, axis="y", alpha=0.20)
+        fig.tight_layout()
+        fig.savefig(path, dpi=160)
+        plt.close(fig)
+        return True
+
     xy = np.asarray(coords, dtype=float)
     fig, ax = plt.subplots(figsize=(6, 4))
     scatter = ax.scatter(xy[:, 0], xy[:, 1], c=values, cmap="RdYlGn", vmin=0, vmax=1, s=32, alpha=0.85)
