@@ -97,7 +97,15 @@ python -m rsfm_fairness_audit.cli compare-runs \
 
 ## Phase 2B Boundary
 
-True CROMA sensor fairness is not implemented with lc-col BigEarthNet because the current pipeline has real S2 chips only. Phase 2B requires a verified aligned dual-modal subset with S1 VV/VH chips, S2 12-band chips, common sample IDs, labels, and region or fallback metadata. Candidate sources are official BigEarthNet v2.0 / BigEarthNet-MM, SSL4EO-S12 with a valid labeled downstream join, or SEN12MS with an explicit task/label mapping.
+Phase 2B is implemented with BEN-GE-800 as the immediate lightweight paired S1/S2 dataset. It runs three separate CROMA modes on the same paired sample set:
+
+- `SAR`: Sentinel-1 VV/VH only, extracting `SAR_GAP`.
+- `optical`: Sentinel-2 12-band only, extracting `optical_GAP`.
+- `both`: paired Sentinel-1 + Sentinel-2 fusion, extracting `joint_GAP`.
+
+The Colab notebook is [croma_benge800_sensor_fairness_colab.ipynb](D:/Codex/rsfm-fairness-audit/notebooks/croma_benge800_sensor_fairness_colab.ipynb). It downloads the 183 MB BEN-GE-800 archive from Zenodo, prepares 64 paired samples, runs the three modes, and writes a sensor-mode comparison report.
+
+Phase 2A and Phase 2B must remain separate: lc-col BigEarthNet is S2-only and is not valid for SAR/optical sensor fairness; BEN-GE-800 provides paired S1/S2 samples for the first real sensor-conditioned audit.
 
 ## Open Items
 

@@ -34,6 +34,8 @@ class CROMAAdapter(ModelAdapter):
         batch_size: int = 4,
         input_modality: str = "optical",
         expected_bands: int = 12,
+        expected_s1_bands: int = 2,
+        expected_s2_bands: int = 12,
         image_size: int = 120,
         embedding_key: str = "optical_GAP",
         preprocessing: str = "official_croma_channel_scale",
@@ -51,6 +53,8 @@ class CROMAAdapter(ModelAdapter):
         self.batch_size = batch_size
         self.input_modality = input_modality
         self.expected_bands = int(expected_bands)
+        self.expected_s1_bands = int(expected_s1_bands)
+        self.expected_s2_bands = int(expected_s2_bands)
         self.image_size = int(image_size)
         self.embedding_key = embedding_key
         self.preprocessing = preprocessing
@@ -87,6 +91,8 @@ class CROMAAdapter(ModelAdapter):
             batch_size=int(data.get("batch_size", 4)),
             input_modality=str(data.get("input_modality", "optical")),
             expected_bands=int(data.get("expected_bands", 12)),
+            expected_s1_bands=int(data.get("expected_s1_bands", 2)),
+            expected_s2_bands=int(data.get("expected_s2_bands", data.get("expected_bands", 12))),
             image_size=int(data.get("image_size", 120)),
             embedding_key=str(data.get("embedding_key", "optical_GAP")),
             preprocessing=str(data.get("preprocessing", "official_croma_channel_scale")),
@@ -121,15 +127,14 @@ class CROMAAdapter(ModelAdapter):
             raise CROMAConfigurationError(
                 f"CROMA input_modality must be one of {self.supported_modalities}, got {modality!r}."
             )
-        if modality != "optical":
-            raise CROMAConfigurationError(
-                "Phase 2A only supports CROMA input_modality='optical' on the lc-col BigEarthNet S2-only subset. "
-                "Use Phase 2B with a verified aligned S1/S2 dataset before enabling SAR or both."
-            )
         if self.model_size not in {"base", "large"}:
             raise CROMAConfigurationError("CROMA model_size must be 'base' or 'large'.")
-        if self.expected_bands != 12:
-            raise CROMAConfigurationError("CROMA optical Phase 2A expects 12 Sentinel-2 channels.")
+        if modality == "optical" and self.expected_s2_bands != 12:
+            raise CROMAConfigurationError("CROMA optical mode expects 12 Sentinel-2 channels.")
+        if modality == "SAR" and self.expected_s1_bands != 2:
+            raise CROMAConfigurationError("CROMA SAR mode expects 2 Sentinel-1 channels.")
+        if modality == "both" and (self.expected_s1_bands != 2 or self.expected_s2_bands != 12):
+            raise CROMAConfigurationError("CROMA both mode expects 2 Sentinel-1 channels and 12 Sentinel-2 channels.")
         if self.image_size <= 0 or self.image_size % 8 != 0:
             raise CROMAConfigurationError("CROMA image_size must be positive and divisible by official patch size 8.")
         if self.preprocessing != "official_croma_channel_scale":
@@ -225,28 +230,42 @@ class CROMAAdapter(ModelAdapter):
         self._validate_config()
         samples = list(batch["samples"])
         images = [sample["image"] for sample in samples]
-        if any(isinstance(image, dict) for image in images):
-            raise CROMAConfigurationError(
-                "CROMA Phase 2A expects S2-only image arrays. Dual-modal dictionaries belong to Phase 2B."
-            )
+        if self.input_modality == "optical":
+            optical = [image["S2"] if isinstance(image, dict) else image for image in images]
+            array = self._prepare_array(optical, self.expected_s2_bands, "optical/S2")
+            return {"optical_images": array, "metadata": batch["metadata"]}
+        if self.input_modality == "SAR":
+            sar = [image["S1"] if isinstance(image, dict) else image for image in images]
+            array = self._prepare_array(sar, self.expected_s1_bands, "SAR/S1")
+            return {"SAR_images": array, "metadata": batch["metadata"]}
+        if not all(isinstance(image, dict) for image in images):
+            raise CROMAConfigurationError("CROMA both mode requires paired dict samples with S1 and S2 arrays.")
+        sar = [image["S1"] for image in images]
+        optical = [image["S2"] for image in images]
+        return {
+            "SAR_images": self._prepare_array(sar, self.expected_s1_bands, "SAR/S1"),
+            "optical_images": self._prepare_array(optical, self.expected_s2_bands, "optical/S2"),
+            "metadata": batch["metadata"],
+        }
+
+    def _prepare_array(self, images: Sequence[Any], expected_channels: int, name: str) -> np.ndarray:
         array = np.stack(images).astype(np.float32)
         if array.ndim != 4:
-            raise CROMAConfigurationError(f"Expected CROMA input shape [batch, bands, height, width], got {array.shape}.")
-        if array.shape[1] != self.expected_bands:
+            raise CROMAConfigurationError(f"Expected CROMA {name} input shape [batch, bands, height, width], got {array.shape}.")
+        if array.shape[1] != expected_channels:
             raise CROMAConfigurationError(
-                f"Configured expected_bands={self.expected_bands} but input has {array.shape[1]} channels."
+                f"Configured {name} expected channels={expected_channels} but input has {array.shape[1]} channels."
             )
         self._log_profile(array.shape[1])
         array = self._resize_if_needed(array)
-        array = self._official_channel_scale(array)
-        return {"optical_images": array, "metadata": batch["metadata"]}
+        return self._official_channel_scale(array)
 
     def _log_profile(self, channels: int) -> None:
         if self._logged_profile:
             return
         print(
             "[info] CROMA profile: "
-            f"modality={self.input_modality} expected_bands={self.expected_bands} "
+            f"modality={self.input_modality} expected_s1_bands={self.expected_s1_bands} expected_s2_bands={self.expected_s2_bands} "
             f"input_channels={channels} image_size={self.image_size}"
         )
         self._logged_profile = True
@@ -275,17 +294,20 @@ class CROMAAdapter(ModelAdapter):
     def extract_embeddings(self, batch: Mapping[str, Any]) -> np.ndarray:
         if self.model is None:
             raise RuntimeError("load_model() must be called before extract_embeddings().")
-        optical_images = batch["optical_images"]
         if hasattr(self.model, "extract_embeddings"):
-            embeddings = self.model.extract_embeddings(optical_images)
+            embeddings = self._extract_mock_embeddings(batch)
             return np.asarray(embeddings, dtype=np.float32)
         try:
             import torch
         except ImportError as exc:
             raise CROMAConfigurationError("PyTorch is required to run a real CROMA model.") from exc
-        tensor = torch.as_tensor(optical_images, dtype=torch.float32).to(self._resolve_device())
+        kwargs: dict[str, Any] = {}
+        if "SAR_images" in batch:
+            kwargs["SAR_images"] = torch.as_tensor(batch["SAR_images"], dtype=torch.float32).to(self._resolve_device())
+        if "optical_images" in batch:
+            kwargs["optical_images"] = torch.as_tensor(batch["optical_images"], dtype=torch.float32).to(self._resolve_device())
         with torch.no_grad():
-            outputs = self.model(optical_images=tensor)
+            outputs = self.model(**kwargs)
         if not isinstance(outputs, Mapping):
             raise CROMAConfigurationError("Official CROMA model output is expected to be a mapping of embedding tensors.")
         if self.embedding_key not in outputs:
@@ -300,6 +322,16 @@ class CROMAAdapter(ModelAdapter):
         if embeddings.ndim > 2:
             embeddings = embeddings.reshape(embeddings.shape[0], -1)
         return embeddings
+
+    def _extract_mock_embeddings(self, batch: Mapping[str, Any]) -> Any:
+        if self.input_modality == "SAR":
+            return self.model.extract_embeddings(batch["SAR_images"])
+        if self.input_modality == "optical":
+            return self.model.extract_embeddings(batch["optical_images"])
+        try:
+            return self.model.extract_embeddings(batch["SAR_images"], batch["optical_images"])
+        except TypeError:
+            return self.model.extract_embeddings({"SAR_images": batch["SAR_images"], "optical_images": batch["optical_images"]})
 
     def get_supported_modalities(self) -> Sequence[str]:
         return self.supported_modalities

@@ -3,7 +3,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from rsfm_fairness_audit.pipeline import compare_model_runs, build_real_adapters, run_dummy_pipeline, run_real_pipeline
+from rsfm_fairness_audit.pipeline import (
+    build_real_adapters,
+    compare_model_runs,
+    compare_sensor_mode_runs,
+    run_dummy_pipeline,
+    run_real_pipeline,
+)
 from rsfm_fairness_audit.preflight import checks_to_json, run_real_preflight
 
 
@@ -31,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     dummy.add_argument("--seed", type=int, default=7)
 
     real = subparsers.add_parser("run-real", help="Run a subset-first real dataset/model smoke audit.")
-    real.add_argument("--dataset", choices=["bigearthnet"], required=True)
+    real.add_argument("--dataset", choices=["bigearthnet", "ben_ge"], required=True)
     real.add_argument("--model", choices=["dofa", "croma"], required=True)
     real.add_argument("--data-root", "--dataset-root", dest="data_root", type=Path, required=True)
     real.add_argument("--metadata-path", type=Path)
@@ -55,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     check = subparsers.add_parser("check-real", help="Preflight-check a real dataset/model smoke run.")
-    check.add_argument("--dataset", choices=["bigearthnet"], required=True)
+    check.add_argument("--dataset", choices=["bigearthnet", "ben_ge"], required=True)
     check.add_argument("--model", choices=["dofa", "croma"], required=True)
     check.add_argument("--model-config", type=Path, required=True)
     check.add_argument("--data-root", type=Path, required=True)
@@ -74,6 +80,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Model/run pair in the form model_name=path_to_output_dir. Repeat for DOFA and CROMA.",
     )
     compare.add_argument("--output-dir", type=Path, default=Path("outputs/model_comparison"))
+
+    sensor_compare = subparsers.add_parser("compare-sensor-modes", help="Compare CROMA SAR/optical/both completed runs.")
+    sensor_compare.add_argument("--dataset", default="ben_ge")
+    sensor_compare.add_argument(
+        "--run",
+        action="append",
+        required=True,
+        help="Sensor-mode/run pair in the form sar=path, optical=path, or both=path.",
+    )
+    sensor_compare.add_argument("--output-dir", type=Path, default=Path("outputs/comparisons/croma_sensor_modes"))
     return parser
 
 
@@ -137,6 +153,17 @@ def main() -> None:
             runs[model_name.strip()] = Path(run_dir.strip())
         artifacts = compare_model_runs(runs, args.output_dir, dataset_name=args.dataset)
         print(f"Model comparison complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "compare-sensor-modes":
+        runs = {}
+        for item in args.run:
+            if "=" not in item:
+                raise SystemExit("--run must use the form sensor_mode=path_to_output_dir")
+            sensor_mode, run_dir = item.split("=", 1)
+            runs[sensor_mode.strip()] = Path(run_dir.strip())
+        artifacts = compare_sensor_mode_runs(runs, args.output_dir, dataset_name=args.dataset)
+        print(f"Sensor-mode comparison complete: {args.output_dir}")
         for name, path in artifacts.items():
             print(f"{name}: {path}")
 

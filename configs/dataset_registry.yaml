@@ -46,6 +46,35 @@ datasets:
       - https://bigearth.net/static/documents/Description_BigEarthNet_v2.pdf
       - https://zenodo.org/records/10891137
 
+  ben_ge_800:
+    status: verified
+    role_in_project: Immediate lightweight paired S1/S2 dataset for Phase 2B CROMA sensor-conditioned fairness.
+    task_family: european_multimodal_land_cover_classification
+    geographic_coverage: BigEarthNet-derived European patches with lat/lon and climatezone metadata
+    label_type: BigEarthNet multi-label land-cover labels with scalar primary-label fallback for smoke probes
+    modalities: [sentinel-1_vv_vh, sentinel-2_12_band, climatezone, dem, esa_worldcover, era5]
+    access_url:
+      zenodo: https://zenodo.org/records/12941231
+      project_repo: https://github.com/HSG-AIML/ben-ge
+    license_or_terms: cc-by-4.0
+    expected_size:
+      compressed: approximately_183MB
+      unpacked: approximately_424MB
+      samples: 800
+    metadata_available_for_region_slicing:
+      available: true
+      fields: [patch_id, patch_id_s1, lon, lat, climatezone, timestamp_s1, timestamp_s2]
+    sensor_slicing_possible: true
+    recommended_first_subset: 64 paired samples for CROMA SAR/optical/both smoke comparison.
+    known_biases:
+      - small curated 800-patch subset is not paper-scale evidence
+      - region fallback uses climatezone unless verified country/admin metadata is added
+      - scalar primary-label probe collapses multi-label BigEarthNet labels for smoke evaluation
+    fairness_slices_supported: [climatezone, sensor_mode, label, climatezone_label]
+    sources:
+      - https://zenodo.org/records/12941231
+      - https://github.com/HSG-AIML/ben-ge
+
   fmow_global_classification:
     status: verified
     role_in_project: Official global scene/land-use classification fallback because an official fMoW-Sentinel release was not verified.

@@ -14,7 +14,12 @@ from rsfm_fairness_audit.pipeline import compare_model_runs, run_real_pipeline
 
 
 class MockCROMAModel:
-    def extract_embeddings(self, optical_images: np.ndarray) -> np.ndarray:
+    def extract_embeddings(self, *inputs) -> np.ndarray:
+        if len(inputs) == 1 and isinstance(inputs[0], dict):
+            arrays = [inputs[0]["SAR_images"], inputs[0]["optical_images"]]
+        else:
+            arrays = list(inputs)
+        optical_images = np.concatenate(arrays, axis=1)
         return np.concatenate(
             [
                 optical_images.mean(axis=(2, 3)),
@@ -98,10 +103,48 @@ def test_croma_rejects_wrong_channel_count() -> None:
         adapter.preprocess(batch)
 
 
-def test_croma_rejects_sar_and_both_for_phase2a() -> None:
+def test_croma_both_requires_paired_samples() -> None:
     adapter = CROMAAdapter(input_modality="both", model=MockCROMAModel())
-    with pytest.raises(CROMAConfigurationError, match="Phase 2A only supports"):
-        adapter.load_model()
+    batch = {
+        "samples": [{"image": np.zeros((12, 16, 16), dtype=np.float32)}],
+        "metadata": [{"sample_id": "x"}],
+    }
+    with pytest.raises(CROMAConfigurationError, match="paired dict"):
+        adapter.preprocess(batch)
+
+
+def test_croma_sar_mock_accepts_2_channel_inputs() -> None:
+    adapter = CROMAAdapter(input_modality="SAR", model=MockCROMAModel(), image_size=16)
+    batch = {
+        "samples": [{"image": np.zeros((2, 16, 16), dtype=np.float32)}],
+        "metadata": [{"sample_id": "x"}],
+    }
+    adapter.load_model()
+    processed = adapter.preprocess(batch)
+    embeddings = adapter.extract_embeddings(processed)
+    assert processed["SAR_images"].shape == (1, 2, 16, 16)
+    assert embeddings.shape == (1, 4)
+
+
+def test_croma_both_mock_accepts_paired_inputs() -> None:
+    adapter = CROMAAdapter(input_modality="both", model=MockCROMAModel(), image_size=16)
+    batch = {
+        "samples": [
+            {
+                "image": {
+                    "S1": np.zeros((2, 16, 16), dtype=np.float32),
+                    "S2": np.zeros((12, 16, 16), dtype=np.float32),
+                }
+            }
+        ],
+        "metadata": [{"sample_id": "x"}],
+    }
+    adapter.load_model()
+    processed = adapter.preprocess(batch)
+    embeddings = adapter.extract_embeddings(processed)
+    assert processed["SAR_images"].shape == (1, 2, 16, 16)
+    assert processed["optical_images"].shape == (1, 12, 16, 16)
+    assert embeddings.shape == (1, 28)
 
 
 def test_run_real_with_mock_croma_writes_expected_artifacts() -> None:

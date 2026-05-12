@@ -145,3 +145,36 @@ python -m rsfm_fairness_audit.cli compare-runs `
 True CROMA sensor fairness is Phase 2B and requires a verified aligned S1/S2
 dataset. The lc-col smoke path is S2-only and must not be used to claim
 SAR-vs-optical fairness.
+
+## Phase 2B CROMA Sensor Fairness On BEN-GE-800
+
+Phase 2B uses BEN-GE-800, a lightweight paired Sentinel-1/Sentinel-2 subset,
+to compare CROMA SAR-only, optical-only, and S1+S2 fusion modes. The Colab
+workflow is:
+
+- [CROMA BEN-GE-800 sensor fairness notebook](D:/Codex/rsfm-fairness-audit/notebooks/croma_benge800_sensor_fairness_colab.ipynb)
+
+Core commands:
+
+```powershell
+python scripts/prepare_ben_ge_800_subset.py `
+  --output-dir data/ben_ge_800_subset64 `
+  --max-samples 64 `
+  --seed 42
+
+python -m rsfm_fairness_audit.cli run-real `
+  --dataset ben_ge `
+  --model croma `
+  --data-root data/ben_ge_800_subset64 `
+  --sensor-mode S1+S2 `
+  --model-config configs/models/croma_both.yaml `
+  --output-dir outputs/croma_benge800_both64 `
+  --max-samples 64
+
+python -m rsfm_fairness_audit.cli compare-sensor-modes `
+  --dataset ben_ge `
+  --run sar=outputs/croma_benge800_sar64 `
+  --run optical=outputs/croma_benge800_optical64 `
+  --run both=outputs/croma_benge800_both64 `
+  --output-dir outputs/comparisons/croma_benge800_sensor64
+```

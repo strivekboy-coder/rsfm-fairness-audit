@@ -7,6 +7,7 @@ from typing import Mapping
 import numpy as np
 
 from rsfm_fairness_audit.adapters.base import DatasetAdapter, ModelAdapter
+from rsfm_fairness_audit.adapters.ben_ge import BenGEDatasetAdapter
 from rsfm_fairness_audit.adapters.bigearthnet import BigEarthNetDatasetAdapter
 from rsfm_fairness_audit.adapters.croma import CROMAAdapter
 from rsfm_fairness_audit.adapters.dofa import DOFAAdapter
@@ -215,18 +216,27 @@ def build_real_adapters(
     allow_torch_hub_download: bool = False,
     model_config: str | Path | None = None,
 ) -> tuple[DatasetAdapter, ModelAdapter]:
-    if dataset_name != "bigearthnet":
-        raise ValueError("Real smoke runs currently implement dataset='bigearthnet'.")
+    if dataset_name not in {"bigearthnet", "ben_ge"}:
+        raise ValueError("Real smoke runs currently implement dataset='bigearthnet' or dataset='ben_ge'.")
     if model_name not in {"dofa", "croma"}:
         raise ValueError("Real smoke runs currently implement model='dofa' or model='croma'.")
-    dataset = BigEarthNetDatasetAdapter(
-        data_root=data_root,
-        metadata_path=metadata_path,
-        subset_manifest_path=subset_manifest_path,
-        subset_size=subset_size,
-        split=split,
-        sensor_mode=sensor_mode,
-    )
+    if dataset_name == "bigearthnet":
+        dataset = BigEarthNetDatasetAdapter(
+            data_root=data_root,
+            metadata_path=metadata_path,
+            subset_manifest_path=subset_manifest_path,
+            subset_size=subset_size,
+            split=split,
+            sensor_mode=sensor_mode,
+        )
+    else:
+        dataset = BenGEDatasetAdapter(
+            data_root=data_root,
+            metadata_path=metadata_path,
+            subset_size=subset_size,
+            split=split,
+            sensor_mode=sensor_mode,
+        )
     if model_name == "dofa":
         if model_config is not None:
             config = load_yaml(model_config)
@@ -320,3 +330,102 @@ def _plot_model_comparison(rows: list[dict[str, object]], output_path: Path) -> 
     fig.tight_layout()
     fig.savefig(output_path, dpi=180)
     plt.close(fig)
+
+
+def compare_sensor_mode_runs(
+    runs: Mapping[str, str | Path],
+    output_dir: str | Path,
+    dataset_name: str = "ben_ge",
+) -> dict[str, Path]:
+    output = ensure_dir(output_dir)
+    tables_dir = ensure_dir(output / "tables")
+    figures_dir = ensure_dir(output / "figures")
+    rows: list[dict[str, object]] = []
+    for sensor_mode, run_dir_value in runs.items():
+        run_dir = Path(run_dir_value)
+        summary_rows = read_csv_rows(run_dir / "fairness_summary.csv")
+        gap_rows = read_csv_rows(run_dir / "raw_vs_balanced_gap.csv")
+        raw_region = next((row for row in summary_rows if row.get("gap_name") == "raw_region_gap"), {})
+        rows.append(
+            {
+                "sensor_mode": sensor_mode,
+                "dataset": dataset_name,
+                "run_dir": str(run_dir),
+                "average_performance": _float_or_nan(raw_region, "average_performance"),
+                "worst_group": raw_region.get("worst_group", ""),
+                "worst_group_performance": _float_or_nan(raw_region, "worst_region_performance"),
+                "best_worst_gap": _float_or_nan(raw_region, "best_worst_gap"),
+                "balanced_gap": _gap_value(gap_rows, "balanced_fairness_gap"),
+            }
+        )
+    table_path = tables_dir / "sensor_mode_comparison.csv"
+    write_csv(table_path, rows)
+    heatmap_path = figures_dir / "sensor_fairness_heatmap.png"
+    scatter_path = figures_dir / "average_vs_worst_sensor_mode.png"
+    _plot_sensor_mode_heatmap(rows, heatmap_path)
+    _plot_sensor_mode_scatter(rows, scatter_path)
+    report_path = output / "report.md"
+    _write_sensor_mode_report(report_path, rows)
+    return {
+        "sensor_mode_comparison": table_path,
+        "sensor_fairness_heatmap": heatmap_path,
+        "average_vs_worst_sensor_mode": scatter_path,
+        "report": report_path,
+    }
+
+
+def _plot_sensor_mode_heatmap(rows: list[dict[str, object]], output_path: Path) -> None:
+    import matplotlib.pyplot as plt
+
+    ensure_dir(output_path.parent)
+    modes = [str(row["sensor_mode"]) for row in rows]
+    values = np.asarray(
+        [[float(row["average_performance"]), float(row["worst_group_performance"]), float(row["best_worst_gap"])] for row in rows],
+        dtype=float,
+    )
+    fig, ax = plt.subplots(figsize=(7, max(2.5, 0.5 * len(rows))))
+    image = ax.imshow(values, aspect="auto", cmap="viridis")
+    ax.set_yticks(np.arange(len(modes)), labels=modes)
+    ax.set_xticks(np.arange(3), labels=["average", "worst", "gap"])
+    fig.colorbar(image, ax=ax, fraction=0.05)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
+
+
+def _plot_sensor_mode_scatter(rows: list[dict[str, object]], output_path: Path) -> None:
+    import matplotlib.pyplot as plt
+
+    ensure_dir(output_path.parent)
+    fig, ax = plt.subplots(figsize=(6, 4))
+    for row in rows:
+        ax.scatter(row["average_performance"], row["worst_group_performance"], s=80)
+        ax.annotate(str(row["sensor_mode"]), (row["average_performance"], row["worst_group_performance"]), xytext=(6, 6), textcoords="offset points")
+    ax.plot([0, 1], [0, 1], color="0.7", linewidth=1)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_xlabel("Average performance")
+    ax.set_ylabel("Worst-group performance")
+    ax.set_title("CROMA Sensor-Mode Fairness")
+    ax.grid(True, alpha=0.25)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
+
+
+def _write_sensor_mode_report(path: Path, rows: list[dict[str, object]]) -> None:
+    lines = [
+        "# CROMA BEN-GE-800 Sensor-Mode Comparison",
+        "",
+        "Phase 2B compares CROMA SAR-only, optical-only, and S1+S2 fusion on paired BEN-GE-800 samples.",
+        "",
+        "| sensor_mode | average | worst_group | worst | gap | balanced_gap |",
+        "|---|---:|---|---:|---:|---:|",
+    ]
+    for row in rows:
+        lines.append(
+            "| {sensor_mode} | {average_performance:.4f} | {worst_group} | {worst_group_performance:.4f} | {best_worst_gap:.4f} | {balanced_gap:.4f} |".format(
+                **row
+            )
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")

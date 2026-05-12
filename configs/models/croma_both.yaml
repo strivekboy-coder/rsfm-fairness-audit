@@ -1,0 +1,15 @@
+model_size: base
+checkpoint_path: null
+repo_path: null
+source_file_path: null
+hf_repo_id: antofuller/CROMA
+hf_checkpoint_filename: CROMA_base.pt
+allow_hf_download: true
+device: auto
+batch_size: 1
+input_modality: both
+expected_s1_bands: 2
+expected_s2_bands: 12
+image_size: 120
+embedding_key: joint_GAP
+preprocessing: official_croma_channel_scale

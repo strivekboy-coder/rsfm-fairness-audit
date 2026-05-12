@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from rsfm_fairness_audit.adapters.ben_ge import BenGEDatasetAdapter, BenGEDatasetError
 from rsfm_fairness_audit.adapters.bigearthnet import BigEarthNetDatasetAdapter, BigEarthNetDatasetError
 from rsfm_fairness_audit.config import ConfigError, load_yaml
 
@@ -41,8 +42,8 @@ def run_real_preflight(
     checks: list[PreflightCheck] = []
     if model not in {"dofa", "croma"}:
         return [PreflightCheck("model", "fail", "Preflight only supports model='dofa' or model='croma'.")]
-    if dataset != "bigearthnet":
-        return [PreflightCheck("dataset", "fail", "Preflight only supports dataset='bigearthnet'.")]
+    if dataset not in {"bigearthnet", "ben_ge"}:
+        return [PreflightCheck("dataset", "fail", "Preflight only supports dataset='bigearthnet' or dataset='ben_ge'.")]
 
     config: dict[str, Any] = {}
     try:
@@ -70,10 +71,8 @@ def run_real_preflight(
                     "expected_bands must match wavelength_list length before real DOFA inference.",
                 )
             )
-    elif expected_bands == 12:
-        checks.append(PreflightCheck("croma_bands", "pass", "CROMA optical Phase 2A expects 12 Sentinel-2 channels."))
     else:
-        checks.append(PreflightCheck("croma_bands", "fail", "CROMA optical Phase 2A requires expected_bands: 12."))
+        _append_croma_band_checks(checks, config)
 
     root = Path(data_root)
     checks.append(
@@ -86,31 +85,44 @@ def run_real_preflight(
 
     if root.exists():
         try:
-            adapter = BigEarthNetDatasetAdapter(
-                data_root=root,
-                metadata_path=metadata_path,
-                subset_manifest_path=subset_manifest_path,
-                subset_size=1,
-                split=split,
-                sensor_mode=sensor_mode,
-            )
+            if dataset == "bigearthnet":
+                adapter = BigEarthNetDatasetAdapter(
+                    data_root=root,
+                    metadata_path=metadata_path,
+                    subset_manifest_path=subset_manifest_path,
+                    subset_size=1,
+                    split=split,
+                    sensor_mode=sensor_mode,
+                )
+            else:
+                adapter = BenGEDatasetAdapter(
+                    data_root=root,
+                    metadata_path=metadata_path,
+                    subset_size=1,
+                    split=split,
+                    sensor_mode=sensor_mode,
+                )
             metadata = adapter.load_metadata()
             sample = adapter.load_sample(0)
             image = sample["image"]
             shape = getattr(image, "shape", None)
-            checks.append(PreflightCheck("bigearthnet_metadata", "pass", f"Loaded one metadata row: {metadata[0].get('sample_id')}"))
-            if shape is not None and expected_bands is not None and int(shape[0]) != int(expected_bands):
+            checks.append(PreflightCheck(f"{dataset}_metadata", "pass", f"Loaded one metadata row: {metadata[0].get('sample_id')}"))
+            if isinstance(image, dict):
+                s1_shape = getattr(image.get("S1"), "shape", None)
+                s2_shape = getattr(image.get("S2"), "shape", None)
+                checks.append(PreflightCheck(f"{dataset}_sample", "pass", f"Loaded paired sample with S1 shape {s1_shape} and S2 shape {s2_shape}."))
+            elif shape is not None and expected_bands is not None and int(shape[0]) != int(expected_bands):
                 checks.append(
                     PreflightCheck(
-                        "bigearthnet_bands",
+                        f"{dataset}_bands",
                         "fail",
                         f"First chip has {shape[0]} bands but {model.upper()} config expects {expected_bands}.",
                     )
                 )
             else:
-                checks.append(PreflightCheck("bigearthnet_sample", "pass", f"Loaded first chip with shape {shape}."))
-        except (BigEarthNetDatasetError, ValueError, OSError) as exc:
-            checks.append(PreflightCheck("bigearthnet_metadata", "fail", str(exc)))
+                checks.append(PreflightCheck(f"{dataset}_sample", "pass", f"Loaded first chip with shape {shape}."))
+        except (BigEarthNetDatasetError, BenGEDatasetError, ValueError, OSError) as exc:
+            checks.append(PreflightCheck(f"{dataset}_metadata", "fail", str(exc)))
 
     for module in ["numpy", "matplotlib", "yaml"]:
         checks.append(
@@ -192,10 +204,10 @@ def _append_croma_preflight_checks(checks: list[PreflightCheck], config: dict[st
     hf_repo_id = str(config.get("hf_repo_id", ""))
     hf_filename = str(config.get("hf_checkpoint_filename", ""))
     modality = str(config.get("input_modality", ""))
-    if modality == "optical":
-        checks.append(PreflightCheck("croma_modality", "pass", "CROMA Phase 2A is configured for optical-only S2 inference."))
+    if modality in {"optical", "SAR", "both"}:
+        checks.append(PreflightCheck("croma_modality", "pass", f"CROMA is configured for modality={modality}."))
     else:
-        checks.append(PreflightCheck("croma_modality", "fail", "Phase 2A requires input_modality: optical. SAR/both are Phase 2B."))
+        checks.append(PreflightCheck("croma_modality", "fail", "CROMA input_modality must be optical, SAR, or both."))
     if hf_repo_id == "antofuller/CROMA" and hf_filename in {"CROMA_base.pt", "CROMA_large.pt"}:
         checks.append(PreflightCheck("croma_hf_checkpoint", "pass", f"Official CROMA checkpoint target: {hf_repo_id}/{hf_filename}"))
     else:
@@ -247,6 +259,21 @@ def _append_croma_preflight_checks(checks: list[PreflightCheck], config: dict[st
                 "Set source_file_path to official use_croma.py or repo_path to a local clone of https://github.com/antofuller/CROMA.",
             )
         )
+
+
+def _append_croma_band_checks(checks: list[PreflightCheck], config: dict[str, Any]) -> None:
+    modality = str(config.get("input_modality", "optical"))
+    expected_bands = config.get("expected_bands")
+    expected_s1 = config.get("expected_s1_bands")
+    expected_s2 = config.get("expected_s2_bands", expected_bands)
+    if modality == "SAR" and expected_s1 == 2:
+        checks.append(PreflightCheck("croma_bands", "pass", "CROMA SAR mode expects 2 Sentinel-1 channels."))
+    elif modality == "optical" and expected_s2 == 12:
+        checks.append(PreflightCheck("croma_bands", "pass", "CROMA optical mode expects 12 Sentinel-2 channels."))
+    elif modality == "both" and expected_s1 == 2 and expected_s2 == 12:
+        checks.append(PreflightCheck("croma_bands", "pass", "CROMA both mode expects 2 S1 channels and 12 S2 channels."))
+    else:
+        checks.append(PreflightCheck("croma_bands", "fail", "CROMA band counts must match modality: SAR=2 S1, optical=12 S2, both=2+12."))
 
 
 def checks_to_json(checks: list[PreflightCheck]) -> str:
