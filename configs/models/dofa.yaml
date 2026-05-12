@@ -1,0 +1,28 @@
+# Official DOFA-ready configuration for subset smoke runs.
+# Local paths are intentionally left null. Fill them in for real inference.
+
+model_variant: vit_base_dofa
+
+# Option A: clone https://github.com/zhu-xlab/DOFA locally and point repo_path
+# at that clone; download DOFA_ViT_base_e100.pth yourself from the official HF
+# or Zenodo source and set checkpoint_path.
+repo_path: null
+checkpoint_path: null
+
+# Option B: set allow_torch_hub_download: true to use:
+# torch.hub.load("zhu-xlab/DOFA", "vit_base_dofa", pretrained=True)
+# This may download the official 448 MB checkpoint, so it is false by default.
+torch_hub_repo: zhu-xlab/DOFA
+allow_torch_hub_download: false
+
+device: cpu
+batch_size: 4
+input_modality: S2
+expected_bands: 9
+wavelength_list: [0.665, 0.56, 0.49, 0.705, 0.74, 0.783, 0.842, 1.61, 2.19]
+image_size: 224
+embedding_layer: forward_features
+
+# Official README Sentinel-2 demo normalization constants.
+normalization_mean: [114.1099739, 114.81779093, 126.63977424, 84.33539309, 97.84789168, 103.94461911, 101.435633, 72.32804172, 56.66528851]
+normalization_std: [77.84352553, 69.96844919, 67.42465279, 64.57022983, 61.72545487, 61.34187099, 60.29744676, 47.88519516, 42.55886798]

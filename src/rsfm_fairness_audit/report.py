@@ -44,3 +44,59 @@ def write_static_report(output_dir: str | Path, summary_rows: Sequence[dict], ga
     path = output / "report.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
+
+
+def write_real_report(
+    output_dir: str | Path,
+    dataset_name: str,
+    model_name: str,
+    summary_rows: Sequence[dict],
+    gap_rows: Sequence[dict],
+    map_generated: bool,
+) -> Path:
+    output = Path(output_dir)
+    lines = [
+        f"# {model_name} on {dataset_name} Smoke Report",
+        "",
+        "This is a subset-first smoke experiment. It is not a full scientific benchmark run.",
+        "",
+        "## Summary",
+        "",
+        "| Gap | Average | Worst | Best-Worst Gap | Worst Group |",
+        "| --- | ---: | ---: | ---: | --- |",
+    ]
+    for row in summary_rows:
+        lines.append(
+            f"| {row['gap_name']} | {row['average_performance']:.3f} | "
+            f"{row['worst_region_performance']:.3f} | {row['best_worst_gap']:.3f} | {row['worst_group']} |"
+        )
+    lines.extend(["", "## Raw vs Balanced", ""])
+    lines.append("| Slice | Raw Gap | Balanced Gap | Residual Gap |")
+    lines.append("| --- | ---: | ---: | ---: |")
+    for row in gap_rows:
+        lines.append(
+            f"| {row['slice_name']} | {row['raw_fairness_gap']:.3f} | "
+            f"{row['balanced_fairness_gap']:.3f} | {row['residual_gap_after_balancing']:.3f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Figures",
+            "",
+            "![Average vs worst](average_vs_worst.png)",
+            "",
+            "![Sensor fairness heatmap](sensor_fairness_heatmap.png)",
+            "",
+            "![Representation shift](representation_shift.png)",
+            "",
+        ]
+    )
+    if map_generated:
+        lines.append("![Fairness map](fairness_map.png)")
+    else:
+        lines.append(
+            "Map visualization skipped because this subset did not provide verified latitude/longitude coordinates."
+        )
+    path = output / "report.md"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path

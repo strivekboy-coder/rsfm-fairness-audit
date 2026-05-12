@@ -28,6 +28,14 @@ models:
     official_repo_url: https://github.com/zhu-xlab/DOFA
     huggingface_model_url: https://huggingface.co/earthflow/DOFA
     demo_or_colab_url: https://github.com/zhu-xlab/DOFA/blob/main/demo.ipynb
+    official_checkpoint_url:
+      base_minimal: https://huggingface.co/earthflow/DOFA/resolve/main/DOFA_ViT_base_e100.pth
+      zenodo_record: https://zenodo.org/records/11002557
+      full_weight_file: https://huggingface.co/earthflow/DOFA/blob/main/DOFA_ViT_base_e100_full_weight.pth
+    model_variant_names:
+      torch_hub_entrypoint: vit_base_dofa
+      local_constructor: vit_base_patch16
+      other_repo_constructors_to_verify: [vit_small_patch16, vit_large_patch16, vit_huge_patch14]
     license:
       model_card: cc-by-4.0
       code_repository: mit
@@ -49,8 +57,12 @@ models:
       - apply modality-specific normalization constants from official code
       - provide wave_list wavelengths in micrometers to forward_features/forward
     checkpoint_loading_plan:
-      - use torch.hub.load('zhu-xlab/DOFA', 'vit_base_dofa', pretrained=True) for minimal reproduction
-      - alternatively load earthflow/DOFA weights only after pinning checkpoint filename from official HF files
+      - default project config does not download weights
+      - use local official repo_path plus explicit checkpoint_path for reproducible real smoke runs
+      - use torch.hub.load('zhu-xlab/DOFA', 'vit_base_dofa', pretrained=True) only when allow_torch_hub_download is true
+    expected_output:
+      embedding_layer: forward_features
+      representation: global pooled feature tensor from official DOFA v1 implementation
     first_minimal_reproduction_target: Extract embeddings for a tiny Sentinel-2 BigEarthNet v2 subset using official wavelength list.
     adapter_integration_plan:
       - implement load_model with torch.hub first, then optional local checkpoint path
@@ -61,10 +73,12 @@ models:
       - HF model card license and GitHub code license differ
       - official README says newer code/weights should be used; checkpoint choice must be pinned before experiments
       - Sentinel-2 official demo uses 9 channels, while several target datasets expose 10, 12, or 13 bands
+      - torch.hub checkpoint is approximately 448 MB and must not be downloaded implicitly
     sources:
       - https://huggingface.co/earthflow/DOFA
       - https://github.com/zhu-xlab/DOFA
       - https://huggingface.co/papers/2403.15356
+      - https://zenodo.org/records/11002557
 
   croma:
     status: verified

@@ -1,0 +1,19 @@
+# Optional environment for official DOFA inference.
+# Keep this separate from the base smoke-test install.
+
+torch
+torchvision
+timm
+kornia
+numpy
+PyYAML
+
+# Optional for converting or reading geospatial chips:
+rasterio
+
+# Notes:
+# - Python 3.10+ is recommended for this project.
+# - The base tests are CPU-safe and do not require this file.
+# - Linux or Colab is recommended for real checkpoint inference.
+# - Windows may work for torch.hub/local repo inference, but geospatial wheels
+#   such as rasterio are often easier to manage on Linux/conda.
