@@ -1,0 +1,178 @@
+datasets:
+  dummy_eo:
+    status: verified
+    role_in_project: CPU smoke-test dataset for sampler, metrics, visualization, and report validation.
+    task_family: synthetic_multiclass_classification
+    geographic_coverage: synthetic_regions
+    label_type: synthetic_single_label
+    modalities: [synthetic_multiband]
+    access_url: docs/reproduction/dummy_pipeline.md
+    license_or_terms: project_local
+    expected_size: configurable_default_240_samples
+    metadata_available_for_region_slicing: true
+    sensor_slicing_possible: true
+    recommended_first_subset: full_dummy_dataset
+    known_biases: intentionally_severe_region_class_sensor_intersectional_imbalance
+    fairness_slices_supported: [region, sensor, task, region_class, sensor_class]
+
+  bigearthnet_v2:
+    status: verified
+    role_in_project: First real dataset target for intra-European land-cover and Sentinel-1/Sentinel-2 modality fairness.
+    task_family: european_land_cover_classification_and_reference_map_learning
+    geographic_coverage: 10_European_countries
+    label_type: multi_label_CORINE_land_cover_labels_and_pixel_level_reference_maps
+    modalities: [sentinel-1, sentinel-2]
+    access_url:
+      homepage: https://bigearth.net/
+      zenodo: https://zenodo.org/records/10891137
+      description_pdf: https://bigearth.net/static/documents/Description_BigEarthNet_v2.pdf
+    license_or_terms: cdla-permissive-1.0
+    expected_size:
+      patch_pairs: 549488
+      sentinel-2_download: approximately_59GiB
+      sentinel-1_download: approximately_51GiB
+    metadata_available_for_region_slicing:
+      available: true
+      notes: official metadata.parquet exists; exact columns for country/coordinates/split must be verified in subset
+    sensor_slicing_possible: true
+    recommended_first_subset: metadata-filtered_subset_with_balanced_country_label_sensor_coverage_before_full_download
+    known_biases:
+      - Europe-only geographic coverage limits global conclusions
+      - country/tile/split imbalance must be measured before fairness claims
+      - multi-label CORINE taxonomy may create label-frequency imbalance
+    fairness_slices_supported: [country, tile, region, sensor, season_to_verify, climate_zone_to_verify, label, region_label]
+    sources:
+      - https://bigearth.net/
+      - https://bigearth.net/static/documents/Description_BigEarthNet_v2.pdf
+      - https://zenodo.org/records/10891137
+
+  fmow_global_classification:
+    status: verified
+    role_in_project: Official global scene/land-use classification fallback because an official fMoW-Sentinel release was not verified.
+    task_family: global_scene_land_use_classification
+    geographic_coverage: global_more_than_200_countries_to_verify_from_metadata
+    label_type: single_label_facility_building_land_use_category
+    modalities:
+      official_fmow_full: [4_band_multispectral, 8_band_multispectral]
+      official_fmow_rgb: [rgb]
+      fmow_sentinel_variant: unavailable_from_official_sources_in_this_pass
+    access_url:
+      official_repo: https://github.com/fMoW/dataset
+      aws: s3://spacenet-dataset/Hosted-Datasets/fmow/
+      paper: https://arxiv.org/abs/1711.07846
+    license_or_terms: Functional_Map_of_the_World_Challenge_Public_License
+    expected_size:
+      fmow_full: approximately_3.5TB
+      fmow_rgb: approximately_200GB
+    metadata_available_for_region_slicing:
+      available: true
+      notes: official README states metadata includes raw metadata and GPS coordinates in released ground truth archives
+    sensor_slicing_possible:
+      official_fmow: true_for_full_vs_rgb_and_band_count
+      sentinel_specific: unavailable
+    recommended_first_subset: fMoW-rgb or metadata-only sample for global region slicing prototype; do not use community Sentinel variants as official source.
+    known_biases:
+      - country codes may be invalid and should be recomputed from coordinates where needed
+      - challenge metadata handling differs between train/val/test/seq archives
+      - dataset scale is too large for first local experiment
+    fairness_slices_supported: [country, continent_from_coordinates, category, band_count, split, temporal_sequence_to_verify]
+    sources:
+      - https://github.com/fMoW/dataset
+      - https://www.iarpa.gov/challenges/fmow.html
+
+  sen1floods11:
+    status: verified
+    role_in_project: Disaster segmentation dataset for cross-region, ecoregion, flood-event, and sensor-modality fairness.
+    task_family: flood_water_semantic_segmentation
+    geographic_coverage: 6_continents_11_flood_events_all_14_biomes_357_ecoregions
+    label_type: water_non_water_invalid_segmentation_masks
+    modalities: [sentinel-1_vv_vh, sentinel-2_13_band_level-1c, hand_labels, otsu_labels]
+    access_url:
+      official_repo: https://github.com/cloudtostreet/Sen1Floods11
+      gcs_bucket: gs://sen1floods11/
+      paper: http://openaccess.thecvf.com/content_CVPRW_2020/html/w11/Bonafilia_Sen1Floods11_A_Georeferenced_Dataset_to_Train_and_Test_Deep_Learning_CVPRW_2020_paper.html
+    license_or_terms: to_verify_from_official_repo_or_bucket
+    expected_size:
+      official_download: approximately_14GB
+      chips: 4831_512x512_chips
+      hand_labeled_chips: 446_to_verify_against_current_bucket
+    metadata_available_for_region_slicing:
+      available: true
+      fields: [event_id, location, ISO_CC, s1_date, s2_date, orbit, relative_orbit, train_chip, val_chip]
+    sensor_slicing_possible: true
+    recommended_first_subset: hand-labeled validation/test chips grouped by flood event and ISO country.
+    known_biases:
+      - flood-event sampling is sparse and event-driven
+      - hand-labeled and weak labels must not be mixed without explicit slice labels
+      - cloud/invalid regions and flood-event dates can confound region comparisons
+    fairness_slices_supported: [country, flood_event, biome, ecoregion, orbit, sensor, label_source, split]
+    sources:
+      - https://github.com/cloudtostreet/Sen1Floods11
+      - http://openaccess.thecvf.com/content_CVPRW_2020/html/w11/Bonafilia_Sen1Floods11_A_Georeferenced_Dataset_to_Train_and_Test_Deep_Learning_CVPRW_2020_paper.html
+
+  cropharvest:
+    status: verified
+    role_in_project: Agriculture and temporal classification dataset for cross-region crop/non-crop and crop-type fairness.
+    task_family: agriculture_temporal_classification
+    geographic_coverage: global_geographically_diverse_samples
+    label_type: binary_crop_non_crop_and_multiclass_crop_labels
+    modalities: [sentinel-2, sentinel-1, srtm_dem, era5_climatology]
+    access_url:
+      official_repo: https://github.com/nasaharvest/cropharvest
+      zenodo: https://zenodo.org/records/10251170
+      paper: https://datasets-benchmarks-proceedings.neurips.cc/paper_files/paper/2021/hash/54229abfcfa5649e7003b83dd4755294-Abstract-round2.html
+    license_or_terms: cc-by-sa-4.0
+    expected_size:
+      datapoints: 95186
+      multiclass_labels: 33205
+      paired_with_remote_sensing_and_climatology: 70213
+      zenodo_files: approximately_27.7GB
+    metadata_available_for_region_slicing:
+      available: true
+      notes: labels.geojson supports geospatial slicing; exact country/admin fields to_verify
+    sensor_slicing_possible: true
+    recommended_first_subset: small country-balanced binary crop/non-crop subset before multiclass crop-type probing.
+    known_biases:
+      - constituent datasets differ by country, year, label taxonomy, and collection process
+      - multiclass labels are available for only a subset of datapoints
+      - crop/non-crop imbalance and regional label imbalance are expected
+    fairness_slices_supported: [country_or_region_from_geometry, dataset_source, crop_type, binary_label, year_to_verify, sensor]
+    sources:
+      - https://github.com/nasaharvest/cropharvest
+      - https://zenodo.org/records/10251170
+      - https://datasets-benchmarks-proceedings.neurips.cc/paper_files/paper/2021/hash/54229abfcfa5649e7003b83dd4755294-Abstract-round2.html
+
+  spacenet7:
+    status: verified
+    role_in_project: Optional extended urban/building temporal change fairness stress test.
+    task_family: building_footprint_tracking_temporal_change_detection
+    geographic_coverage: 101_AOIs_over_6_continents
+    label_type: building_footprint_polygons_with_persistent_ids_and_udm_masks
+    modalities: [planet_dove_monthly_mosaics]
+    access_url:
+      official_challenge: https://spacenet.ai/sn7-challenge/
+      aws: s3://spacenet-dataset/spacenet/SN7_buildings/
+      paper: https://arxiv.org/abs/2102.11958
+      huggingface_geobench2_mirror: https://huggingface.co/datasets/aialliance/spacenet7
+    license_or_terms: cc-by-sa-4.0
+    expected_size:
+      aois: 101
+      observations: 2389
+      total_area_km2: approximately_41000
+      building_annotations: approximately_11080000
+      mean_gsd_m: 4.0
+    metadata_available_for_region_slicing:
+      available: true
+      notes: AOI-level geography available; exact country/region fields to_verify from downloaded metadata
+    sensor_slicing_possible: false_single_planet_modality
+    recommended_first_subset: one or two AOIs with 24 monthly mosaics and labels for temporal change smoke tests.
+    known_biases:
+      - urban-only task and high building-density scenes limit generalization
+      - cloud/unusable-data masks affect temporal comparisons
+      - train/test AOI split can induce geographic distribution shift
+    fairness_slices_supported: [aoi, continent_to_verify, urban_density, time_index, cloud_udm_fraction, train_test_split]
+    sources:
+      - https://spacenet.ai/sn7-challenge/
+      - https://spacenet.ai/datasets/
+      - https://arxiv.org/abs/2102.11958
+      - https://huggingface.co/datasets/aialliance/spacenet7

@@ -1,0 +1,257 @@
+models:
+  dummy:
+    status: verified
+    role_in_project: CPU smoke-test model for end-to-end pipeline validation.
+    priority: milestone_1_reference
+    official_paper_url: synthetic
+    official_repo_url: synthetic
+    huggingface_model_url: synthetic
+    demo_or_colab_url: synthetic
+    license: project_local
+    supported_modalities: [sentinel-2, sentinel-1, landsat]
+    expected_input_bands: synthetic_8_band_tensor
+    expected_spatial_resolution: synthetic
+    expected_temporal_input: none
+    preprocessing_requirements: synthetic_normalization_inside_dummy_adapter
+    checkpoint_loading_plan: no_checkpoint_required
+    first_minimal_reproduction_target: run_dummy_pipeline
+    adapter_integration_plan: implemented
+    known_risks: synthetic_results_are_not_scientific_evidence
+    sources:
+      - docs/reproduction/dummy_pipeline.md
+
+  dofa:
+    status: verified
+    role_in_project: First real RSFM target; wavelength-aware multimodal embedding baseline for cross-sensor fairness audits.
+    priority: first_real_model
+    official_paper_url: https://arxiv.org/abs/2403.15356
+    official_repo_url: https://github.com/zhu-xlab/DOFA
+    huggingface_model_url: https://huggingface.co/earthflow/DOFA
+    demo_or_colab_url: https://github.com/zhu-xlab/DOFA/blob/main/demo.ipynb
+    license:
+      model_card: cc-by-4.0
+      code_repository: mit
+    supported_modalities:
+      verified_examples: [sentinel-1_sar, sentinel-2, naip_rgb]
+      stated_capability: any_number_of_channels_when_wavelengths_are_provided
+      to_verify: [gaofen_multispectral, hyperspectral]
+    expected_input_bands:
+      sentinel-1_sar: 2_channels_vv_vh
+      sentinel-2_example: 9_channels
+      naip_rgb: 3_channels
+      arbitrary_channels: requires_matching_wavelength_list
+    expected_spatial_resolution:
+      example_input_size: 224x224
+      native_resolution_handling: to_verify
+    expected_temporal_input: none_in_official_demo_examples
+    preprocessing_requirements:
+      - resize_or_prepare_inputs_to_adapter_shape
+      - apply modality-specific normalization constants from official code
+      - provide wave_list wavelengths in micrometers to forward_features/forward
+    checkpoint_loading_plan:
+      - use torch.hub.load('zhu-xlab/DOFA', 'vit_base_dofa', pretrained=True) for minimal reproduction
+      - alternatively load earthflow/DOFA weights only after pinning checkpoint filename from official HF files
+    first_minimal_reproduction_target: Extract embeddings for a tiny Sentinel-2 BigEarthNet v2 subset using official wavelength list.
+    adapter_integration_plan:
+      - implement load_model with torch.hub first, then optional local checkpoint path
+      - preprocess batch into tensor plus wave_list
+      - extract CLS/global features with forward_features
+      - expose supported modalities as wavelength-configured sensor presets
+    known_risks:
+      - HF model card license and GitHub code license differ
+      - official README says newer code/weights should be used; checkpoint choice must be pinned before experiments
+      - Sentinel-2 official demo uses 9 channels, while several target datasets expose 10, 12, or 13 bands
+    sources:
+      - https://huggingface.co/earthflow/DOFA
+      - https://github.com/zhu-xlab/DOFA
+      - https://huggingface.co/papers/2403.15356
+
+  croma:
+    status: verified
+    role_in_project: Radar-optical baseline for Sentinel-1/Sentinel-2 modality fairness and fused-vs-unimodal comparisons.
+    priority: high_after_dofa
+    official_paper_url: https://arxiv.org/abs/2311.00566
+    official_repo_url: https://github.com/antofuller/CROMA
+    huggingface_model_url: https://huggingface.co/antofuller/CROMA
+    demo_or_colab_url: https://github.com/antofuller/CROMA/blob/main/use_croma.py
+    license:
+      model_repository: mit
+      code_repository: mit
+    supported_modalities: [sentinel-1_sar, sentinel-2_multispectral, joint_sentinel-1_sentinel-2]
+    expected_input_bands:
+      sentinel-1_sar: 2_channels
+      sentinel-2_multispectral: 12_channels_remove_cirrus_if_necessary
+    expected_spatial_resolution:
+      default_image_size: 120x120
+      larger_test_images: supported_by_attention_biasing_but_adapter_limit_to_verify
+    expected_temporal_input: spatially_and_temporally_aligned_s1_s2_pairs; no_time_series_tensor_in_minimal_example
+    preprocessing_requirements:
+      - normalize each channel using mean +/- 2 std clipping as shown in official README
+      - optionally convert normalized images to 8-bit and divide by 255 before inference
+      - pass SAR_images and/or optical_images depending on modality mode
+    checkpoint_loading_plan:
+      - use official CROMA_base.pt for first reproduction
+      - use CROMA_large.pt only after base adapter is validated
+    first_minimal_reproduction_target: Extract SAR_GAP, optical_GAP, and joint_GAP on a tiny aligned S1/S2 BigEarthNet v2 subset.
+    adapter_integration_plan:
+      - vendor or import use_croma.py according to repository license
+      - load PretrainedCROMA with modality='both' for fused embeddings
+      - support sentinel-1-only and sentinel-2-only paths for fairness ablations
+    known_risks:
+      - CROMA requires spatially aligned radar-optical inputs for joint features
+      - BigEarthNet v2 S2 band conventions must be mapped carefully to 12-channel CROMA expectation
+      - official code examples assume CUDA, but Milestone 2 does not run the model
+    sources:
+      - https://github.com/antofuller/CROMA
+      - https://huggingface.co/antofuller/CROMA
+      - https://huggingface.co/papers/2311.00566
+      - https://papers.neurips.cc/paper_files/paper/2023/hash/11822e84689e631615199db3b75cd0e4-Abstract-Conference.html
+
+  prithvi-eo-2.0:
+    status: verified
+    role_in_project: Multi-temporal HLS foundation model for global and temporal fairness comparisons.
+    priority: medium
+    official_paper_url: https://arxiv.org/abs/2412.02732
+    official_repo_url: https://github.com/NASA-IMPACT/Prithvi-EO-2.0
+    huggingface_model_url: https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-300M
+    demo_or_colab_url:
+      - https://huggingface.co/spaces/ibm-nasa-geospatial/Prithvi-EO-2.0-Demo
+      - https://huggingface.co/spaces/ibm-nasa-geospatial/Prithvi-EO-2.0-Sen1Floods11-demo
+    license: apache-2.0
+    supported_modalities:
+      verified_pretraining_source: harmonized_landsat_sentinel-2_hls
+      target_use: optical_multispectral_time_series
+      to_verify: exact_supported_downstream_sensor_presets_in_terratorch
+    expected_input_bands:
+      hls_band_order: to_verify_from_official_terratorch_config
+      channel_count: to_verify_from_selected_checkpoint_config
+    expected_spatial_resolution: 30m_for_pretraining_hls_samples
+    expected_temporal_input:
+      sequence_input: true
+      temporal_metadata_for_tl_models: year_and_day_of_year
+      geolocation_metadata_for_tl_models: center_latitude_longitude
+    preprocessing_requirements:
+      - use TerraTorch registry for official loading path
+      - preserve temporal dimension T and H/W dimensions expected by checkpoint
+      - for TL models provide or explicitly drop geolocation/date metadata according to official model behavior
+    checkpoint_loading_plan:
+      - start with ibm-nasa-geospatial/Prithvi-EO-2.0-300M through TerraTorch BACKBONE_REGISTRY
+      - defer 600M and TL variants until adapter contract is validated
+    first_minimal_reproduction_target: Run embedding extraction on a tiny HLS-compatible or TerraTorch example batch, then map BigEarthNet only after band/resolution compatibility is confirmed.
+    adapter_integration_plan:
+      - load TerraTorch backbone from HF ID
+      - normalize and format batch according to selected checkpoint config
+      - expose temporal and non-temporal feature extraction paths separately
+    known_risks:
+      - target first dataset BigEarthNet is Sentinel-1/Sentinel-2 at European patch scale, not HLS 30m time series
+      - exact band order and normalization must come from selected TerraTorch model config before implementation
+      - official repo URL for EO 2.0 examples must be rechecked against TerraTorch documentation before coding
+    sources:
+      - https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-300M
+      - https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-300M-TL
+      - https://github.com/NASA-IMPACT/Prithvi-EO-2.0
+      - https://huggingface.co/papers/2412.02732
+      - https://ntrs.nasa.gov/citations/20240015391
+
+  clay:
+    status: verified
+    role_in_project: Geospatial-temporal embedding model for cross-sensor representation shift and fairness analysis.
+    priority: medium
+    official_paper_url: https://huggingface.co/made-with-clay/Clay
+    official_repo_url: https://github.com/Clay-foundation/model
+    huggingface_model_url: https://huggingface.co/made-with-clay/Clay
+    demo_or_colab_url: https://clay-foundation.github.io/model/getting-started/quickstart.html
+    license:
+      model_weights: apache-2.0
+      code_repository: apache-2.0
+      documentation: cc-by-4.0
+    supported_modalities:
+      v1_5_documented: [landsat-c2l1, landsat-c2l2-sr, linz, modis, naip, sentinel-1-rtc, sentinel-2-l2a]
+      extensible_new_sensors: requires_metadata_yaml_entry
+    expected_input_bands:
+      sentinel-2-l2a: 10_bands
+      sentinel-1-rtc: 2_bands
+      landsat-c2l1: 6_bands
+      landsat-c2l2-sr: 6_bands
+      naip: 4_bands
+      linz: 3_bands
+      modis: 7_bands
+    expected_spatial_resolution:
+      chip_size: 256x256
+      gsd: sensor_specific_from_metadata_yaml
+    expected_temporal_input:
+      required_keys: [time, latlon]
+      fallback: official_docs_allow_zero_tensors_when_missing
+    preprocessing_requirements:
+      - normalize pixels with sensor-specific means/stds from configs/metadata.yaml
+      - provide wavelengths and gsd from metadata.yaml
+      - provide latlon and time encodings or explicit zero tensors
+    checkpoint_loading_plan:
+      - install Clay package from official GitHub
+      - load made-with-clay/Clay v1.5 checkpoint with ClayMAEModule.load_from_checkpoint
+      - do not download checkpoint during registry milestone
+    first_minimal_reproduction_target: Generate embeddings for one Sentinel-2 L2A-style 10-band chip and one Sentinel-1 RTC-style 2-band chip.
+    adapter_integration_plan:
+      - use ClayDataModule conventions where possible
+      - build adapter batch dict with pixels/time/latlon/waves/gsd
+      - return CLS/global encoder embedding for probe training
+    known_risks:
+      - official docs and HF Transformers quickstart expose different loading surfaces
+      - BigEarthNet S2 band set must be mapped to Clay's sentinel-2-l2a 10-band metadata
+      - time/latlon zero fallback should be audited because fairness analysis depends on geographic metadata
+    sources:
+      - https://huggingface.co/made-with-clay/Clay
+      - https://github.com/Clay-foundation/model
+      - https://clay-foundation.github.io/model/
+      - https://clay-foundation.github.io/model/getting-started/basic_use.html
+      - https://clay-foundation.github.io/model/tutorials/embeddings.html
+
+  anysat:
+    status: verified
+    role_in_project: Flexible multi-resolution, multi-modality RSFM for later broad sensor/task fairness comparisons.
+    priority: later
+    official_paper_url: https://arxiv.org/abs/2412.14123
+    official_repo_url: https://github.com/gastruc/AnySat
+    huggingface_model_url: https://huggingface.co/g-astruc/AnySat
+    demo_or_colab_url: https://github.com/gastruc/AnySat/blob/main/demo.ipynb
+    license:
+      model_repository: mit
+      code_repository: mit
+    supported_modalities:
+      stated_capability: any_combination_of_11_sensors_in_GeoPlex
+      verified_examples_from_docs: [aerial, spot, sentinel-2, landsat-8, modis, naip, alos]
+      full_sensor_list: to_verify_from_official_config_before_adapter
+    expected_input_bands:
+      documented_range: 3_to_11_channels
+      sentinel-2_example: 10_channels_time_series
+      landsat-8_example: 11_channels_time_series
+      modis_example: 7_channels_time_series
+      spot_example: 3_channels
+      aerial_example: 4_channels
+    expected_spatial_resolution:
+      documented_range: 0.2m_to_500m
+      patch_size_requirement: scale_must_be_multiple_of_10m
+    expected_temporal_input:
+      time_series_modalities_require_dates_tensor: true
+      date_encoding: day_of_year_0_to_364
+    preprocessing_requirements:
+      - ensure modality tensors have consistent spatial extent after resolution scaling
+      - provide *_dates companion tensor for time-series modalities
+      - choose output mode from tile, patch, dense, or all
+    checkpoint_loading_plan:
+      - use torch.hub.load('gastruc/anysat', 'anysat', pretrained=True, flash_attn=False)
+      - defer flash_attn path until GPU environment is available
+    first_minimal_reproduction_target: Extract tile embeddings from a tiny Sentinel-2 time-series-like batch with date tensor.
+    adapter_integration_plan:
+      - wrap dictionary-based multimodal inputs into common preprocess contract
+      - expose output mode as adapter config
+      - add modality-specific validators before running probes
+    known_risks:
+      - broad modality flexibility increases adapter complexity
+      - full GeoPlex sensor list and exact normalization/config fields must be verified from official config files
+      - model is lower priority than DOFA/CROMA for first BigEarthNet subset
+    sources:
+      - https://huggingface.co/g-astruc/AnySat
+      - https://github.com/gastruc/AnySat
+      - https://gastruc.github.io/anysat
+      - https://huggingface.co/papers/2412.14123
