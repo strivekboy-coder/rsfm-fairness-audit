@@ -98,6 +98,27 @@ def test_slice_support_marks_missing_candidate_not_recommended() -> None:
     assert "missing slice column" in row["reason"]
 
 
+def test_slice_support_marks_formal_unrunnable_when_taxonomy_support_would_invalidate() -> None:
+    rows = [
+        {"dataset": "sen1floods11", "model": "prithvi", "task": "classification", "split": "all", "unit_id": "a1", "event_id": "A", "class_label": "0", "score": 1.0},
+        {"dataset": "sen1floods11", "model": "prithvi", "task": "classification", "split": "all", "unit_id": "b1", "event_id": "B", "class_label": "1", "score": 0.0},
+    ]
+    artifacts = evaluate_slice_support(
+        rows,
+        "sen1floods11",
+        "prithvi",
+        "classification",
+        "outputs/test_slice_support_formal_unrunnable",
+        candidates=["event_id"],
+        min_samples_per_slice=1,
+        min_units_required=1,
+        min_slices_required=2,
+    )
+    row = read_csv_rows(artifacts["recommendations"])[0]
+    assert row["recommendation"] == "not_recommended"
+    assert row["formal_bwer_runnable"] == "False"
+
+
 def test_preflight_bwer_cli_reads_predictions(monkeypatch) -> None:
     root = Path("outputs/test_slice_support_cli")
     root.mkdir(parents=True, exist_ok=True)

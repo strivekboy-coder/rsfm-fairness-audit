@@ -133,6 +133,7 @@ def evaluate_slice_support(
         task=task,
         split=str(working_rows[0].get("split", "all")) if working_rows else "all",
         min_samples_per_slice=int(min_samples_per_slice if min_samples_per_slice is not None else taxonomy.get("min_samples_per_slice", 1) or 1),
+        min_positive_support=taxonomy.get("min_positive_support"),
         min_units_required=int(min_units_required if min_units_required is not None else taxonomy.get("min_units_required", 1) or 1),
         min_slices_required=int(min_slices_required if min_slices_required is not None else taxonomy.get("min_slices_required", 2) or 2),
     )
@@ -160,6 +161,7 @@ def evaluate_slice_support(
                     "missing_slice_balance_ratio": "",
                     "raw_bwer_appropriate": False,
                     "balanced_bwer_appropriate": False,
+                    "formal_bwer_runnable": False,
                     "preferred_bwer": "none",
                 }
             )
@@ -184,6 +186,7 @@ def evaluate_slice_support(
                     "missing_slice_balance_ratio": "",
                     "raw_bwer_appropriate": False,
                     "balanced_bwer_appropriate": False,
+                    "formal_bwer_runnable": False,
                     "preferred_bwer": "none",
                 }
             )
@@ -228,6 +231,9 @@ def evaluate_slice_support(
             recommendation = "recommended" if raw_ok else "not_recommended"
             reason = raw_reason
             preferred = "raw" if raw_ok else "none"
+        formal_bwer_runnable = bool(raw_ok if not balance_variable else balanced_ok)
+        if not formal_bwer_runnable and recommendation == "recommended":
+            recommendation = "not_recommended"
         counts = [int(row.get("n_units", 0)) for row in slice_rows]
         recommendation_rows.append(
             {
@@ -248,6 +254,7 @@ def evaluate_slice_support(
                 "missing_slice_balance_ratio": "" if math.isnan(missing_ratio_value) else missing_ratio_value,
                 "raw_bwer_appropriate": raw_ok,
                 "balanced_bwer_appropriate": balanced_ok,
+                "formal_bwer_runnable": formal_bwer_runnable,
                 "preferred_bwer": preferred,
             }
         )
@@ -309,14 +316,14 @@ def _write_slice_support_report(
         "",
         "## Recommendations",
         "",
-        "| candidate | recommendation | preferred | valid slices | missing slice x balance | reason |",
-        "|---|---|---|---:|---:|---|",
+        "| candidate | recommendation | runnable | preferred | valid slices | missing slice x balance | reason |",
+        "|---|---|---|---|---:|---:|---|",
     ]
     for row in recommendation_rows:
         ratio = row.get("missing_slice_balance_ratio", "")
         ratio_text = "" if ratio == "" else f"{float(ratio):.1%}"
         lines.append(
-            f"| {row.get('candidate', '')} | {row.get('recommendation', '')} | {row.get('preferred_bwer', '')} | {row.get('n_slices_valid', '')} | {ratio_text} | {row.get('reason', '')} |"
+            f"| {row.get('candidate', '')} | {row.get('recommendation', '')} | {row.get('formal_bwer_runnable', '')} | {row.get('preferred_bwer', '')} | {row.get('n_slices_valid', '')} | {ratio_text} | {row.get('reason', '')} |"
         )
     lines.extend(["", "## Warnings", ""])
     if warnings:
