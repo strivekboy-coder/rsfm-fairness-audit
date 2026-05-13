@@ -118,6 +118,10 @@ def test_ben_ge_prepare_script_with_mocked_tifs(monkeypatch) -> None:
     )
 
     def fake_read_tif(path: Path) -> np.ndarray:
+        if "_B01." in str(path) or "_B09." in str(path):
+            return np.ones((2, 2), dtype=np.float32)
+        if "_B11." in str(path) or "_B12." in str(path):
+            return np.ones((3, 5), dtype=np.float32)
         return np.ones((4, 4), dtype=np.float32)
 
     monkeypatch.setattr(prep, "_read_tif", fake_read_tif)
@@ -125,11 +129,14 @@ def test_ben_ge_prepare_script_with_mocked_tifs(monkeypatch) -> None:
         output_dir=Path("outputs/test_ben_ge_prepare_output"),
         max_samples=1,
         source_dir=source,
+        target_size=8,
     )
     rows = read_csv_rows(metadata_path)
     assert rows[0]["source_dataset"] == "ben-ge-800"
-    assert Path("outputs/test_ben_ge_prepare_output", rows[0]["s1_path"]).exists()
-    assert Path("outputs/test_ben_ge_prepare_output", rows[0]["s2_path"]).exists()
+    s1 = np.load(Path("outputs/test_ben_ge_prepare_output", rows[0]["s1_path"]))["image"]
+    s2 = np.load(Path("outputs/test_ben_ge_prepare_output", rows[0]["s2_path"]))["image"]
+    assert s1.shape == (2, 8, 8)
+    assert s2.shape == (12, 8, 8)
 
 
 def test_cli_accepts_ben_ge_and_compare_sensor_modes() -> None:

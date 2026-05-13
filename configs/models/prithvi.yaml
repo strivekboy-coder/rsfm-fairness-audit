@@ -1,0 +1,10 @@
+hf_model_id: ibm-nasa-geospatial/Prithvi-EO-2.0-300M
+allow_hf_download: true
+device: auto
+batch_size: 2
+expected_frames: 4
+expected_bands: 6
+image_size: 224
+band_names: [B02, B03, B04, B05, B06, B07]
+normalization_mean: [1087.0, 1342.0, 1433.0, 2734.0, 1958.0, 1363.0]
+normalization_std: [2248.0, 2179.0, 2178.0, 1850.0, 1242.0, 1049.0]

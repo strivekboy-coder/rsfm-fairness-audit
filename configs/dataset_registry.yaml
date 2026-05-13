@@ -129,11 +129,12 @@ datasets:
       available: true
       fields: [event_id, location, ISO_CC, s1_date, s2_date, orbit, relative_orbit, train_chip, val_chip]
     sensor_slicing_possible: true
-    recommended_first_subset: hand-labeled validation/test chips grouped by flood event and ISO country.
+    recommended_first_subset: 64 official S2/QC chips prepared with scripts/prepare_sen1floods11_subset.py for Prithvi smoke validation.
     known_biases:
       - flood-event sampling is sparse and event-driven
       - hand-labeled and weak labels must not be mixed without explicit slice labels
       - cloud/invalid regions and flood-event dates can confound region comparisons
+      - 64-sample Prithvi smoke results are not paper-grade fairness conclusions
     fairness_slices_supported: [country, flood_event, biome, ecoregion, orbit, sensor, label_source, split]
     sources:
       - https://github.com/cloudtostreet/Sen1Floods11

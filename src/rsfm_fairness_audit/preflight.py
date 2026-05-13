@@ -8,6 +8,7 @@ from typing import Any
 
 from rsfm_fairness_audit.adapters.ben_ge import BenGEDatasetAdapter, BenGEDatasetError
 from rsfm_fairness_audit.adapters.bigearthnet import BigEarthNetDatasetAdapter, BigEarthNetDatasetError
+from rsfm_fairness_audit.adapters.sen1floods11 import Sen1Floods11DatasetAdapter, Sen1Floods11DatasetError
 from rsfm_fairness_audit.config import ConfigError, load_yaml
 
 
@@ -40,10 +41,10 @@ def run_real_preflight(
     split: str = "all",
 ) -> list[PreflightCheck]:
     checks: list[PreflightCheck] = []
-    if model not in {"dofa", "croma"}:
-        return [PreflightCheck("model", "fail", "Preflight only supports model='dofa' or model='croma'.")]
-    if dataset not in {"bigearthnet", "ben_ge"}:
-        return [PreflightCheck("dataset", "fail", "Preflight only supports dataset='bigearthnet' or dataset='ben_ge'.")]
+    if model not in {"dofa", "croma", "prithvi"}:
+        return [PreflightCheck("model", "fail", "Preflight only supports model='dofa', model='croma', or model='prithvi'.")]
+    if dataset not in {"bigearthnet", "ben_ge", "sen1floods11"}:
+        return [PreflightCheck("dataset", "fail", "Preflight only supports dataset='bigearthnet', dataset='ben_ge', or dataset='sen1floods11'.")]
 
     config: dict[str, Any] = {}
     try:
@@ -56,8 +57,10 @@ def run_real_preflight(
     expected_bands = config.get("expected_bands")
     if model == "dofa":
         _append_dofa_preflight_checks(checks, config)
-    else:
+    elif model == "croma":
         _append_croma_preflight_checks(checks, config)
+    else:
+        _append_prithvi_preflight_checks(checks, config)
 
     wavelengths = config.get("wavelength_list")
     if model == "dofa":
@@ -71,15 +74,17 @@ def run_real_preflight(
                     "expected_bands must match wavelength_list length before real DOFA inference.",
                 )
             )
-    else:
+    elif model == "croma":
         _append_croma_band_checks(checks, config)
+    else:
+        _append_prithvi_shape_checks(checks, config)
 
     root = Path(data_root)
     checks.append(
         PreflightCheck(
             "data_root",
             "pass" if root.exists() else "fail",
-            f"BigEarthNet data_root {'exists' if root.exists() else 'does not exist'}: {root}",
+            f"{dataset} data_root {'exists' if root.exists() else 'does not exist'}: {root}",
         )
     )
 
@@ -94,13 +99,20 @@ def run_real_preflight(
                     split=split,
                     sensor_mode=sensor_mode,
                 )
-            else:
+            elif dataset == "ben_ge":
                 adapter = BenGEDatasetAdapter(
                     data_root=root,
                     metadata_path=metadata_path,
                     subset_size=1,
                     split=split,
                     sensor_mode=sensor_mode,
+                )
+            else:
+                adapter = Sen1Floods11DatasetAdapter(
+                    data_root=root,
+                    metadata_path=metadata_path,
+                    subset_size=1,
+                    split=split,
                 )
             metadata = adapter.load_metadata()
             sample = adapter.load_sample(0)
@@ -112,16 +124,34 @@ def run_real_preflight(
                 s2_shape = getattr(image.get("S2"), "shape", None)
                 checks.append(PreflightCheck(f"{dataset}_sample", "pass", f"Loaded paired sample with S1 shape {s1_shape} and S2 shape {s2_shape}."))
             elif shape is not None and expected_bands is not None and int(shape[0]) != int(expected_bands):
-                checks.append(
-                    PreflightCheck(
-                        f"{dataset}_bands",
-                        "fail",
-                        f"First chip has {shape[0]} bands but {model.upper()} config expects {expected_bands}.",
+                if model == "prithvi" and len(shape) == 4:
+                    expected_frames = config.get("expected_frames")
+                    expected_size = config.get("image_size")
+                    ok = (
+                        int(shape[0]) == int(expected_frames)
+                        and int(shape[1]) == int(expected_bands)
+                        and int(shape[2]) == int(expected_size)
+                        and int(shape[3]) == int(expected_size)
                     )
-                )
+                    checks.append(
+                        PreflightCheck(
+                            f"{dataset}_sample",
+                            "pass" if ok else "fail",
+                            "Loaded Prithvi-ready chip with shape "
+                            f"{shape}; expected ({expected_frames}, {expected_bands}, {expected_size}, {expected_size}).",
+                        )
+                    )
+                else:
+                    checks.append(
+                        PreflightCheck(
+                            f"{dataset}_bands",
+                            "fail",
+                            f"First chip has {shape[0]} bands but {model.upper()} config expects {expected_bands}.",
+                        )
+                    )
             else:
                 checks.append(PreflightCheck(f"{dataset}_sample", "pass", f"Loaded first chip with shape {shape}."))
-        except (BigEarthNetDatasetError, BenGEDatasetError, ValueError, OSError) as exc:
+        except (BigEarthNetDatasetError, BenGEDatasetError, Sen1Floods11DatasetError, ValueError, OSError) as exc:
             checks.append(PreflightCheck(f"{dataset}_metadata", "fail", str(exc)))
 
     for module in ["numpy", "matplotlib", "yaml"]:
@@ -132,7 +162,12 @@ def run_real_preflight(
                 f"Python module '{module}' {'is importable' if _check_import(module) else 'is not importable'}.",
             )
         )
-    optional_modules = ["torch", "timm"] if model == "dofa" else ["torch", "einops", "huggingface_hub"]
+    if model == "dofa":
+        optional_modules = ["torch", "timm"]
+    elif model == "croma":
+        optional_modules = ["torch", "einops", "huggingface_hub"]
+    else:
+        optional_modules = ["torch", "terratorch", "huggingface_hub", "rasterio"]
     for module in optional_modules:
         checks.append(
             PreflightCheck(
@@ -274,6 +309,33 @@ def _append_croma_band_checks(checks: list[PreflightCheck], config: dict[str, An
         checks.append(PreflightCheck("croma_bands", "pass", "CROMA both mode expects 2 S1 channels and 12 S2 channels."))
     else:
         checks.append(PreflightCheck("croma_bands", "fail", "CROMA band counts must match modality: SAR=2 S1, optical=12 S2, both=2+12."))
+
+
+def _append_prithvi_preflight_checks(checks: list[PreflightCheck], config: dict[str, Any]) -> None:
+    hf_model_id = str(config.get("hf_model_id", ""))
+    allow_hf = bool(config.get("allow_hf_download", False))
+    if hf_model_id == "ibm-nasa-geospatial/Prithvi-EO-2.0-300M":
+        checks.append(PreflightCheck("prithvi_model_id", "pass", f"Using official Prithvi model: {hf_model_id}"))
+    else:
+        checks.append(PreflightCheck("prithvi_model_id", "fail", "Phase 3 uses only ibm-nasa-geospatial/Prithvi-EO-2.0-300M."))
+    checks.append(
+        PreflightCheck(
+            "prithvi_loading",
+            "warn" if allow_hf else "fail",
+            "allow_hf_download is enabled; the first run may download official Prithvi weights." if allow_hf else "Set allow_hf_download: true for official Prithvi loading.",
+        )
+    )
+
+
+def _append_prithvi_shape_checks(checks: list[PreflightCheck], config: dict[str, Any]) -> None:
+    ok = config.get("expected_frames") == 4 and config.get("expected_bands") == 6 and config.get("image_size") == 224
+    checks.append(
+        PreflightCheck(
+            "prithvi_shape",
+            "pass" if ok else "fail",
+            "Prithvi-EO-2.0-300M expects expected_frames=4, expected_bands=6, image_size=224.",
+        )
+    )
 
 
 def checks_to_json(checks: list[PreflightCheck]) -> str:

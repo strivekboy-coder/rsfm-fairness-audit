@@ -154,6 +154,10 @@ workflow is:
 
 - [CROMA BEN-GE-800 sensor fairness notebook](D:/Codex/rsfm-fairness-audit/notebooks/croma_benge800_sensor_fairness_colab.ipynb)
 
+The default 64-sample BEN-GE-800 run is a smoke validation only. Extreme
+worst-group or gap values should not be interpreted as paper-grade fairness
+conclusions.
+
 Core commands:
 
 ```powershell
@@ -177,4 +181,35 @@ python -m rsfm_fairness_audit.cli compare-sensor-modes `
   --run optical=outputs/croma_benge800_optical64 `
   --run both=outputs/croma_benge800_both64 `
   --output-dir outputs/comparisons/croma_benge800_sensor64
+```
+
+## Prithvi-EO-2.0 On Sen1Floods11
+
+The third model path uses `ibm-nasa-geospatial/Prithvi-EO-2.0-300M`
+non-TL with Sen1Floods11. It runs both chip-level classification sanity and
+a lightweight segmentation fairness smoke. The 64-sample results are smoke
+validation only, not paper-grade flood mapping conclusions.
+
+- [Prithvi Sen1Floods11 notebook](D:/Codex/rsfm-fairness-audit/notebooks/prithvi_sen1floods11_colab.ipynb)
+
+```powershell
+python scripts/prepare_sen1floods11_subset.py `
+  --output-dir data/sen1floods11_prithvi_subset64 `
+  --max-samples 64
+
+python -m rsfm_fairness_audit.cli run-real `
+  --dataset sen1floods11 `
+  --model prithvi `
+  --data-root data/sen1floods11_prithvi_subset64 `
+  --model-config configs/models/prithvi.yaml `
+  --output-dir outputs/prithvi_sen1floods11_class64 `
+  --max-samples 64
+
+python -m rsfm_fairness_audit.cli run-segmentation-real `
+  --dataset sen1floods11 `
+  --model prithvi `
+  --data-root data/sen1floods11_prithvi_subset64 `
+  --model-config configs/models/prithvi.yaml `
+  --output-dir outputs/prithvi_sen1floods11_seg64 `
+  --max-samples 64
 ```

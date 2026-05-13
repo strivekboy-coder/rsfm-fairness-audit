@@ -11,6 +11,7 @@ from rsfm_fairness_audit.pipeline import (
     run_real_pipeline,
 )
 from rsfm_fairness_audit.preflight import checks_to_json, run_real_preflight
+from rsfm_fairness_audit.segmentation import run_segmentation_smoke
 
 
 def _parse_wavelengths(value: str | None) -> list[float] | None:
@@ -37,8 +38,8 @@ def build_parser() -> argparse.ArgumentParser:
     dummy.add_argument("--seed", type=int, default=7)
 
     real = subparsers.add_parser("run-real", help="Run a subset-first real dataset/model smoke audit.")
-    real.add_argument("--dataset", choices=["bigearthnet", "ben_ge"], required=True)
-    real.add_argument("--model", choices=["dofa", "croma"], required=True)
+    real.add_argument("--dataset", choices=["bigearthnet", "ben_ge", "sen1floods11"], required=True)
+    real.add_argument("--model", choices=["dofa", "croma", "prithvi"], required=True)
     real.add_argument("--data-root", "--dataset-root", dest="data_root", type=Path, required=True)
     real.add_argument("--metadata-path", type=Path)
     real.add_argument("--subset-size", "--max-samples", dest="subset_size", type=int)
@@ -61,8 +62,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     check = subparsers.add_parser("check-real", help="Preflight-check a real dataset/model smoke run.")
-    check.add_argument("--dataset", choices=["bigearthnet", "ben_ge"], required=True)
-    check.add_argument("--model", choices=["dofa", "croma"], required=True)
+    check.add_argument("--dataset", choices=["bigearthnet", "ben_ge", "sen1floods11"], required=True)
+    check.add_argument("--model", choices=["dofa", "croma", "prithvi"], required=True)
     check.add_argument("--model-config", type=Path, required=True)
     check.add_argument("--data-root", type=Path, required=True)
     check.add_argument("--metadata-path", type=Path)
@@ -90,6 +91,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Sensor-mode/run pair in the form sar=path, optical=path, or both=path.",
     )
     sensor_compare.add_argument("--output-dir", type=Path, default=Path("outputs/comparisons/croma_sensor_modes"))
+
+    seg = subparsers.add_parser("run-segmentation-real", help="Run a lightweight real segmentation fairness smoke audit.")
+    seg.add_argument("--dataset", choices=["sen1floods11"], required=True)
+    seg.add_argument("--model", choices=["prithvi"], required=True)
+    seg.add_argument("--data-root", "--dataset-root", dest="data_root", type=Path, required=True)
+    seg.add_argument("--metadata-path", type=Path)
+    seg.add_argument("--subset-size", "--max-samples", dest="subset_size", type=int)
+    seg.add_argument("--split", choices=["train", "val", "test", "all"], default="all")
+    seg.add_argument("--output-dir", type=Path, default=Path("outputs/prithvi_sen1floods11_seg64"))
+    seg.add_argument("--model-config", "--config", dest="model_config", type=Path, required=True)
     return parser
 
 
@@ -164,6 +175,22 @@ def main() -> None:
             runs[sensor_mode.strip()] = Path(run_dir.strip())
         artifacts = compare_sensor_mode_runs(runs, args.output_dir, dataset_name=args.dataset)
         print(f"Sensor-mode comparison complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "run-segmentation-real":
+        dataset, model = build_real_adapters(
+            dataset_name=args.dataset,
+            model_name=args.model,
+            data_root=args.data_root,
+            metadata_path=args.metadata_path,
+            subset_manifest_path=None,
+            subset_size=args.subset_size,
+            split=args.split,
+            sensor_mode="S2",
+            model_config=args.model_config,
+        )
+        artifacts = run_segmentation_smoke(dataset, model, args.output_dir)
+        print(f"Real segmentation smoke complete: {args.output_dir}")
         for name, path in artifacts.items():
             print(f"{name}: {path}")
 

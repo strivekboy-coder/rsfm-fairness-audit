@@ -16,6 +16,7 @@ ZENODO_URL = "https://zenodo.org/records/12941231/files/ben-ge-800.tar.gz?downlo
 ARCHIVE_NAME = "ben-ge-800.tar.gz"
 S2_BANDS = ["B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B09", "B11", "B12", "B8A"]
 S1_BANDS = ["VV", "VH"]
+DEFAULT_TARGET_SIZE = 120
 
 
 def _download_archive(cache_dir: Path, url: str = ZENODO_URL) -> Path:
@@ -77,26 +78,53 @@ def _read_tif(path: Path) -> np.ndarray:
         return src.read(1).astype(np.float32)
 
 
-def _stack_s1(dataset_root: Path, patch_id_s1: str) -> np.ndarray:
+def _resize_2d(array: np.ndarray, target_size: int) -> np.ndarray:
+    if array.shape == (target_size, target_size):
+        return array.astype(np.float32)
+    try:
+        import torch
+        import torch.nn.functional as F
+    except ImportError:
+        y_idx = np.linspace(0, array.shape[0] - 1, target_size).round().astype(np.int64)
+        x_idx = np.linspace(0, array.shape[1] - 1, target_size).round().astype(np.int64)
+        return array[np.ix_(y_idx, x_idx)].astype(np.float32)
+    tensor = torch.as_tensor(array, dtype=torch.float32)[None, None, :, :]
+    resized = F.interpolate(tensor, size=(target_size, target_size), mode="bilinear", align_corners=False)
+    return resized[0, 0].cpu().numpy().astype(np.float32)
+
+
+def _validate_stack(name: str, array: np.ndarray, expected_channels: int, target_size: int) -> None:
+    expected = (expected_channels, target_size, target_size)
+    if array.shape != expected:
+        raise RuntimeError(f"Prepared {name} stack has shape {array.shape}, expected {expected}.")
+
+
+def _stack_s1(dataset_root: Path, patch_id_s1: str, target_size: int = DEFAULT_TARGET_SIZE) -> np.ndarray:
     folder = dataset_root / "sentinel-1" / patch_id_s1
     bands = []
     for band in S1_BANDS:
         path = folder / f"{patch_id_s1}_{band}.tif"
         if not path.exists():
             raise FileNotFoundError(f"Missing BEN-GE S1 band file: {path}")
-        bands.append(_read_tif(path))
-    return np.stack(bands).astype(np.float32)
+        bands.append(_resize_2d(_read_tif(path), target_size))
+    stack = np.stack(bands).astype(np.float32)
+    _validate_stack("S1", stack, 2, target_size)
+    return stack
 
 
-def _stack_s2(dataset_root: Path, patch_id: str) -> np.ndarray:
+def _stack_s2(dataset_root: Path, patch_id: str, target_size: int = DEFAULT_TARGET_SIZE) -> np.ndarray:
     folder = dataset_root / "sentinel-2" / patch_id
     bands = []
     for band in S2_BANDS:
         path = folder / f"{patch_id}_{band}.tif"
         if not path.exists():
             raise FileNotFoundError(f"Missing BEN-GE S2 band file: {path}")
-        bands.append(_read_tif(path))
-    return np.stack(bands).astype(np.float32)
+        # Sentinel-2 bands can have different native spatial resolutions, so every band
+        # is resampled to CROMA's common target size before stacking.
+        bands.append(_resize_2d(_read_tif(path), target_size))
+    stack = np.stack(bands).astype(np.float32)
+    _validate_stack("S2", stack, 12, target_size)
+    return stack
 
 
 def _label_vocab(rows: list[dict[str, Any]], dataset_root: Path) -> list[str]:
@@ -146,6 +174,7 @@ def prepare_ben_ge_800_subset(
     seed: int = 42,
     cache_dir: Path = Path("data/_cache/ben_ge_800"),
     source_dir: Path | None = None,
+    target_size: int = DEFAULT_TARGET_SIZE,
 ) -> Path:
     if max_samples <= 0:
         raise ValueError("--max-samples must be positive.")
@@ -170,9 +199,9 @@ def prepare_ben_ge_800_subset(
         s1_path = chip_dir / f"{patch_id}_s1.npz"
         s2_path = chip_dir / f"{patch_id}_s2.npz"
         if not s1_path.exists():
-            np.savez_compressed(s1_path, image=_stack_s1(dataset_root, patch_id_s1))
+            np.savez_compressed(s1_path, image=_stack_s1(dataset_root, patch_id_s1, target_size=target_size))
         if not s2_path.exists():
-            np.savez_compressed(s2_path, image=_stack_s2(dataset_root, patch_id))
+            np.savez_compressed(s2_path, image=_stack_s2(dataset_root, patch_id, target_size=target_size))
         label, label_vector, label_names = _label_fields(row, dataset_root, vocab)
         climatezone = str(row.get("climatezone") or "to_verify")
         metadata_rows.append(
@@ -218,6 +247,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--cache-dir", type=Path, default=Path("data/_cache/ben_ge_800"))
     parser.add_argument("--source-dir", type=Path, help="Optional already-extracted BEN-GE-800 root.")
+    parser.add_argument("--target-size", type=int, default=DEFAULT_TARGET_SIZE, help="Common H/W size for prepared S1/S2 chips.")
     args = parser.parse_args()
     prepare_ben_ge_800_subset(
         output_dir=args.output_dir,
@@ -225,6 +255,7 @@ def main() -> None:
         seed=args.seed,
         cache_dir=args.cache_dir,
         source_dir=args.source_dir,
+        target_size=args.target_size,
     )
 
 

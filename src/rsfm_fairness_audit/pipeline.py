@@ -12,6 +12,8 @@ from rsfm_fairness_audit.adapters.bigearthnet import BigEarthNetDatasetAdapter
 from rsfm_fairness_audit.adapters.croma import CROMAAdapter
 from rsfm_fairness_audit.adapters.dofa import DOFAAdapter
 from rsfm_fairness_audit.adapters.dummy import DummyDatasetConfig, DummyEODataset, DummyModelAdapter
+from rsfm_fairness_audit.adapters.prithvi import PrithviAdapter
+from rsfm_fairness_audit.adapters.sen1floods11 import Sen1Floods11DatasetAdapter
 from rsfm_fairness_audit.config import load_yaml
 from rsfm_fairness_audit.embedding import extract_embeddings, extract_embeddings_to_chunks
 from rsfm_fairness_audit.io import ensure_dir, read_csv_rows, write_csv
@@ -216,10 +218,10 @@ def build_real_adapters(
     allow_torch_hub_download: bool = False,
     model_config: str | Path | None = None,
 ) -> tuple[DatasetAdapter, ModelAdapter]:
-    if dataset_name not in {"bigearthnet", "ben_ge"}:
-        raise ValueError("Real smoke runs currently implement dataset='bigearthnet' or dataset='ben_ge'.")
-    if model_name not in {"dofa", "croma"}:
-        raise ValueError("Real smoke runs currently implement model='dofa' or model='croma'.")
+    if dataset_name not in {"bigearthnet", "ben_ge", "sen1floods11"}:
+        raise ValueError("Real smoke runs currently implement dataset='bigearthnet', dataset='ben_ge', or dataset='sen1floods11'.")
+    if model_name not in {"dofa", "croma", "prithvi"}:
+        raise ValueError("Real smoke runs currently implement model='dofa', model='croma', or model='prithvi'.")
     if dataset_name == "bigearthnet":
         dataset = BigEarthNetDatasetAdapter(
             data_root=data_root,
@@ -229,13 +231,20 @@ def build_real_adapters(
             split=split,
             sensor_mode=sensor_mode,
         )
-    else:
+    elif dataset_name == "ben_ge":
         dataset = BenGEDatasetAdapter(
             data_root=data_root,
             metadata_path=metadata_path,
             subset_size=subset_size,
             split=split,
             sensor_mode=sensor_mode,
+        )
+    else:
+        dataset = Sen1Floods11DatasetAdapter(
+            data_root=data_root,
+            metadata_path=metadata_path,
+            subset_size=subset_size,
+            split=split,
         )
     if model_name == "dofa":
         if model_config is not None:
@@ -252,11 +261,16 @@ def build_real_adapters(
                 wavelengths=dofa_wavelengths,
                 allow_torch_hub_download=allow_torch_hub_download,
             )
-    elif model_config is not None:
+    elif model_name == "croma" and model_config is not None:
         config = load_yaml(model_config)
         model = CROMAAdapter.from_config(config)
-    else:
+    elif model_name == "croma":
         model = CROMAAdapter(device="auto", allow_hf_download=False)
+    elif model_config is not None:
+        config = load_yaml(model_config)
+        model = PrithviAdapter.from_config(config)
+    else:
+        model = PrithviAdapter(device="auto", allow_hf_download=False)
     return dataset, model
 
 
@@ -398,9 +412,16 @@ def _plot_sensor_mode_scatter(rows: list[dict[str, object]], output_path: Path) 
 
     ensure_dir(output_path.parent)
     fig, ax = plt.subplots(figsize=(6, 4))
-    for row in rows:
-        ax.scatter(row["average_performance"], row["worst_group_performance"], s=80)
-        ax.annotate(str(row["sensor_mode"]), (row["average_performance"], row["worst_group_performance"]), xytext=(6, 6), textcoords="offset points")
+    used_offsets: list[tuple[float, float]] = []
+    offsets = [(6, 6), (6, 18), (18, 6), (-42, 10), (10, -18)]
+    for index, row in enumerate(rows):
+        x = float(row["average_performance"])
+        y = float(row["worst_group_performance"])
+        ax.scatter(x, y, s=80)
+        nearby = sum(1 for px, py in used_offsets if abs(px - x) < 0.035 and abs(py - y) < 0.035)
+        offset = offsets[(index + nearby) % len(offsets)]
+        ax.annotate(str(row["sensor_mode"]), (x, y), xytext=offset, textcoords="offset points")
+        used_offsets.append((x, y))
     ax.plot([0, 1], [0, 1], color="0.7", linewidth=1)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
@@ -418,6 +439,8 @@ def _write_sensor_mode_report(path: Path, rows: list[dict[str, object]]) -> None
         "# CROMA BEN-GE-800 Sensor-Mode Comparison",
         "",
         "Phase 2B compares CROMA SAR-only, optical-only, and S1+S2 fusion on paired BEN-GE-800 samples.",
+        "",
+        "This 64-sample BEN-GE-800 run is a smoke validation only. Extreme worst-group or gap values should not be interpreted as paper-grade fairness conclusions.",
         "",
         "| sensor_mode | average | worst_group | worst | gap | balanced_gap |",
         "|---|---:|---|---:|---:|---:|",

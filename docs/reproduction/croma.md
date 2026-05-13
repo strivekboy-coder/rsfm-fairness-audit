@@ -107,6 +107,8 @@ The Colab notebook is [croma_benge800_sensor_fairness_colab.ipynb](D:/Codex/rsfm
 
 Phase 2A and Phase 2B must remain separate: lc-col BigEarthNet is S2-only and is not valid for SAR/optical sensor fairness; BEN-GE-800 provides paired S1/S2 samples for the first real sensor-conditioned audit.
 
+The 64-sample BEN-GE-800 run is a smoke validation only. Extreme worst-group or gap values from this run should not be interpreted as paper-grade fairness conclusions.
+
 ## Open Items
 
 - Exact BigEarthNet v2 S2 band conversion to CROMA's 12-channel expectation: to_verify.

@@ -6,21 +6,27 @@
 - NASA Technical Reports Server: https://ntrs.nasa.gov/citations/20240015391
 - Official release repository: https://github.com/NASA-IMPACT/Prithvi-EO-2.0
 - Hugging Face 300M model: https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-300M
-- Hugging Face 300M TL model: https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-300M-TL
-- Demo Space index from paper page: https://huggingface.co/papers/2412.02732
+- Hugging Face config: https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-300M/blob/main/config.json
+- Sen1Floods11 official repo: https://github.com/cloudtostreet/Sen1Floods11
 
 ## Verified Facts
 
-Prithvi-EO-2.0 is an IBM/NASA/Jülich EO foundation model family. The official paper page states that it was trained on global time-series samples from NASA Harmonized Landsat Sentinel-2 at 30 m resolution. The Hugging Face cards list TerraTorch as the loading library and Apache-2.0 licensing.
+Prithvi-EO-2.0 is an IBM/NASA/Juelich EO foundation model family trained on global HLS time-series samples. This project uses `ibm-nasa-geospatial/Prithvi-EO-2.0-300M` non-TL only, not the Sen1Floods11 fine-tuned model.
 
-The TL variants use date and geolocation metadata: year/day-of-year and center latitude/longitude.
+The official Hugging Face config records `img_size=224`, `num_frames=4`, `in_chans=6`, bands `B02, B03, B04, B05, B06, B07`, and the mean/std values copied into `configs/models/prithvi.yaml`.
 
-## Adapter Plan
+Sen1Floods11 provides Sentinel-2 13-band GeoTIFFs and QC masks where `-1` is invalid, `0` is not water, and `1` is water.
 
-Use TerraTorch's official registry path for the selected HF model ID. Start with `ibm-nasa-geospatial/Prithvi-EO-2.0-300M`, not a TL variant, unless temporal/location metadata is ready. The adapter must preserve temporal tensor structure and should not flatten time into channels.
+## Adapter And Data Plan
 
-## Open Items
+Use TerraTorch's official registry path for `ibm-nasa-geospatial/Prithvi-EO-2.0-300M`. The adapter preserves `[T, C, H, W]` structure and repeats single-timestamp Sen1Floods11 S2 chips to four frames as a compatibility shim, not as a true temporal experiment.
 
-- TerraTorch example path to use for the first adapter smoke test: to_verify.
-- Exact HLS band order and normalization for the selected checkpoint: to_verify.
-- Compatibility path from BigEarthNet v2 Sentinel-2 patches to HLS-trained Prithvi inputs: to_verify.
+The classification sanity path uses a chip-level `water_present` label derived from valid-water fraction in the QC mask. The segmentation path is a smoke validation that ignores invalid QC pixels and reports group IoU/accuracy.
+
+Colab entrypoint: [prithvi_sen1floods11_colab.ipynb](D:/Codex/rsfm-fairness-audit/notebooks/prithvi_sen1floods11_colab.ipynb).
+
+## Caveats
+
+- The 64-sample run is a smoke validation only and is not paper-grade flood mapping evidence.
+- The selected Prithvi checkpoint is not a flood segmentation fine-tune.
+- If TerraTorch does not expose dense token features in a stable output key, the segmentation smoke uses transparent spectral-feature fallback for mask/metric validation.
