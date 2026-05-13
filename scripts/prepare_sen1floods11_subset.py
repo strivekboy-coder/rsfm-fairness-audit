@@ -5,6 +5,7 @@ import csv
 import json
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -15,6 +16,10 @@ GCS_ROOT = "gs://sen1floods11"
 PRITHVI_BAND_INDICES = [1, 2, 3, 4, 5, 6]  # B02-B07 from 13-band Sen1Floods11 S2 GeoTIFFs.
 TARGET_SIZE = 224
 WATER_PRESENT_THRESHOLD = 0.01
+
+
+def _log(message: str) -> None:
+    print(message, flush=True)
 
 
 def _resize_2d(array: np.ndarray, target_size: int, nearest: bool = False) -> np.ndarray:
@@ -86,6 +91,7 @@ def _list_gcs_s2_files(gcs_root: str) -> list[str]:
     ]
     found: list[str] = []
     for pattern in patterns:
+        _log(f"[stage] Listing S2 candidates: {pattern}")
         try:
             output = subprocess.check_output(["gsutil", "ls", "-r", pattern], text=True, stderr=subprocess.DEVNULL)
         except (subprocess.CalledProcessError, FileNotFoundError):
@@ -97,6 +103,92 @@ def _list_gcs_s2_files(gcs_root: str) -> list[str]:
             "Could not list Sen1Floods11 S2 files from GCS. Install gsutil in Colab or pass --source-root with local files."
         )
     return unique
+
+
+def _list_gcs_files(patterns: list[str]) -> list[str]:
+    found: list[str] = []
+    for pattern in patterns:
+        _log(f"[stage] Listing GCS files: {pattern}")
+        try:
+            command = ["gsutil", "ls", "-r", pattern] if "**" in pattern else ["gsutil", "ls", pattern]
+            output = subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            continue
+        found.extend(line.strip() for line in output.splitlines() if line.strip().endswith(".tif"))
+    return sorted(dict.fromkeys(found))
+
+
+def _manifest_label_key(uri: str) -> str:
+    name = Path(uri).name
+    for suffix in ["_S2Hand.tif", "_LabelHand.tif", "_QC.tif", "_S2.tif", "_Label.tif"]:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return Path(uri).stem
+
+
+def _manifest_cache_path(cache_dir: Path, gcs_root: str) -> Path:
+    root_key = gcs_root.replace("gs://", "").replace("/", "_")
+    return cache_dir / f"{root_key}_hand_labeled_manifest.csv"
+
+
+def _read_pair_manifest(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    with path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    _log(f"[stage] Loaded cached Sen1Floods11 pair manifest: {path} ({len(rows)} pairs)")
+    return rows
+
+
+def _write_pair_manifest(path: Path, rows: list[dict[str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["sample_id", "event", "s2_uri", "label_uri"])
+        writer.writeheader()
+        writer.writerows(rows)
+    _log(f"[stage] Cached Sen1Floods11 pair manifest: {path} ({len(rows)} pairs)")
+
+
+def _build_gcs_pair_manifest(gcs_root: str, cache_dir: Path, manifest_path: Path | None = None, refresh: bool = False) -> list[dict[str, str]]:
+    manifest = manifest_path or _manifest_cache_path(cache_dir, gcs_root)
+    if not refresh:
+        cached = _read_pair_manifest(manifest)
+        if cached:
+            return cached
+    start = time.time()
+    _log("[stage] Building Sen1Floods11 hand-labeled pair manifest from bulk GCS listings")
+    s2_uris = _list_gcs_files(
+        [
+            f"{gcs_root}/v1.1/data/flood_events/HandLabeled/S2Hand/*_S2Hand.tif",
+            f"{gcs_root}/data/flood_events/HandLabeled/S2Hand/*_S2Hand.tif",
+        ]
+    )
+    label_uris = _list_gcs_files(
+        [
+            f"{gcs_root}/v1.1/data/flood_events/HandLabeled/LabelHand/*_LabelHand.tif",
+            f"{gcs_root}/data/flood_events/HandLabeled/LabelHand/*_LabelHand.tif",
+        ]
+    )
+    if not s2_uris or not label_uris:
+        _log("[warn] Targeted hand-labeled listing did not find both S2 and labels; falling back to recursive listing.")
+        s2_uris = _list_gcs_s2_files(gcs_root)
+        label_uris = _list_gcs_files([f"{gcs_root}/**/*_LabelHand.tif", f"{gcs_root}/**/*_QC.tif"])
+    label_by_key = {_manifest_label_key(uri): uri for uri in label_uris}
+    rows: list[dict[str, str]] = []
+    missing = 0
+    for s2_uri in s2_uris:
+        sample_id = _sample_id(Path(s2_uri))
+        label_uri = label_by_key.get(sample_id)
+        if not label_uri:
+            missing += 1
+            continue
+        rows.append({"sample_id": sample_id, "event": _event_from_sample(sample_id), "s2_uri": s2_uri, "label_uri": label_uri})
+    rows = sorted(rows, key=lambda row: row["sample_id"])
+    if not rows:
+        raise RuntimeError("No paired Sen1Floods11 hand-labeled S2/LabelHand files were found in the GCS listings.")
+    _log(f"[stage] Built manifest with {len(rows)} pairs; missing labels for {missing} S2 files; elapsed={time.time() - start:.1f}s")
+    _write_pair_manifest(manifest, rows)
+    return rows
 
 
 def _filter_uris_by_event(uris: Iterable[str], event_filters: Iterable[str] | None) -> list[str]:
@@ -146,10 +238,10 @@ def _resolve_gcs_pair(s2_uri: str) -> tuple[str, str]:
 def _download_many(uris: list[str], raw_dir: Path) -> None:
     missing = [uri for uri in uris if not ((raw_dir / Path(uri).name).exists() and (raw_dir / Path(uri).name).stat().st_size > 0)]
     if not missing:
-        print("[info] All selected Sen1Floods11 GeoTIFFs are already cached.")
+        _log("[info] All selected Sen1Floods11 GeoTIFFs are already cached.")
         return
     raw_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[info] Batch downloading {len(missing)} GeoTIFFs with gsutil -m cp")
+    _log(f"[info] Batch downloading {len(missing)} GeoTIFFs with gsutil -m cp -I")
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as handle:
         for uri in missing:
             handle.write(uri + "\n")
@@ -207,6 +299,7 @@ def _select_and_download_gcs_pairs(
 ) -> tuple[list[tuple[Path, Path]], int]:
     selected: list[tuple[str, str]] = []
     failures = 0
+    _log(f"[stage] Resolving S2/label pairs from {min(len(uris), candidate_limit)} candidates")
     for s2_uri in uris[:candidate_limit]:
         if len(selected) >= max_samples:
             break
@@ -273,17 +366,41 @@ def prepare_sen1floods11_subset(
 ) -> Path:
     if max_samples <= 0:
         raise ValueError("--max-samples must be positive.")
+    start_time = time.time()
+    _log(
+        f"[stage] Preparing Sen1Floods11 subset output_dir={output_dir} max_samples={max_samples} "
+        f"candidate_limit={candidate_limit} source_root={source_root or 'GCS'}"
+    )
     if source_root is not None:
         pairs = _local_pairs(source_root)[:max_samples]
     else:
-        uris = _filter_uris_by_event(_list_gcs_s2_files(gcs_root), event_filter)
-        pairs, failures = _select_and_download_gcs_pairs(
-            uris,
-            cache_dir=cache_dir,
-            max_samples=max_samples,
-            candidate_limit=candidate_limit,
-            parallel_download=parallel_download,
-        )
+        manifest_rows = _build_gcs_pair_manifest(gcs_root, cache_dir)
+        if event_filter:
+            filters = {value.lower() for value in event_filter}
+            manifest_rows = [row for row in manifest_rows if row["event"].lower() in filters]
+            _log(f"[stage] Event filters {sorted(filters)} retained {len(manifest_rows)} pairs")
+        limited_rows = manifest_rows[:candidate_limit]
+        selected_rows = limited_rows[:max_samples]
+        _log(f"[stage] Selected {len(selected_rows)} paired samples from {len(manifest_rows)} manifest pairs")
+        raw_dir = cache_dir / "raw"
+        if parallel_download:
+            try:
+                _download_many([uri for row in selected_rows for uri in [row["s2_uri"], row["label_uri"]]], raw_dir)
+            except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+                _log(f"[warn] Batch download failed; falling back to per-pair download: {exc}")
+        pairs = []
+        failures = 0
+        for row in selected_rows:
+            s2_path = raw_dir / Path(row["s2_uri"]).name
+            label_path = raw_dir / Path(row["label_uri"]).name
+            if s2_path.exists() and s2_path.stat().st_size > 0 and label_path.exists() and label_path.stat().st_size > 0:
+                pairs.append((s2_path, label_path))
+                continue
+            try:
+                pairs.append(_download_pair(row["s2_uri"], cache_dir))
+            except FileNotFoundError as exc:
+                failures += 1
+                _log(f"[warn] Skipping failed fallback pair: {exc}")
         if not pairs:
             filters = ", ".join(event_filter or []) or "none"
             raise RuntimeError(
@@ -294,7 +411,7 @@ def prepare_sen1floods11_subset(
                 "pointing at a local rsync/HF mirror of the official files."
             )
         if failures:
-            print(f"[summary] Skipped {failures} unavailable S2/label candidates before preparing {len(pairs)} pairs.")
+            _log(f"[summary] Skipped {failures} unavailable S2/label candidates before preparing {len(pairs)} pairs.")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     chip_dir = output_dir / "chips"
@@ -302,6 +419,7 @@ def prepare_sen1floods11_subset(
     chip_dir.mkdir(exist_ok=True)
     mask_dir.mkdir(exist_ok=True)
     rows: list[dict[str, Any]] = []
+    _log(f"[stage] Converting {len(pairs)} GeoTIFF pairs to Prithvi-ready NPZ chips")
     for index, (s2_path, label_path) in enumerate(pairs, start=1):
         sample_id = _sample_id(s2_path)
         chip = _prithvi_chip_from_s2(s2_path, target_size=target_size)
@@ -333,14 +451,14 @@ def prepare_sen1floods11_subset(
             }
         )
         if index % 16 == 0 or index == len(pairs):
-            print(f"[info] Prepared {index}/{len(pairs)} Sen1Floods11 samples")
+            _log(f"[info] Prepared {index}/{len(pairs)} Sen1Floods11 samples")
 
     metadata_path = output_dir / "metadata.csv"
     with metadata_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
         writer.writeheader()
         writer.writerows(rows)
-    print(f"[summary] Wrote {metadata_path} with {len(rows)} samples")
+    _log(f"[summary] Wrote {metadata_path} with {len(rows)} samples; total_elapsed={time.time() - start_time:.1f}s")
     return metadata_path
 
 
@@ -355,7 +473,10 @@ def main() -> None:
     parser.add_argument("--event-filter", action="append", help="Optional event/country filter, e.g. India or Pakistan. Repeatable.")
     parser.add_argument("--candidate-limit", type=int, default=1000, help="Maximum listed S2 candidates to inspect while searching for valid S2/label pairs.")
     parser.add_argument("--no-parallel-download", action="store_true", help="Disable gsutil -m cp batch download and use per-pair fallback only.")
+    parser.add_argument("--refresh-manifest", action="store_true", help="Refresh cached GCS S2/LabelHand pair manifest before preparing data.")
     args = parser.parse_args()
+    if args.refresh_manifest and args.source_root is None:
+        _build_gcs_pair_manifest(args.gcs_root, args.cache_dir, refresh=True)
     prepare_sen1floods11_subset(
         output_dir=args.output_dir,
         max_samples=args.max_samples,

@@ -215,6 +215,40 @@ def test_sen1floods11_batch_download_selection_uses_parallel_cp(monkeypatch) -> 
     assert len(calls[0][0]) == 4
 
 
+def test_sen1floods11_pair_manifest_uses_bulk_listings_and_cache(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_check_output(command: list[str], text: bool, stderr: object) -> str:
+        calls.append(command)
+        pattern = command[-1]
+        if "S2Hand" in pattern:
+            return "\n".join(
+                [
+                    "gs://sen1floods11/v1.1/data/flood_events/HandLabeled/S2Hand/Ghana_001_S2Hand.tif",
+                    "gs://sen1floods11/v1.1/data/flood_events/HandLabeled/S2Hand/Bolivia_001_S2Hand.tif",
+                ]
+            )
+        if "LabelHand" in pattern:
+            return "\n".join(
+                [
+                    "gs://sen1floods11/v1.1/data/flood_events/HandLabeled/LabelHand/Ghana_001_LabelHand.tif",
+                    "gs://sen1floods11/v1.1/data/flood_events/HandLabeled/LabelHand/Bolivia_001_LabelHand.tif",
+                ]
+            )
+        return ""
+
+    monkeypatch.setattr(prep.subprocess, "check_output", fake_check_output)
+    cache_dir = Path("outputs/test_sen1_manifest_cache")
+    rows = prep._build_gcs_pair_manifest("gs://sen1floods11", cache_dir, refresh=True)
+    assert [row["sample_id"] for row in rows] == ["Bolivia_001", "Ghana_001"]
+    assert all(command[:2] == ["gsutil", "ls"] for command in calls)
+    assert all(len(command) <= 4 for command in calls)
+    calls.clear()
+    cached = prep._build_gcs_pair_manifest("gs://sen1floods11", cache_dir)
+    assert cached == rows
+    assert calls == []
+
+
 def test_prithvi_cli_commands_exist() -> None:
     parser = build_parser()
     run_args = parser.parse_args(
