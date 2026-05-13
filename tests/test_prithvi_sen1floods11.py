@@ -111,7 +111,7 @@ def test_prepare_sen1floods11_maps_13_band_s2_to_prithvi_shape(monkeypatch) -> N
     source = Path("outputs/test_sen1_prepare_source")
     source.mkdir(parents=True, exist_ok=True)
     s2 = source / "Bolivia_000001_S2Hand.tif"
-    qc = source / "Bolivia_000001_QC.tif"
+    qc = source / "Bolivia_000001_LabelHand.tif"
     s2.write_text("mock", encoding="utf-8")
     qc.write_text("mock", encoding="utf-8")
 
@@ -136,6 +136,13 @@ def test_prepare_sen1floods11_maps_13_band_s2_to_prithvi_shape(monkeypatch) -> N
     assert image.shape == (4, 6, 16, 16)
     assert mask.shape == (16, 16)
     assert rows[0]["source_dataset"] == "sen1floods11"
+
+
+def test_sen1floods11_gcs_label_candidates_prefer_official_labelhand() -> None:
+    uri = "gs://sen1floods11/v1.1/data/flood_events/HandLabeled/S2Hand/India_123_S2Hand.tif"
+    candidates = prep._label_uri_candidates(uri)
+    assert candidates[0] == "gs://sen1floods11/v1.1/data/flood_events/HandLabeled/LabelHand/India_123_LabelHand.tif"
+    assert any(candidate.endswith("India_123_QC.tif") for candidate in candidates)
 
 
 def test_prithvi_cli_commands_exist() -> None:
@@ -168,3 +175,8 @@ def test_prithvi_cli_commands_exist() -> None:
     )
     assert run_args.model == "prithvi"
     assert seg_args.command == "run-segmentation-real"
+
+
+def test_prithvi_requirements_pin_numpy_below_numba_limit() -> None:
+    text = Path("requirements-prithvi.txt").read_text(encoding="utf-8")
+    assert "numpy>=1.24,<2.1" in text

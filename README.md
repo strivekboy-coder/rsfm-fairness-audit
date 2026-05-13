@@ -189,13 +189,16 @@ The third model path uses `ibm-nasa-geospatial/Prithvi-EO-2.0-300M`
 non-TL with Sen1Floods11. It runs both chip-level classification sanity and
 a lightweight segmentation fairness smoke. The 64-sample results are smoke
 validation only, not paper-grade flood mapping conclusions.
+For Colab, keep `numpy<2.1` because the preinstalled `numba` stack is not
+compatible with newer NumPy releases.
 
 - [Prithvi Sen1Floods11 notebook](D:/Codex/rsfm-fairness-audit/notebooks/prithvi_sen1floods11_colab.ipynb)
 
 ```powershell
 python scripts/prepare_sen1floods11_subset.py `
   --output-dir data/sen1floods11_prithvi_subset64 `
-  --max-samples 64
+  --max-samples 64 `
+  --candidate-limit 1000
 
 python -m rsfm_fairness_audit.cli run-real `
   --dataset sen1floods11 `

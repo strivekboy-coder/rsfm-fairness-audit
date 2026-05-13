@@ -5,7 +5,7 @@ import csv
 import json
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import numpy as np
 
@@ -78,6 +78,8 @@ def _event_from_sample(sample_id: str) -> str:
 
 def _list_gcs_s2_files(gcs_root: str) -> list[str]:
     patterns = [
+        f"{gcs_root}/v1.1/data/flood_events/HandLabeled/S2Hand/*_S2Hand.tif",
+        f"{gcs_root}/data/flood_events/HandLabeled/S2Hand/*_S2Hand.tif",
         f"{gcs_root}/**/*S2Hand.tif",
         f"{gcs_root}/**/*_S2.tif",
     ]
@@ -96,30 +98,84 @@ def _list_gcs_s2_files(gcs_root: str) -> list[str]:
     return unique
 
 
+def _filter_uris_by_event(uris: Iterable[str], event_filters: Iterable[str] | None) -> list[str]:
+    filters = [value.lower() for value in (event_filters or []) if value]
+    if not filters:
+        return list(uris)
+    output = []
+    for uri in uris:
+        event = _event_from_sample(_sample_id(Path(uri))).lower()
+        if event in filters:
+            output.append(uri)
+    return output
+
+
+def _label_uri_candidates(s2_uri: str) -> list[str]:
+    """Return official v1.1 LabelHand candidates before legacy QC fallbacks."""
+    candidates = []
+    if "S2Hand" in s2_uri:
+        candidates.append(s2_uri.replace("/S2Hand/", "/LabelHand/").replace("_S2Hand.tif", "_LabelHand.tif"))
+        candidates.append(s2_uri.replace("_S2Hand.tif", "_LabelHand.tif"))
+        candidates.append(s2_uri.replace("_S2Hand.tif", "_QC.tif"))
+        candidates.append(s2_uri.replace("S2Hand.tif", "QC.tif"))
+    if "_S2.tif" in s2_uri:
+        candidates.append(s2_uri.replace("/S2/", "/Label/").replace("_S2.tif", "_Label.tif"))
+        candidates.append(s2_uri.replace("_S2.tif", "_QC.tif"))
+    return list(dict.fromkeys(candidates))
+
+
+def _gsutil_cp_if_available(uri: str, path: Path) -> bool:
+    if path.exists() and path.stat().st_size > 0:
+        return True
+    try:
+        subprocess.check_call(["gsutil", "cp", uri, str(path)])
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        if path.exists() and path.stat().st_size == 0:
+            path.unlink()
+        return False
+    return path.exists() and path.stat().st_size > 0
+
+
 def _download_pair(s2_uri: str, cache_dir: Path) -> tuple[Path, Path]:
     sample = _sample_id(Path(s2_uri))
-    qc_uri = s2_uri.replace("S2Hand.tif", "QC.tif").replace("_S2.tif", "_QC.tif")
     s2_path = cache_dir / "raw" / Path(s2_uri).name
-    qc_path = cache_dir / "raw" / Path(qc_uri).name
     s2_path.parent.mkdir(parents=True, exist_ok=True)
-    for uri, path in [(s2_uri, s2_path), (qc_uri, qc_path)]:
-        if path.exists() and path.stat().st_size > 0:
-            continue
-        print(f"[info] Downloading {uri}")
-        subprocess.check_call(["gsutil", "cp", uri, str(path)])
-    if not qc_path.exists():
-        raise FileNotFoundError(f"Missing QC mask for {sample}: {qc_uri}")
-    return s2_path, qc_path
+    if not (s2_path.exists() and s2_path.stat().st_size > 0):
+        print(f"[info] Downloading S2 {s2_uri}")
+        if not _gsutil_cp_if_available(s2_uri, s2_path):
+            raise FileNotFoundError(f"Could not download S2 chip: {s2_uri}")
+
+    tried = []
+    for label_uri in _label_uri_candidates(s2_uri):
+        tried.append(label_uri)
+        label_path = cache_dir / "raw" / Path(label_uri).name
+        if label_path.exists() and label_path.stat().st_size > 0:
+            return s2_path, label_path
+        print(f"[info] Trying label {label_uri}")
+        if _gsutil_cp_if_available(label_uri, label_path):
+            return s2_path, label_path
+
+    raise FileNotFoundError(
+        f"Missing hand label for {sample}. Tried: {', '.join(tried)}. "
+        "Official v1.1 labels usually live in LabelHand/ with *_LabelHand.tif names."
+    )
 
 
 def _local_pairs(source_root: Path) -> list[tuple[Path, Path]]:
     s2_files = sorted(source_root.rglob("*S2Hand.tif")) + sorted(source_root.rglob("*_S2.tif"))
     pairs = []
     for s2_path in s2_files:
-        qc_name = s2_path.name.replace("S2Hand.tif", "QC.tif").replace("_S2.tif", "_QC.tif")
-        qc_path = s2_path.with_name(qc_name)
-        if qc_path.exists():
-            pairs.append((s2_path, qc_path))
+        label_names = [
+            s2_path.name.replace("_S2Hand.tif", "_LabelHand.tif"),
+            s2_path.name.replace("S2Hand.tif", "QC.tif"),
+            s2_path.name.replace("_S2.tif", "_QC.tif"),
+        ]
+        candidate_paths = [s2_path.with_name(name) for name in label_names]
+        if "S2Hand" in str(s2_path):
+            candidate_paths.append(Path(str(s2_path).replace("S2Hand", "LabelHand").replace("_S2Hand.tif", "_LabelHand.tif")))
+        label_path = next((path for path in candidate_paths if path.exists()), None)
+        if label_path is not None:
+            pairs.append((s2_path, label_path))
     if not pairs:
         raise RuntimeError(f"No local Sen1Floods11 S2/QC pairs found under {source_root}.")
     return pairs
@@ -132,14 +188,36 @@ def prepare_sen1floods11_subset(
     cache_dir: Path = Path("data/_cache/sen1floods11"),
     gcs_root: str = GCS_ROOT,
     target_size: int = TARGET_SIZE,
+    event_filter: list[str] | None = None,
+    candidate_limit: int = 1000,
 ) -> Path:
     if max_samples <= 0:
         raise ValueError("--max-samples must be positive.")
     if source_root is not None:
         pairs = _local_pairs(source_root)[:max_samples]
     else:
-        uris = _list_gcs_s2_files(gcs_root)[:max_samples]
-        pairs = [_download_pair(uri, cache_dir) for uri in uris]
+        uris = _filter_uris_by_event(_list_gcs_s2_files(gcs_root), event_filter)
+        pairs = []
+        failures = 0
+        for uri in uris[:candidate_limit]:
+            if len(pairs) >= max_samples:
+                break
+            try:
+                pairs.append(_download_pair(uri, cache_dir))
+            except FileNotFoundError as exc:
+                failures += 1
+                print(f"[warn] Skipping unavailable pair: {exc}")
+        if not pairs:
+            filters = ", ".join(event_filter or []) or "none"
+            raise RuntimeError(
+                "No valid Sen1Floods11 S2/label pairs were prepared. "
+                f"Checked up to {min(len(uris), candidate_limit)} candidates with event_filter={filters}. "
+                "The official bucket may be unavailable, or this event has missing labels. "
+                "Try increasing --candidate-limit, using --event-filter for a different event, or passing --source-root "
+                "pointing at a local rsync/HF mirror of the official files."
+            )
+        if failures:
+            print(f"[summary] Skipped {failures} unavailable S2/label candidates before preparing {len(pairs)} pairs.")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     chip_dir = output_dir / "chips"
@@ -197,6 +275,8 @@ def main() -> None:
     parser.add_argument("--cache-dir", type=Path, default=Path("data/_cache/sen1floods11"))
     parser.add_argument("--gcs-root", default=GCS_ROOT)
     parser.add_argument("--target-size", type=int, default=TARGET_SIZE)
+    parser.add_argument("--event-filter", action="append", help="Optional event/country filter, e.g. India or Pakistan. Repeatable.")
+    parser.add_argument("--candidate-limit", type=int, default=1000, help="Maximum listed S2 candidates to inspect while searching for valid S2/label pairs.")
     args = parser.parse_args()
     prepare_sen1floods11_subset(
         output_dir=args.output_dir,
@@ -205,6 +285,8 @@ def main() -> None:
         cache_dir=args.cache_dir,
         gcs_root=args.gcs_root,
         target_size=args.target_size,
+        event_filter=args.event_filter,
+        candidate_limit=args.candidate_limit,
     )
 
 

@@ -15,7 +15,7 @@ Prithvi-EO-2.0 is an IBM/NASA/Juelich EO foundation model family trained on glob
 
 The official Hugging Face config records `img_size=224`, `num_frames=4`, `in_chans=6`, bands `B02, B03, B04, B05, B06, B07`, and the mean/std values copied into `configs/models/prithvi.yaml`.
 
-Sen1Floods11 provides Sentinel-2 13-band GeoTIFFs and QC masks where `-1` is invalid, `0` is not water, and `1` is water.
+Sen1Floods11 provides Sentinel-2 13-band GeoTIFFs and hand-label masks where `-1` is invalid, `0` is not water, and `1` is water. In the official v1.1 bucket, hand labels are stored under `LabelHand/` with names such as `*_LabelHand.tif`; `*_QC.tif` is treated only as a legacy fallback.
 
 ## Adapter And Data Plan
 
@@ -24,6 +24,8 @@ Use TerraTorch's official registry path for `ibm-nasa-geospatial/Prithvi-EO-2.0-
 The classification sanity path uses a chip-level `water_present` label derived from valid-water fraction in the QC mask. The segmentation path is a smoke validation that ignores invalid QC pixels and reports group IoU/accuracy.
 
 Colab entrypoint: [prithvi_sen1floods11_colab.ipynb](D:/Codex/rsfm-fairness-audit/notebooks/prithvi_sen1floods11_colab.ipynb).
+
+The preparation script scans official S2 candidates and keeps trying until it finds valid S2/label pairs. If a specific flood event has missing labels in GCS, use `--event-filter India` or another event, or increase `--candidate-limit`. If GCS is unavailable, pass `--source-root` pointing at a local rsync/HF mirror with matching `S2Hand` and `LabelHand` files.
 
 ## Caveats
 
