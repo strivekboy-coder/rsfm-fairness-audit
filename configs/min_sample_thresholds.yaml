@@ -1,0 +1,25 @@
+defaults:
+  min_samples_per_slice: 30
+  min_positive_support: null
+  min_slices_required: 2
+  min_units_required: 30
+  tail_fraction: 0.10
+
+datasets:
+  dummy:
+    min_samples_per_slice: 5
+    min_slices_required: 2
+    min_units_required: 10
+  bigearthnet_lccol:
+    min_samples_per_slice: 50
+    min_slices_required: 2
+    min_units_required: 100
+  ben_ge_800:
+    min_samples_per_slice: 30
+    min_slices_required: 2
+    min_units_required: 60
+  sen1floods11:
+    min_samples_per_slice: 20
+    min_positive_support: 1000
+    min_slices_required: 2
+    min_units_required: 20

@@ -17,6 +17,8 @@ class PrithviAdapter(ModelAdapter):
     """Prithvi-EO-2.0 300M non-TL adapter for Sen1Floods11 smoke runs."""
 
     official_hf_model_id = "ibm-nasa-geospatial/Prithvi-EO-2.0-300M"
+    official_terratorch_model_name = "terratorch_prithvi_eo_v2_300"
+    accepted_model_names = (official_hf_model_id, official_terratorch_model_name)
     official_band_names = ["B02", "B03", "B04", "B05", "B06", "B07"]
     official_mean = [1087.0, 1342.0, 1433.0, 2734.0, 1958.0, 1363.0]
     official_std = [2248.0, 2179.0, 2178.0, 1850.0, 1242.0, 1049.0]
@@ -24,6 +26,7 @@ class PrithviAdapter(ModelAdapter):
     def __init__(
         self,
         hf_model_id: str = official_hf_model_id,
+        terratorch_model_name: str | None = None,
         allow_hf_download: bool = False,
         device: str = "cpu",
         batch_size: int = 2,
@@ -37,6 +40,7 @@ class PrithviAdapter(ModelAdapter):
         model_loader: Callable[[], Any] | None = None,
     ) -> None:
         self.hf_model_id = hf_model_id
+        self.terratorch_model_name = terratorch_model_name or hf_model_id
         self.allow_hf_download = allow_hf_download
         self.device = device
         self.batch_size = batch_size
@@ -68,6 +72,7 @@ class PrithviAdapter(ModelAdapter):
     ) -> "PrithviAdapter":
         return cls(
             hf_model_id=str(data.get("hf_model_id", cls.official_hf_model_id)),
+            terratorch_model_name=data.get("terratorch_model_name"),
             allow_hf_download=bool(data.get("allow_hf_download", False)),
             device=str(data.get("device", "cpu")),
             batch_size=int(data.get("batch_size", 2)),
@@ -99,14 +104,19 @@ class PrithviAdapter(ModelAdapter):
             from terratorch.registry import BACKBONE_REGISTRY
         except ImportError as exc:
             raise PrithviConfigurationError("TerraTorch is required for official Prithvi-EO-2.0 loading.") from exc
-        self.model = BACKBONE_REGISTRY.build(self.hf_model_id, pretrained=True)
+        self.model = BACKBONE_REGISTRY.build(self.terratorch_model_name, pretrained=True)
         self.model = self._move_to_device(self.model)
         self._maybe_eval()
 
     def _validate_config(self) -> None:
         if self.hf_model_id != self.official_hf_model_id:
             raise PrithviConfigurationError(
-                f"Phase 3 uses only {self.official_hf_model_id!r}; got {self.hf_model_id!r}."
+                f"Phase 3 uses only official HF model {self.official_hf_model_id!r}; got {self.hf_model_id!r}."
+            )
+        if self.terratorch_model_name not in self.accepted_model_names:
+            raise PrithviConfigurationError(
+                "Prithvi TerraTorch model name must be one of "
+                f"{list(self.accepted_model_names)}; got {self.terratorch_model_name!r}."
             )
         if self.expected_frames != 4 or self.expected_bands != 6 or self.image_size != 224:
             raise PrithviConfigurationError("Prithvi-EO-2.0-300M expects 4 frames, 6 bands, and 224x224 inputs.")
@@ -188,8 +198,14 @@ class PrithviAdapter(ModelAdapter):
         with torch.no_grad():
             try:
                 return self.model(tensor)
-            except Exception:
-                return self.model(tensor.permute(0, 2, 1, 3, 4))
+            except Exception as first_exc:
+                try:
+                    return self.model(tensor.permute(0, 2, 1, 3, 4))
+                except Exception as second_exc:
+                    raise PrithviConfigurationError(
+                        "Prithvi forward failed for both [B,T,C,H,W] and [B,C,T,H,W] layouts. "
+                        f"First error: {first_exc}; fallback error: {second_exc}"
+                    ) from second_exc
 
     def _pool_output(self, output: Any) -> np.ndarray:
         if isinstance(output, Mapping):

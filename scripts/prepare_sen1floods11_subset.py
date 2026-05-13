@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -51,7 +52,7 @@ def _prithvi_chip_from_s2(path: Path, target_size: int = TARGET_SIZE) -> np.ndar
     return np.repeat(single_frame[None, :, :, :], 4, axis=0)
 
 
-def _mask_from_qc(path: Path, target_size: int = TARGET_SIZE) -> np.ndarray:
+def _mask_from_label(path: Path, target_size: int = TARGET_SIZE) -> np.ndarray:
     mask = _read_tif(path)[0]
     return _resize_2d(mask, target_size, nearest=True).astype(np.int16)
 
@@ -124,6 +125,42 @@ def _label_uri_candidates(s2_uri: str) -> list[str]:
     return list(dict.fromkeys(candidates))
 
 
+def _gsutil_ls_exists(uri: str) -> bool:
+    try:
+        subprocess.check_output(["gsutil", "ls", uri], text=True, stderr=subprocess.DEVNULL)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+    return True
+
+
+def _resolve_gcs_pair(s2_uri: str) -> tuple[str, str]:
+    for label_uri in _label_uri_candidates(s2_uri):
+        if _gsutil_ls_exists(label_uri):
+            return s2_uri, label_uri
+    raise FileNotFoundError(
+        f"Missing hand label for {_sample_id(Path(s2_uri))}. "
+        "Official v1.1 labels usually live in LabelHand/ with *_LabelHand.tif names."
+    )
+
+
+def _download_many(uris: list[str], raw_dir: Path) -> None:
+    missing = [uri for uri in uris if not ((raw_dir / Path(uri).name).exists() and (raw_dir / Path(uri).name).stat().st_size > 0)]
+    if not missing:
+        print("[info] All selected Sen1Floods11 GeoTIFFs are already cached.")
+        return
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[info] Batch downloading {len(missing)} GeoTIFFs with gsutil -m cp")
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as handle:
+        for uri in missing:
+            handle.write(uri + "\n")
+        manifest_path = Path(handle.name)
+    try:
+        with manifest_path.open("r", encoding="utf-8") as stdin:
+            subprocess.check_call(["gsutil", "-m", "cp", "-I", str(raw_dir)], stdin=stdin)
+    finally:
+        manifest_path.unlink(missing_ok=True)
+
+
 def _gsutil_cp_if_available(uri: str, path: Path) -> bool:
     if path.exists() and path.stat().st_size > 0:
         return True
@@ -161,6 +198,48 @@ def _download_pair(s2_uri: str, cache_dir: Path) -> tuple[Path, Path]:
     )
 
 
+def _select_and_download_gcs_pairs(
+    uris: list[str],
+    cache_dir: Path,
+    max_samples: int,
+    candidate_limit: int,
+    parallel_download: bool = True,
+) -> tuple[list[tuple[Path, Path]], int]:
+    selected: list[tuple[str, str]] = []
+    failures = 0
+    for s2_uri in uris[:candidate_limit]:
+        if len(selected) >= max_samples:
+            break
+        try:
+            selected.append(_resolve_gcs_pair(s2_uri))
+        except FileNotFoundError as exc:
+            failures += 1
+            print(f"[warn] Skipping unavailable pair: {exc}")
+    if not selected:
+        return [], failures
+
+    raw_dir = cache_dir / "raw"
+    if parallel_download:
+        try:
+            _download_many([uri for pair in selected for uri in pair], raw_dir)
+        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+            print(f"[warn] Batch download failed; falling back to per-pair download: {exc}")
+
+    pairs: list[tuple[Path, Path]] = []
+    for s2_uri, label_uri in selected:
+        s2_path = raw_dir / Path(s2_uri).name
+        label_path = raw_dir / Path(label_uri).name
+        if s2_path.exists() and s2_path.stat().st_size > 0 and label_path.exists() and label_path.stat().st_size > 0:
+            pairs.append((s2_path, label_path))
+            continue
+        try:
+            pairs.append(_download_pair(s2_uri, cache_dir))
+        except FileNotFoundError as exc:
+            failures += 1
+            print(f"[warn] Skipping failed fallback pair: {exc}")
+    return pairs, failures
+
+
 def _local_pairs(source_root: Path) -> list[tuple[Path, Path]]:
     s2_files = sorted(source_root.rglob("*S2Hand.tif")) + sorted(source_root.rglob("*_S2.tif"))
     pairs = []
@@ -177,7 +256,7 @@ def _local_pairs(source_root: Path) -> list[tuple[Path, Path]]:
         if label_path is not None:
             pairs.append((s2_path, label_path))
     if not pairs:
-        raise RuntimeError(f"No local Sen1Floods11 S2/QC pairs found under {source_root}.")
+        raise RuntimeError(f"No local Sen1Floods11 S2/label pairs found under {source_root}.")
     return pairs
 
 
@@ -190,6 +269,7 @@ def prepare_sen1floods11_subset(
     target_size: int = TARGET_SIZE,
     event_filter: list[str] | None = None,
     candidate_limit: int = 1000,
+    parallel_download: bool = True,
 ) -> Path:
     if max_samples <= 0:
         raise ValueError("--max-samples must be positive.")
@@ -197,16 +277,13 @@ def prepare_sen1floods11_subset(
         pairs = _local_pairs(source_root)[:max_samples]
     else:
         uris = _filter_uris_by_event(_list_gcs_s2_files(gcs_root), event_filter)
-        pairs = []
-        failures = 0
-        for uri in uris[:candidate_limit]:
-            if len(pairs) >= max_samples:
-                break
-            try:
-                pairs.append(_download_pair(uri, cache_dir))
-            except FileNotFoundError as exc:
-                failures += 1
-                print(f"[warn] Skipping unavailable pair: {exc}")
+        pairs, failures = _select_and_download_gcs_pairs(
+            uris,
+            cache_dir=cache_dir,
+            max_samples=max_samples,
+            candidate_limit=candidate_limit,
+            parallel_download=parallel_download,
+        )
         if not pairs:
             filters = ", ".join(event_filter or []) or "none"
             raise RuntimeError(
@@ -225,14 +302,14 @@ def prepare_sen1floods11_subset(
     chip_dir.mkdir(exist_ok=True)
     mask_dir.mkdir(exist_ok=True)
     rows: list[dict[str, Any]] = []
-    for index, (s2_path, qc_path) in enumerate(pairs, start=1):
+    for index, (s2_path, label_path) in enumerate(pairs, start=1):
         sample_id = _sample_id(s2_path)
         chip = _prithvi_chip_from_s2(s2_path, target_size=target_size)
-        mask = _mask_from_qc(qc_path, target_size=target_size)
+        mask = _mask_from_label(label_path, target_size=target_size)
         if chip.shape != (4, 6, target_size, target_size):
             raise RuntimeError(f"Prepared Prithvi chip has wrong shape for {sample_id}: {chip.shape}.")
         if mask.shape != (target_size, target_size):
-            raise RuntimeError(f"Prepared QC mask has wrong shape for {sample_id}: {mask.shape}.")
+            raise RuntimeError(f"Prepared label mask has wrong shape for {sample_id}: {mask.shape}.")
         label, water_fraction = _water_label(mask)
         chip_path = chip_dir / f"{sample_id}_prithvi_s2.npz"
         mask_path = mask_dir / f"{sample_id}_qc.npz"
@@ -268,15 +345,16 @@ def prepare_sen1floods11_subset(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Prepare a Prithvi-compatible Sen1Floods11 S2/QC subset.")
+    parser = argparse.ArgumentParser(description="Prepare a Prithvi-compatible Sen1Floods11 S2/label subset.")
     parser.add_argument("--output-dir", type=Path, default=Path("data/sen1floods11_prithvi_subset64"))
     parser.add_argument("--max-samples", type=int, default=64)
-    parser.add_argument("--source-root", type=Path, help="Optional local root containing S2/QC GeoTIFF pairs.")
+    parser.add_argument("--source-root", type=Path, help="Optional local root containing S2/label GeoTIFF pairs.")
     parser.add_argument("--cache-dir", type=Path, default=Path("data/_cache/sen1floods11"))
     parser.add_argument("--gcs-root", default=GCS_ROOT)
     parser.add_argument("--target-size", type=int, default=TARGET_SIZE)
     parser.add_argument("--event-filter", action="append", help="Optional event/country filter, e.g. India or Pakistan. Repeatable.")
     parser.add_argument("--candidate-limit", type=int, default=1000, help="Maximum listed S2 candidates to inspect while searching for valid S2/label pairs.")
+    parser.add_argument("--no-parallel-download", action="store_true", help="Disable gsutil -m cp batch download and use per-pair fallback only.")
     args = parser.parse_args()
     prepare_sen1floods11_subset(
         output_dir=args.output_dir,
@@ -287,6 +365,7 @@ def main() -> None:
         target_size=args.target_size,
         event_filter=args.event_filter,
         candidate_limit=args.candidate_limit,
+        parallel_download=not args.no_parallel_download,
     )
 
 

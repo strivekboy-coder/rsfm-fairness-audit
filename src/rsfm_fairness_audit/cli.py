@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from rsfm_fairness_audit.audit_pipeline import evaluate_bwer_from_file, run_audit_from_outputs
 from rsfm_fairness_audit.pipeline import (
     build_real_adapters,
     compare_model_runs,
@@ -101,6 +102,46 @@ def build_parser() -> argparse.ArgumentParser:
     seg.add_argument("--split", choices=["train", "val", "test", "all"], default="all")
     seg.add_argument("--output-dir", type=Path, default=Path("outputs/prithvi_sen1floods11_seg64"))
     seg.add_argument("--model-config", "--config", dest="model_config", type=Path, required=True)
+
+    bwer = subparsers.add_parser("evaluate-bwer", help="Evaluate BWER slice fairness from a normalized audit table.")
+    bwer.add_argument("--audit-table", type=Path, required=True)
+    bwer.add_argument("--dataset", required=True)
+    bwer.add_argument("--model", required=True)
+    bwer.add_argument("--task", required=True)
+    bwer.add_argument("--slice-config", type=Path, default=Path("configs/slice_taxonomy.yaml"))
+    bwer.add_argument("--output-dir", type=Path, required=True)
+    bwer.add_argument("--slice-variable")
+    bwer.add_argument("--balance-variable")
+    bwer.add_argument("--tail-fraction", type=float)
+    bwer.add_argument("--bootstrap", type=int, default=0)
+    bwer.add_argument("--cluster-key")
+    bwer.add_argument("--seed", type=int, default=42)
+    bwer.add_argument("--weighting", choices=["uniform", "empirical"], default="uniform")
+    bwer.add_argument("--missing-balance-policy", choices=["renormalize", "invalidate", "overlap"], default="renormalize")
+    bwer.add_argument("--score-column")
+    bwer.add_argument("--risk-column")
+    bwer.add_argument("--audit-level", choices=["smoke", "pilot", "paper"], default="pilot")
+
+    audit = subparsers.add_parser("run-audit", help="Build an audit table from existing outputs and evaluate BWER.")
+    audit.add_argument("--predictions", type=Path)
+    audit.add_argument("--metadata", type=Path)
+    audit.add_argument("--segmentation-metrics", type=Path)
+    audit.add_argument("--dataset", required=True)
+    audit.add_argument("--model", required=True)
+    audit.add_argument("--task", required=True)
+    audit.add_argument("--slice-config", type=Path, default=Path("configs/slice_taxonomy.yaml"))
+    audit.add_argument("--output-dir", type=Path, required=True)
+    audit.add_argument("--slice-variable")
+    audit.add_argument("--balance-variable")
+    audit.add_argument("--tail-fraction", type=float)
+    audit.add_argument("--bootstrap", type=int, default=0)
+    audit.add_argument("--cluster-key")
+    audit.add_argument("--seed", type=int, default=42)
+    audit.add_argument("--weighting", choices=["uniform", "empirical"], default="uniform")
+    audit.add_argument("--missing-balance-policy", choices=["renormalize", "invalidate", "overlap"], default="renormalize")
+    audit.add_argument("--score-column")
+    audit.add_argument("--risk-column")
+    audit.add_argument("--audit-level", choices=["smoke", "pilot", "paper"], default="pilot")
     return parser
 
 
@@ -191,6 +232,54 @@ def main() -> None:
         )
         artifacts = run_segmentation_smoke(dataset, model, args.output_dir)
         print(f"Real segmentation smoke complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "evaluate-bwer":
+        artifacts = evaluate_bwer_from_file(
+            audit_table=args.audit_table,
+            dataset=args.dataset,
+            model=args.model,
+            task=args.task,
+            output_dir=args.output_dir,
+            slice_config=args.slice_config,
+            slice_variable=args.slice_variable,
+            balance_variable=args.balance_variable,
+            tail_fraction=args.tail_fraction,
+            bootstrap=args.bootstrap,
+            cluster_key=args.cluster_key,
+            seed=args.seed,
+            weighting=args.weighting,
+            missing_balance_policy=args.missing_balance_policy,
+            score_column=args.score_column,
+            risk_column=args.risk_column,
+            audit_level=args.audit_level,
+        )
+        print(f"BWER audit complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "run-audit":
+        artifacts = run_audit_from_outputs(
+            predictions=args.predictions,
+            metadata=args.metadata,
+            segmentation_metrics=args.segmentation_metrics,
+            dataset=args.dataset,
+            model=args.model,
+            task=args.task,
+            output_dir=args.output_dir,
+            slice_config=args.slice_config,
+            slice_variable=args.slice_variable,
+            balance_variable=args.balance_variable,
+            tail_fraction=args.tail_fraction,
+            bootstrap=args.bootstrap,
+            cluster_key=args.cluster_key,
+            seed=args.seed,
+            weighting=args.weighting,
+            missing_balance_policy=args.missing_balance_policy,
+            score_column=args.score_column,
+            risk_column=args.risk_column,
+            audit_level=args.audit_level,
+        )
+        print(f"BWER audit complete: {args.output_dir}")
         for name, path in artifacts.items():
             print(f"{name}: {path}")
 

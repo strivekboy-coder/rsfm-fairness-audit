@@ -19,13 +19,13 @@ Sen1Floods11 provides Sentinel-2 13-band GeoTIFFs and hand-label masks where `-1
 
 ## Adapter And Data Plan
 
-Use TerraTorch's official registry path for `ibm-nasa-geospatial/Prithvi-EO-2.0-300M`. The adapter preserves `[T, C, H, W]` structure and repeats single-timestamp Sen1Floods11 S2 chips to four frames as a compatibility shim, not as a true temporal experiment.
+Use TerraTorch's official registry path for `ibm-nasa-geospatial/Prithvi-EO-2.0-300M`. Current TerraTorch builds expose the 300M non-TL backbone as `terratorch_prithvi_eo_v2_300`, so `configs/models/prithvi.yaml` keeps the HF model id for provenance and uses `terratorch_model_name` for registry loading. The adapter preserves `[T, C, H, W]` structure and repeats single-timestamp Sen1Floods11 S2 chips to four frames as a compatibility shim, not as a true temporal experiment.
 
-The classification sanity path uses a chip-level `water_present` label derived from valid-water fraction in the QC mask. The segmentation path is a smoke validation that ignores invalid QC pixels and reports group IoU/accuracy.
+The classification sanity path uses a chip-level `water_present` label derived from valid-water fraction in the hand-label mask. The segmentation path is a smoke validation that ignores invalid mask pixels and reports group IoU/accuracy.
 
 Colab entrypoint: [prithvi_sen1floods11_colab.ipynb](D:/Codex/rsfm-fairness-audit/notebooks/prithvi_sen1floods11_colab.ipynb).
 
-The preparation script scans official S2 candidates and keeps trying until it finds valid S2/label pairs. If a specific flood event has missing labels in GCS, use `--event-filter India` or another event, or increase `--candidate-limit`. If GCS is unavailable, pass `--source-root` pointing at a local rsync/HF mirror with matching `S2Hand` and `LabelHand` files.
+The preparation script scans official S2 candidates and keeps trying until it finds valid S2/label pairs. It resolves valid pairs first, then uses `gsutil -m cp -I` to batch-download missing GeoTIFFs into the cache; `--no-parallel-download` is available as a conservative fallback. If a specific flood event has missing labels in GCS, use `--event-filter India` or another event, or increase `--candidate-limit`. If GCS is unavailable, pass `--source-root` pointing at a local rsync/HF mirror with matching `S2Hand` and `LabelHand` files.
 
 ## Caveats
 

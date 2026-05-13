@@ -313,11 +313,22 @@ def _append_croma_band_checks(checks: list[PreflightCheck], config: dict[str, An
 
 def _append_prithvi_preflight_checks(checks: list[PreflightCheck], config: dict[str, Any]) -> None:
     hf_model_id = str(config.get("hf_model_id", ""))
+    terratorch_model_name = str(config.get("terratorch_model_name", hf_model_id))
     allow_hf = bool(config.get("allow_hf_download", False))
     if hf_model_id == "ibm-nasa-geospatial/Prithvi-EO-2.0-300M":
         checks.append(PreflightCheck("prithvi_model_id", "pass", f"Using official Prithvi model: {hf_model_id}"))
     else:
         checks.append(PreflightCheck("prithvi_model_id", "fail", "Phase 3 uses only ibm-nasa-geospatial/Prithvi-EO-2.0-300M."))
+    if terratorch_model_name in {"terratorch_prithvi_eo_v2_300", "ibm-nasa-geospatial/Prithvi-EO-2.0-300M"}:
+        checks.append(PreflightCheck("prithvi_terratorch_name", "pass", f"TerraTorch registry target: {terratorch_model_name}"))
+    else:
+        checks.append(
+            PreflightCheck(
+                "prithvi_terratorch_name",
+                "fail",
+                "Use terratorch_prithvi_eo_v2_300 for current TerraTorch or the official HF model id as a compatibility fallback.",
+            )
+        )
     checks.append(
         PreflightCheck(
             "prithvi_loading",

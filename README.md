@@ -190,7 +190,11 @@ non-TL with Sen1Floods11. It runs both chip-level classification sanity and
 a lightweight segmentation fairness smoke. The 64-sample results are smoke
 validation only, not paper-grade flood mapping conclusions.
 For Colab, keep `numpy<2.1` because the preinstalled `numba` stack is not
-compatible with newer NumPy releases.
+compatible with newer NumPy releases. The Prithvi notebook also upgrades
+TerraTorch and uses `terratorch_prithvi_eo_v2_300`, the current TerraTorch
+registry name for the 300M non-TL backbone. Sen1Floods11 preparation resolves
+valid `S2Hand`/`LabelHand` pairs first, then uses `gsutil -m cp` for batched
+cache downloads.
 
 - [Prithvi Sen1Floods11 notebook](D:/Codex/rsfm-fairness-audit/notebooks/prithvi_sen1floods11_colab.ipynb)
 
@@ -216,3 +220,43 @@ python -m rsfm_fairness_audit.cli run-segmentation-real `
   --output-dir outputs/prithvi_sen1floods11_seg64 `
   --max-samples 64
 ```
+
+## BWER Slice Fairness Audit
+
+The paper-grade audit layer adds BWER: Balanced Worst-slice Excess Risk. It
+operates on a normalized tabular audit table, so it can consume existing
+classification predictions, segmentation metric rows, or pre-aggregated score
+tables without rewriting model adapters.
+
+```powershell
+python -m rsfm_fairness_audit.cli evaluate-bwer `
+  --audit-table outputs/audit_table.csv `
+  --dataset dummy `
+  --model dummy `
+  --task classification `
+  --output-dir outputs/audit/dummy `
+  --missing-balance-policy renormalize `
+  --bootstrap 200
+```
+
+For existing outputs, build the audit table and evaluate in one step:
+
+```powershell
+python -m rsfm_fairness_audit.cli run-audit `
+  --predictions outputs/run/predictions.csv `
+  --dataset bigearthnet_lccol `
+  --model dofa `
+  --task classification `
+  --output-dir outputs/audit/dofa_bigearthnet_lccol `
+  --bootstrap 200
+```
+
+Audit outputs include `audit_table.csv`, `bwer_summary.csv`,
+`bwer_by_slice.csv`, `bootstrap_ci.csv`, `warnings.json`, publication-oriented
+figures, and `report.md`. BWER reports deployment-relevant slice risk; it does
+not claim causal bias.
+
+Balanced BWER supports explicit missing balance-level policies:
+`renormalize` keeps the current behavior, `invalidate` excludes slices missing
+required balance levels, and `overlap` restricts balancing to levels present in
+all valid slices. Each run writes `support_diagnostics.csv`.

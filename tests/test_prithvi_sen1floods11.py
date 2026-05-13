@@ -64,6 +64,21 @@ def test_prithvi_config_validation_rejects_wrong_shape() -> None:
         adapter.load_model()
 
 
+def test_prithvi_accepts_current_terratorch_registry_name() -> None:
+    adapter = PrithviAdapter(
+        terratorch_model_name="terratorch_prithvi_eo_v2_300",
+        model=MockPrithviModel(),
+    )
+    adapter.load_model()
+    assert adapter.terratorch_model_name == "terratorch_prithvi_eo_v2_300"
+
+
+def test_prithvi_config_validation_rejects_unverified_registry_name() -> None:
+    adapter = PrithviAdapter(terratorch_model_name="some_other_model", model=MockPrithviModel())
+    with pytest.raises(PrithviConfigurationError, match="TerraTorch model name"):
+        adapter.load_model()
+
+
 def test_prithvi_repeats_single_timestamp_to_four_frames() -> None:
     adapter = PrithviAdapter(model=MockPrithviModel())
     batch = {
@@ -116,7 +131,7 @@ def test_prepare_sen1floods11_maps_13_band_s2_to_prithvi_shape(monkeypatch) -> N
     qc.write_text("mock", encoding="utf-8")
 
     def fake_read_tif(path: Path) -> np.ndarray:
-        if "QC" in path.name:
+        if "QC" in path.name or "LabelHand" in path.name:
             mask = np.zeros((5, 7), dtype=np.float32)
             mask[0, 0] = -1
             mask[1:3, 1:3] = 1
@@ -143,6 +158,37 @@ def test_sen1floods11_gcs_label_candidates_prefer_official_labelhand() -> None:
     candidates = prep._label_uri_candidates(uri)
     assert candidates[0] == "gs://sen1floods11/v1.1/data/flood_events/HandLabeled/LabelHand/India_123_LabelHand.tif"
     assert any(candidate.endswith("India_123_QC.tif") for candidate in candidates)
+
+
+def test_sen1floods11_batch_download_selection_uses_parallel_cp(monkeypatch) -> None:
+    calls = []
+
+    def fake_ls_exists(uri: str) -> bool:
+        return "LabelHand" in uri
+
+    def fake_download_many(uris: list[str], raw_dir: Path) -> None:
+        calls.append((uris, raw_dir))
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        for uri in uris:
+            (raw_dir / Path(uri).name).write_text("mock", encoding="utf-8")
+
+    monkeypatch.setattr(prep, "_gsutil_ls_exists", fake_ls_exists)
+    monkeypatch.setattr(prep, "_download_many", fake_download_many)
+    uris = [
+        "gs://sen1floods11/v1.1/data/flood_events/HandLabeled/S2Hand/India_001_S2Hand.tif",
+        "gs://sen1floods11/v1.1/data/flood_events/HandLabeled/S2Hand/India_002_S2Hand.tif",
+    ]
+    pairs, failures = prep._select_and_download_gcs_pairs(
+        uris,
+        cache_dir=Path("outputs/test_sen1_batch_cache"),
+        max_samples=2,
+        candidate_limit=2,
+        parallel_download=True,
+    )
+    assert failures == 0
+    assert len(pairs) == 2
+    assert len(calls) == 1
+    assert len(calls[0][0]) == 4
 
 
 def test_prithvi_cli_commands_exist() -> None:
@@ -180,3 +226,9 @@ def test_prithvi_cli_commands_exist() -> None:
 def test_prithvi_requirements_pin_numpy_below_numba_limit() -> None:
     text = Path("requirements-prithvi.txt").read_text(encoding="utf-8")
     assert "numpy>=1.24,<2.1" in text
+
+
+def test_prithvi_config_uses_current_terratorch_registry_name() -> None:
+    text = Path("configs/models/prithvi.yaml").read_text(encoding="utf-8")
+    assert "hf_model_id: ibm-nasa-geospatial/Prithvi-EO-2.0-300M" in text
+    assert "terratorch_model_name: terratorch_prithvi_eo_v2_300" in text
