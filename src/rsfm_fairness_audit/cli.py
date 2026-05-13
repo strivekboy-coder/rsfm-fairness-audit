@@ -13,6 +13,7 @@ from rsfm_fairness_audit.pipeline import (
 )
 from rsfm_fairness_audit.preflight import checks_to_json, run_real_preflight
 from rsfm_fairness_audit.segmentation import run_segmentation_smoke
+from rsfm_fairness_audit.slice_support import evaluate_slice_support_from_files
 
 
 def _parse_wavelengths(value: str | None) -> list[float] | None:
@@ -142,6 +143,27 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--score-column")
     audit.add_argument("--risk-column")
     audit.add_argument("--audit-level", choices=["smoke", "pilot", "paper"], default="pilot")
+
+    support = subparsers.add_parser("preflight-bwer", help="Check slice support before paper-grade BWER runs.")
+    support.add_argument("--audit-table", type=Path)
+    support.add_argument("--predictions", type=Path)
+    support.add_argument("--metadata", type=Path)
+    support.add_argument("--segmentation-metrics", type=Path)
+    support.add_argument("--dataset", required=True)
+    support.add_argument("--model", required=True)
+    support.add_argument("--task", required=True)
+    support.add_argument("--slice-config", type=Path, default=Path("configs/slice_taxonomy.yaml"))
+    support.add_argument("--output-dir", type=Path, required=True)
+    support.add_argument(
+        "--candidate",
+        action="append",
+        help="Candidate in the form slice or slice|balance, for example climatezone|class_label. Repeat as needed.",
+    )
+    support.add_argument("--min-samples-per-slice", type=int)
+    support.add_argument("--min-units-required", type=int)
+    support.add_argument("--min-slices-required", type=int)
+    support.add_argument("--score-column")
+    support.add_argument("--risk-column")
     return parser
 
 
@@ -280,6 +302,27 @@ def main() -> None:
             audit_level=args.audit_level,
         )
         print(f"BWER audit complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "preflight-bwer":
+        artifacts = evaluate_slice_support_from_files(
+            audit_table=args.audit_table,
+            predictions=args.predictions,
+            metadata=args.metadata,
+            segmentation_metrics=args.segmentation_metrics,
+            dataset=args.dataset,
+            model=args.model,
+            task=args.task,
+            output_dir=args.output_dir,
+            slice_config=args.slice_config,
+            candidates=args.candidate,
+            min_samples_per_slice=args.min_samples_per_slice,
+            min_units_required=args.min_units_required,
+            min_slices_required=args.min_slices_required,
+            score_column=args.score_column,
+            risk_column=args.risk_column,
+        )
+        print(f"BWER support preflight complete: {args.output_dir}")
         for name, path in artifacts.items():
             print(f"{name}: {path}")
 
