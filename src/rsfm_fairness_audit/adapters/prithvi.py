@@ -220,9 +220,21 @@ class PrithviAdapter(ModelAdapter):
         if hasattr(output, "detach"):
             output = output.detach().cpu().numpy()
         array = np.asarray(output, dtype=np.float32)
+        # The fairness pipeline needs one pooled embedding per sample. Some
+        # Prithvi/TerraTorch outputs are token or feature maps; flattening them
+        # creates very wide embeddings and can OOM Colab after chunks are
+        # written. Pool instead and keep only sample-level representations.
         if array.ndim == 2:
             return array
-        return array.reshape(array.shape[0], -1).mean(axis=1, keepdims=True) if array.ndim == 1 else array.reshape(array.shape[0], -1)
+        if array.ndim == 1:
+            return array.reshape(-1, 1)
+        if array.ndim == 3:
+            return array.mean(axis=1)
+        if array.ndim == 4:
+            return array.mean(axis=(2, 3))
+        if array.ndim == 5:
+            return array.mean(axis=(2, 3, 4))
+        return array.reshape(array.shape[0], -1)
 
     def segmentation_features(self, batch: Mapping[str, Any]) -> np.ndarray:
         if self.model is not None and hasattr(self.model, "extract_patch_features"):

@@ -17,6 +17,7 @@ from rsfm_fairness_audit.adapters.sen1floods11 import Sen1Floods11DatasetAdapter
 from rsfm_fairness_audit.config import load_yaml
 from rsfm_fairness_audit.embedding import extract_embeddings, extract_embeddings_to_chunks
 from rsfm_fairness_audit.io import ensure_dir, read_csv_rows, write_csv
+from rsfm_fairness_audit.memory import log_memory, release_memory
 from rsfm_fairness_audit.metrics import classwise_metrics, group_metrics, raw_vs_balanced_gap, summarize_gap
 from rsfm_fairness_audit.probes import NearestCentroidProbe, evaluate_probe_suite
 from rsfm_fairness_audit.report import write_real_report, write_static_report
@@ -125,9 +126,14 @@ def run_real_pipeline(
         )
     else:
         embeddings, labels, metadata = extract_embeddings(dataset, model, batch_size=batch_size)
+    log_memory("probe training:start")
     probe = NearestCentroidProbe().fit(embeddings, labels)
+    log_memory("probe training:done")
+    log_memory("probe prediction:start")
     predictions = probe.predict(embeddings)
+    log_memory("probe prediction:done")
 
+    log_memory("fairness metrics:start")
     region_rows = group_metrics(labels, predictions, metadata, "region")
     sensor_rows = group_metrics(labels, predictions, metadata, "sensor")
     task_rows = group_metrics(labels, predictions, metadata, "task")
@@ -143,6 +149,7 @@ def run_real_pipeline(
         summarize_gap(task_rows, "raw_task_gap"),
     ]
     gap_rows = [raw_vs_balanced_gap(region_rows, balanced_region_rows, "region")]
+    log_memory("fairness metrics:done")
 
     artifacts = {
         "embeddings": output / "embeddings.npz",
@@ -162,6 +169,7 @@ def run_real_pipeline(
         "report": output / "report.md",
     }
 
+    log_memory("embeddings.npz writing:start")
     np.savez_compressed(
         artifacts["embeddings"],
         embeddings=embeddings,
@@ -169,14 +177,20 @@ def run_real_pipeline(
         predictions=predictions,
         sample_ids=np.asarray([str(row.get("sample_id", index)) for index, row in enumerate(metadata)]),
     )
+    log_memory("embeddings.npz writing:done")
+    log_memory("predictions.csv writing:start")
     write_csv(artifacts["predictions"], _prediction_rows(metadata, labels, predictions))
+    log_memory("predictions.csv writing:done")
     write_csv(artifacts["region_matrix"], region_rows)
     write_csv(artifacts["sensor_matrix"], sensor_rows)
     write_csv(artifacts["task_matrix"], task_rows)
     write_csv(artifacts["summary"], summary_rows)
     write_csv(artifacts["gap_table"], gap_rows)
     write_csv(artifacts["classwise_metrics"], classwise_metrics(labels, predictions))
+    log_memory("probe comparison:start")
     write_csv(artifacts["probe_comparison"], evaluate_probe_suite(embeddings, labels))
+    log_memory("probe comparison:done")
+    log_memory("report/figure generation:start")
     plot_average_vs_worst(summary_rows, artifacts["average_vs_worst"])
     plot_raw_vs_balanced_gap(gap_rows, artifacts["raw_vs_balanced_gap_plot"])
     plot_sensor_heatmap(sensor_rows, artifacts["sensor_heatmap"])
@@ -185,6 +199,8 @@ def run_real_pipeline(
     if not map_generated:
         artifacts.pop("fairness_map")
     write_real_report(output, dataset_name, model_name, summary_rows, gap_rows, map_generated)
+    log_memory("report/figure generation:done")
+    release_memory()
     tables_dir = ensure_dir(output / "tables")
     figures_dir = ensure_dir(output / "figures")
     artifacts["tables_fairness_matrix"] = tables_dir / "fairness_matrix.csv"

@@ -89,6 +89,12 @@ def test_prithvi_repeats_single_timestamp_to_four_frames() -> None:
     assert processed["images"].shape == (1, 4, 6, 224, 224)
 
 
+def test_prithvi_pools_token_outputs_instead_of_flattening() -> None:
+    adapter = PrithviAdapter(model=MockPrithviModel())
+    embeddings = adapter._pool_output(np.ones((1, 197, 768), dtype=np.float32))
+    assert embeddings.shape == (1, 768)
+
+
 def test_sen1floods11_adapter_loads_prepared_samples() -> None:
     root = Path("outputs/test_sen1_adapter")
     _write_prepared_fixture(root)
@@ -107,6 +113,24 @@ def test_run_real_with_mock_prithvi_writes_artifacts() -> None:
     artifacts = run_real_pipeline(dataset, model, "outputs/test_prithvi_real_run", "sen1floods11", "prithvi")
     assert artifacts["tables_fairness_matrix"].exists()
     assert artifacts["figures_average_vs_worst_group"].exists()
+
+
+def test_streaming_run_real_with_mock_prithvi_writes_artifacts() -> None:
+    root = Path("outputs/test_prithvi_streaming_real")
+    _write_prepared_fixture(root, count=4)
+    dataset = Sen1Floods11DatasetAdapter(root, subset_size=4)
+    model = PrithviAdapter(model=MockPrithviModel(), batch_size=1)
+    artifacts = run_real_pipeline(
+        dataset,
+        model,
+        "outputs/test_prithvi_streaming_real_run",
+        "sen1floods11",
+        "prithvi",
+        chunk_size=2,
+        streaming_embeddings=True,
+    )
+    assert artifacts["predictions"].exists()
+    assert (Path("outputs/test_prithvi_streaming_real_run") / "embedding_chunks" / "chunk_00000.npz").exists()
 
 
 def test_run_segmentation_smoke_writes_artifacts() -> None:
