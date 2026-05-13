@@ -22,9 +22,12 @@ TAXONOMY_ALIASES = {
 }
 
 
-def _dataset_taxonomy(slice_config: str | Path, dataset: str) -> tuple[dict[str, Any], list[str]]:
+def _dataset_taxonomy(slice_config: str | Path, dataset: str, task: str | None = None) -> tuple[dict[str, Any], list[str]]:
     config = load_yaml(slice_config)
     datasets = config.get("datasets", {})
+    task_key = f"{dataset}_{task}" if task else ""
+    if task_key in datasets:
+        return dict(datasets[task_key]), [f"Using task-aware slice taxonomy: dataset={dataset}, task={task} -> {task_key}."]
     if dataset in datasets:
         return dict(datasets[dataset]), []
     canonical = TAXONOMY_ALIASES.get(dataset)
@@ -84,7 +87,7 @@ def evaluate_bwer_table(
     audit_level: str = "pilot",
 ) -> dict[str, Path]:
     output = ensure_dir(output_dir)
-    taxonomy, warnings = _dataset_taxonomy(slice_config, dataset)
+    taxonomy, warnings = _dataset_taxonomy(slice_config, dataset, task)
     warnings = list(warnings)
     if not taxonomy:
         warnings.append("No taxonomy entry was available; provide --slice-variable and optional --balance-variable explicitly.")

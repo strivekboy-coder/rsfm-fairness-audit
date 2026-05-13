@@ -98,7 +98,7 @@ def test_slice_support_marks_missing_candidate_not_recommended() -> None:
     assert "missing slice column" in row["reason"]
 
 
-def test_slice_support_marks_formal_unrunnable_when_taxonomy_support_would_invalidate() -> None:
+def test_sen1floods11_classification_uses_sample_level_support() -> None:
     rows = [
         {"dataset": "sen1floods11", "model": "prithvi", "task": "classification", "split": "all", "unit_id": "a1", "event_id": "A", "class_label": "0", "score": 1.0},
         {"dataset": "sen1floods11", "model": "prithvi", "task": "classification", "split": "all", "unit_id": "b1", "event_id": "B", "class_label": "1", "score": 0.0},
@@ -108,7 +108,28 @@ def test_slice_support_marks_formal_unrunnable_when_taxonomy_support_would_inval
         "sen1floods11",
         "prithvi",
         "classification",
-        "outputs/test_slice_support_formal_unrunnable",
+        "outputs/test_slice_support_sen1_classification",
+        candidates=["event_id"],
+        min_samples_per_slice=1,
+        min_units_required=1,
+        min_slices_required=2,
+    )
+    row = read_csv_rows(artifacts["recommendations"])[0]
+    assert row["recommendation"] == "recommended"
+    assert row["formal_bwer_runnable"] == "True"
+
+
+def test_sen1floods11_segmentation_keeps_pixel_positive_support_threshold() -> None:
+    rows = [
+        {"dataset": "sen1floods11", "model": "prithvi", "task": "segmentation", "split": "all", "unit_id": "a1", "event_id": "A", "class_label": "water", "score": 1.0, "positive_pixels": 500},
+        {"dataset": "sen1floods11", "model": "prithvi", "task": "segmentation", "split": "all", "unit_id": "b1", "event_id": "B", "class_label": "water", "score": 0.0, "positive_pixels": 500},
+    ]
+    artifacts = evaluate_slice_support(
+        rows,
+        "sen1floods11",
+        "prithvi",
+        "segmentation",
+        "outputs/test_slice_support_sen1_segmentation",
         candidates=["event_id"],
         min_samples_per_slice=1,
         min_units_required=1,

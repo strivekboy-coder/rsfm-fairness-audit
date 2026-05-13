@@ -120,7 +120,7 @@ def evaluate_slice_support(
     risk_column: str | None = None,
 ) -> dict[str, Path]:
     output = ensure_dir(output_dir)
-    taxonomy, warnings = _dataset_taxonomy(slice_config, dataset)
+    taxonomy, warnings = _dataset_taxonomy(slice_config, dataset, task)
     warnings = list(warnings)
     working_rows = _interaction_columns([dict(row) for row in rows], taxonomy) if rows else []
     columns = set(working_rows[0]) if working_rows else set()

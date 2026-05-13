@@ -50,3 +50,29 @@ datasets:
     min_units_required: 20
     bootstrap_cluster_key: event_id
     notes: 64-sample smoke runs are wiring validation only; paper-grade disaster conclusions need larger event-balanced subsets.
+
+  sen1floods11_classification:
+    task_type: classification
+    primary_slices: [event_id, event, country, region, month, season, class_label]
+    secondary_slices: [event_id__class_label, event__class_label]
+    balance_variables: [class_label, month, season, event_id, event]
+    default_tail_fraction: 0.10
+    min_samples_per_slice: 20
+    min_positive_support: null
+    min_slices_required: 2
+    min_units_required: 20
+    bootstrap_cluster_key: event_id
+    notes: Chip-level Sen1Floods11 classification sanity audits use sample-level support; pixel-level positive support thresholds do not apply.
+
+  sen1floods11_segmentation:
+    task_type: segmentation
+    primary_slices: [event_id, event, country, region, month, season, class_label]
+    secondary_slices: [event_id__class_label, event__class_label]
+    balance_variables: [class_label, month, season, event_id, event]
+    default_tail_fraction: 0.10
+    min_samples_per_slice: 20
+    min_positive_support: 1000
+    min_slices_required: 2
+    min_units_required: 20
+    bootstrap_cluster_key: event_id
+    notes: Pixel-level segmentation audits require positive foreground support; 1000 positive pixels is not intended for chip-level classification.

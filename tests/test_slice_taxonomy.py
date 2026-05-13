@@ -8,6 +8,10 @@ from rsfm_fairness_audit.config import load_yaml
 def test_slice_taxonomy_config_loads() -> None:
     config = load_yaml("configs/slice_taxonomy.yaml")
     assert "dummy" in config["datasets"]
+    assert "sen1floods11_classification" in config["datasets"]
+    assert "sen1floods11_segmentation" in config["datasets"]
+    assert config["datasets"]["sen1floods11_classification"]["min_positive_support"] is None
+    assert config["datasets"]["sen1floods11_segmentation"]["min_positive_support"] == 1000
 
 
 def test_missing_taxonomy_columns_are_skipped_with_warning() -> None:
