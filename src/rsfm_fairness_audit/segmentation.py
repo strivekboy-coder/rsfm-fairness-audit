@@ -112,6 +112,30 @@ def _predict_from_features(features: np.ndarray) -> np.ndarray:
     return (score >= threshold).astype(np.int16)
 
 
+def _ndwi_score(raw_image: np.ndarray, nir_band_index: int) -> np.ndarray:
+    image = np.asarray(raw_image, dtype=np.float32)
+    if image.ndim == 4:
+        image = image.mean(axis=0)
+    if image.ndim != 3 or image.shape[0] <= nir_band_index:
+        raise ValueError(f"Expected raw image [C,H,W] with band index {nir_band_index}, got {image.shape}.")
+    green = image[1]  # B03 in Prithvi's B02,B03,B04,B05,B06,B07 subset.
+    nir = image[nir_band_index]
+    return np.asarray((green - nir) / np.maximum(green + nir, 1e-6), dtype=np.float32)
+
+
+def diagnostic_baseline_predictions(features: np.ndarray, raw_image: np.ndarray) -> dict[str, np.ndarray]:
+    score = _score_map_from_features(features)
+    threshold = float(np.nanmean(score))
+    ndwi_b06 = _ndwi_score(raw_image, 4)
+    ndwi_b07 = _ndwi_score(raw_image, 5)
+    return {
+        "mean_threshold_high_positive": (score >= threshold).astype(np.int16),
+        "mean_threshold_low_positive": (score <= threshold).astype(np.int16),
+        "ndwi_like_b03_b06_positive": (ndwi_b06 > 0.0).astype(np.int16),
+        "ndwi_like_b03_b07_positive": (ndwi_b07 > 0.0).astype(np.int16),
+    }
+
+
 def _value_counts(array: np.ndarray) -> str:
     values, counts = np.unique(array, return_counts=True)
     return json.dumps({str(int(value)): int(count) for value, count in zip(values, counts)}, sort_keys=True)
@@ -215,6 +239,73 @@ def aggregate_segmentation_metrics(
     return output
 
 
+def aggregate_diagnostic_baselines(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[(str(row.get("baseline_name", "unknown")), str(row.get("event_id", row.get("event", "to_verify"))))].append(row)
+    output: list[dict[str, Any]] = []
+    for (baseline_name, event_id), items in sorted(grouped.items()):
+        counts = {
+            "valid_pixel_count": int(sum(int(row.get("valid_pixel_count", 0) or 0) for row in items)),
+            "positive_pixel_count": int(sum(int(row.get("positive_pixel_count", 0) or 0) for row in items)),
+            "predicted_positive_pixel_count": int(sum(int(row.get("predicted_positive_pixel_count", 0) or 0) for row in items)),
+            "TP": int(sum(int(row.get("TP", 0) or 0) for row in items)),
+            "FP": int(sum(int(row.get("FP", 0) or 0) for row in items)),
+            "FN": int(sum(int(row.get("FN", 0) or 0) for row in items)),
+            "TN": int(sum(int(row.get("TN", 0) or 0) for row in items)),
+        }
+        metrics = segmentation_metrics_from_counts(counts)
+        output.append(
+            {
+                "baseline_name": baseline_name,
+                "event_id": event_id,
+                "aggregation_level": "event",
+                "sample_count": len(items),
+                **counts,
+                "ground_truth_positive_pixel_ratio": metrics["ground_truth_positive_pixel_ratio"],
+                "predicted_positive_pixel_ratio": metrics["predicted_positive_pixel_ratio"],
+                "micro_iou": metrics["micro_iou"],
+                "micro_dice": metrics["micro_dice"],
+                "precision": metrics["precision"],
+                "recall": metrics["recall"],
+                "pixel_accuracy": metrics["pixel_accuracy"],
+                "risk": metrics["risk"],
+                "risk_source": metrics["risk_source"],
+            }
+        )
+    if output:
+        for baseline_name, items in sorted(defaultdict(list, {name: [row for row in output if row["baseline_name"] == name] for name in {row["baseline_name"] for row in output}}).items()):
+            counts = {
+                "valid_pixel_count": int(sum(int(row.get("valid_pixel_count", 0) or 0) for row in items)),
+                "positive_pixel_count": int(sum(int(row.get("positive_pixel_count", 0) or 0) for row in items)),
+                "predicted_positive_pixel_count": int(sum(int(row.get("predicted_positive_pixel_count", 0) or 0) for row in items)),
+                "TP": int(sum(int(row.get("TP", 0) or 0) for row in items)),
+                "FP": int(sum(int(row.get("FP", 0) or 0) for row in items)),
+                "FN": int(sum(int(row.get("FN", 0) or 0) for row in items)),
+                "TN": int(sum(int(row.get("TN", 0) or 0) for row in items)),
+            }
+            metrics = segmentation_metrics_from_counts(counts)
+            output.append(
+                {
+                    "baseline_name": baseline_name,
+                    "event_id": "__overall__",
+                    "aggregation_level": "overall",
+                    "sample_count": int(sum(int(row.get("sample_count", 0) or 0) for row in items)),
+                    **counts,
+                    "ground_truth_positive_pixel_ratio": metrics["ground_truth_positive_pixel_ratio"],
+                    "predicted_positive_pixel_ratio": metrics["predicted_positive_pixel_ratio"],
+                    "micro_iou": metrics["micro_iou"],
+                    "micro_dice": metrics["micro_dice"],
+                    "precision": metrics["precision"],
+                    "recall": metrics["recall"],
+                    "pixel_accuracy": metrics["pixel_accuracy"],
+                    "risk": metrics["risk"],
+                    "risk_source": metrics["risk_source"],
+                }
+            )
+    return output
+
+
 def _group_rows(rows: Sequence[dict[str, Any]], group_key: str) -> list[dict[str, Any]]:
     output = []
     for row in aggregate_segmentation_metrics(rows, group_key, aggregation_level="slice"):
@@ -265,6 +356,7 @@ def run_segmentation_smoke(
     model.load_model()
     batch_size = batch_size or int(getattr(model, "batch_size", 2))
     metric_rows: list[dict[str, Any]] = []
+    diagnostic_rows: list[dict[str, Any]] = []
     for start in range(0, len(metadata), batch_size):
         indices = list(range(start, min(start + batch_size, len(metadata))))
         samples = [dataset.load_sample(index) for index in indices]
@@ -310,16 +402,43 @@ def run_segmentation_smoke(
                 }
             )
             metric_rows.append(row)
+            for baseline_name, baseline_prediction in diagnostic_baseline_predictions(features[local_index], batch["raw_images"][local_index]).items():
+                baseline_counts = segmentation_confusion_counts(mask, baseline_prediction)
+                baseline_metrics = segmentation_metrics_from_counts(baseline_counts)
+                diagnostic_rows.append(
+                    {
+                        "baseline_name": baseline_name,
+                        "sample_id": row.get("sample_id"),
+                        "event_id": event_id,
+                        "valid_pixel_count": baseline_counts["valid_pixel_count"],
+                        "positive_pixel_count": baseline_counts["positive_pixel_count"],
+                        "predicted_positive_pixel_count": baseline_counts["predicted_positive_pixel_count"],
+                        "TP": baseline_counts["TP"],
+                        "FP": baseline_counts["FP"],
+                        "FN": baseline_counts["FN"],
+                        "TN": baseline_counts["TN"],
+                        "ground_truth_positive_pixel_ratio": baseline_metrics["ground_truth_positive_pixel_ratio"],
+                        "predicted_positive_pixel_ratio": baseline_metrics["predicted_positive_pixel_ratio"],
+                        "iou": baseline_metrics["iou"],
+                        "dice": baseline_metrics["dice"],
+                        "precision": baseline_metrics["precision"],
+                        "recall": baseline_metrics["recall"],
+                        "pixel_accuracy": baseline_metrics["pixel_accuracy"],
+                    }
+                )
 
     region_rows = _group_rows(metric_rows, "region")
     event_group_key = "event_id" if "event_id" in metric_rows[0] else "event"
     event_rows = _group_rows(metric_rows, event_group_key)
     event_metric_rows = aggregate_segmentation_metrics(metric_rows, event_group_key, aggregation_level="event")
+    diagnostic_baseline_rows = aggregate_diagnostic_baselines(diagnostic_rows)
     audit_rows = build_audit_table_from_segmentation_metrics_from_rows(event_metric_rows)
     artifacts = {
         "segmentation_metrics": output / "segmentation_metrics.csv",
         "segmentation_predictions": output / "segmentation_predictions.csv",
         "event_segmentation_metrics": output / "event_segmentation_metrics.csv",
+        "diagnostic_baseline_comparison": output / "diagnostic_baseline_comparison.csv",
+        "diagnostic_baseline_per_chip": output / "diagnostic_baseline_per_chip.csv",
         "segmentation_audit_table": output / "segmentation_audit_table.csv",
         "audit_table": output / "audit_table.csv",
         "support_recommendations": output / "slice_support_recommendations.csv",
@@ -337,6 +456,8 @@ def run_segmentation_smoke(
     write_csv(artifacts["segmentation_metrics"], metric_rows)
     write_csv(artifacts["segmentation_predictions"], metric_rows)
     write_csv(artifacts["event_segmentation_metrics"], event_metric_rows)
+    write_csv(artifacts["diagnostic_baseline_comparison"], diagnostic_baseline_rows)
+    write_csv(artifacts["diagnostic_baseline_per_chip"], diagnostic_rows)
     write_audit_table(artifacts["segmentation_audit_table"], audit_rows)
     write_audit_table(artifacts["audit_table"], audit_rows)
     write_csv(artifacts["segmentation_fairness_matrix_region"], region_rows)

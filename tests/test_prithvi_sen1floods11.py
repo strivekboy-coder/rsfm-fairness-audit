@@ -140,6 +140,8 @@ def test_run_segmentation_smoke_writes_artifacts() -> None:
     model = PrithviAdapter(model=MockPrithviModel())
     artifacts = run_segmentation_smoke(dataset, model, "outputs/test_prithvi_seg_run")
     assert artifacts["segmentation_metrics"].exists()
+    assert artifacts["diagnostic_baseline_comparison"].exists()
+    assert artifacts["diagnostic_baseline_per_chip"].exists()
     assert artifacts["segmentation_fairness_matrix_region"].exists()
     assert artifacts["iou_by_group"].exists()
     rows = read_csv_rows(artifacts["segmentation_metrics"])
@@ -150,6 +152,15 @@ def test_run_segmentation_smoke_writes_artifacts() -> None:
     assert "prediction_unique_values" in rows[0]
     assert rows[0]["input_band_order"] == "B02,B03,B04,B05,B06,B07"
     assert rows[0]["mask_resize_alignment"] == "image=bilinear_224x224;mask=nearest_224x224;source=LabelHand"
+    comparison = read_csv_rows(artifacts["diagnostic_baseline_comparison"])
+    baselines = {row["baseline_name"] for row in comparison}
+    assert {
+        "mean_threshold_high_positive",
+        "mean_threshold_low_positive",
+        "ndwi_like_b03_b06_positive",
+        "ndwi_like_b03_b07_positive",
+    } <= baselines
+    assert any(row["event_id"] == "__overall__" for row in comparison)
 
 
 def test_prepare_sen1floods11_maps_13_band_s2_to_prithvi_shape(monkeypatch) -> None:
