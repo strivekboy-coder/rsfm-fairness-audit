@@ -94,7 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sensor_compare.add_argument("--output-dir", type=Path, default=Path("outputs/comparisons/croma_sensor_modes"))
 
-    seg = subparsers.add_parser("run-segmentation-real", help="Run a lightweight real segmentation fairness smoke audit.")
+    seg = subparsers.add_parser("run-segmentation-real", help="Run native Sen1Floods11 segmentation metrics, preflight, and BWER audit.")
     seg.add_argument("--dataset", choices=["sen1floods11"], required=True)
     seg.add_argument("--model", choices=["prithvi"], required=True)
     seg.add_argument("--data-root", "--dataset-root", dest="data_root", type=Path, required=True)
@@ -121,6 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     bwer.add_argument("--missing-balance-policy", choices=["renormalize", "invalidate", "overlap"], default="renormalize")
     bwer.add_argument("--score-column")
     bwer.add_argument("--risk-column")
+    bwer.add_argument("--selective-coverage", type=float, help="Reserved hook for future fixed-coverage selective_risk runs, e.g. 0.8.")
     bwer.add_argument("--audit-level", choices=["smoke", "pilot", "paper"], default="pilot")
 
     audit = subparsers.add_parser("run-audit", help="Build an audit table from existing outputs and evaluate BWER.")
@@ -142,6 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--missing-balance-policy", choices=["renormalize", "invalidate", "overlap"], default="renormalize")
     audit.add_argument("--score-column")
     audit.add_argument("--risk-column")
+    audit.add_argument("--selective-coverage", type=float, help="Reserved hook for future fixed-coverage selective_risk runs, e.g. 0.8.")
     audit.add_argument("--audit-level", choices=["smoke", "pilot", "paper"], default="pilot")
 
     support = subparsers.add_parser("preflight-bwer", help="Check slice support before paper-grade BWER runs.")
@@ -274,6 +276,7 @@ def main() -> None:
             missing_balance_policy=args.missing_balance_policy,
             score_column=args.score_column,
             risk_column=args.risk_column,
+            selective_coverage=args.selective_coverage,
             audit_level=args.audit_level,
         )
         print(f"BWER audit complete: {args.output_dir}")
@@ -299,6 +302,7 @@ def main() -> None:
             missing_balance_policy=args.missing_balance_policy,
             score_column=args.score_column,
             risk_column=args.risk_column,
+            selective_coverage=args.selective_coverage,
             audit_level=args.audit_level,
         )
         print(f"BWER audit complete: {args.output_dir}")

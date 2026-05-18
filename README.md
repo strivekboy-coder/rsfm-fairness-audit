@@ -187,8 +187,10 @@ python -m rsfm_fairness_audit.cli compare-sensor-modes `
 
 The third model path uses `ibm-nasa-geospatial/Prithvi-EO-2.0-300M`
 non-TL with Sen1Floods11. It runs both chip-level classification sanity and
-a lightweight segmentation fairness smoke. The 64-sample results are smoke
-validation only, not paper-grade flood mapping conclusions.
+native pixel-level segmentation audit readiness. Chip-level classification is a
+sanity audit; native pixel-level Sen1Floods11 segmentation is the paper-grade
+disaster/event fairness path. Small 64-sample results are smoke validation only,
+not paper-grade flood mapping conclusions.
 For Colab, keep `numpy<2.1` because the preinstalled `numba` stack is not
 compatible with newer NumPy releases. The Prithvi notebook also upgrades
 TerraTorch and uses `terratorch_prithvi_eo_v2_300`, the current TerraTorch
@@ -196,7 +198,8 @@ registry name for the 300M non-TL backbone. Sen1Floods11 preparation resolves
 valid `S2Hand`/`LabelHand` pairs first, then uses `gsutil -m cp` for batched
 cache downloads.
 
-- [Prithvi Sen1Floods11 notebook](D:/Codex/rsfm-fairness-audit/notebooks/prithvi_sen1floods11_colab.ipynb)
+- [Prithvi Sen1Floods11 smoke notebook](D:/Codex/rsfm-fairness-audit/notebooks/prithvi_sen1floods11_colab.ipynb)
+- [Native Sen1Floods11 segmentation audit notebook](D:/Codex/rsfm-fairness-audit/notebooks/sen1floods11_native_segmentation_audit_colab.ipynb)
 
 ```powershell
 python scripts/prepare_sen1floods11_subset.py `
@@ -224,9 +227,12 @@ python -m rsfm_fairness_audit.cli run-segmentation-real `
 ## BWER Slice Fairness Audit
 
 The paper-grade audit layer adds BWER: Balanced Worst-slice Excess Risk. It
-operates on a normalized tabular audit table, so it can consume existing
-classification predictions, segmentation metric rows, or pre-aggregated score
-tables without rewriting model adapters.
+is a support-aware, composition-standardised, CVaR-style tail-risk statistic for
+deployment-relevant remote sensing slices. It operates on a normalized tabular
+audit table, so it can consume existing classification predictions,
+segmentation metric rows, or pre-aggregated score tables without rewriting
+model adapters. For segmentation, formal BWER should use event/slice risk from
+aggregated TP/FP/FN/TN and valid-pixel support, not chip-level macro IoU alone.
 
 ```powershell
 python -m rsfm_fairness_audit.cli evaluate-bwer `
@@ -254,7 +260,8 @@ python -m rsfm_fairness_audit.cli run-audit `
 Audit outputs include `audit_table.csv`, `bwer_summary.csv`,
 `bwer_by_slice.csv`, `bootstrap_ci.csv`, `warnings.json`, publication-oriented
 figures, and `report.md`. BWER reports deployment-relevant slice risk; it does
-not claim causal bias.
+not claim causal bias. In Sen1Floods11 reports, `event_id` is an operational
+disaster-event slice, not a causal country fairness attribute.
 
 Balanced BWER supports explicit missing balance-level policies:
 `renormalize` keeps the current behavior, `invalidate` excludes slices missing

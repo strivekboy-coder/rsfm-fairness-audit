@@ -21,7 +21,9 @@ Sen1Floods11 provides Sentinel-2 13-band GeoTIFFs and hand-label masks where `-1
 
 Use TerraTorch's official registry path for `ibm-nasa-geospatial/Prithvi-EO-2.0-300M`. Current TerraTorch builds expose the 300M non-TL backbone as `terratorch_prithvi_eo_v2_300`, so `configs/models/prithvi.yaml` keeps the HF model id for provenance and uses `terratorch_model_name` for registry loading. The adapter preserves `[T, C, H, W]` structure and repeats single-timestamp Sen1Floods11 S2 chips to four frames as a compatibility shim, not as a true temporal experiment.
 
-The classification sanity path uses a chip-level `water_present` label derived from valid-water fraction in the hand-label mask. The segmentation path is a smoke validation that ignores invalid mask pixels and reports group IoU/accuracy.
+The classification sanity path uses a chip-level `water_present` label derived from valid-water fraction in the hand-label mask. It is not the main paper-grade disaster fairness experiment.
+
+The native segmentation path ignores invalid mask pixels and writes per-chip TP/FP/FN/TN, event-level aggregated segmentation metrics, a normalized segmentation audit table, BWER support preflight outputs, and raw event-level BWER where support permits. Event metrics are micro IoU/Dice/F1/precision/recall computed from aggregated counts. The current Prithvi route is honestly labeled `frozen_encoder_lightweight_head` because it uses the non-TL frozen encoder with a lightweight threshold head, not a supervised flood decoder.
 
 Colab entrypoint: [prithvi_sen1floods11_colab.ipynb](D:/Codex/rsfm-fairness-audit/notebooks/prithvi_sen1floods11_colab.ipynb).
 
@@ -31,4 +33,5 @@ The preparation script scans official S2 candidates and keeps trying until it fi
 
 - The 64-sample run is a smoke validation only and is not paper-grade flood mapping evidence.
 - The selected Prithvi checkpoint is not a flood segmentation fine-tune.
-- If TerraTorch does not expose dense token features in a stable output key, the segmentation smoke uses transparent spectral-feature fallback for mask/metric validation.
+- If TerraTorch does not expose dense token features in a stable output key, the segmentation path uses transparent spectral-feature fallback for mask/metric validation.
+- Sen1Floods11 `event_id` is an operational disaster-event slice, not a causal country fairness attribute.

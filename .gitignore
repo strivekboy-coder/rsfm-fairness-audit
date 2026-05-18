@@ -9,3 +9,6 @@ data/
 *.npz
 embedding_chunks/
 *.egg-info/
+AGENTS.md
+reports/advisor_meeting_*/
+reports/advisor_progress_*/

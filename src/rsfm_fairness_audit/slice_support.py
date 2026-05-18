@@ -13,7 +13,7 @@ from rsfm_fairness_audit.audit_table import (
     read_audit_table,
     write_audit_table,
 )
-from rsfm_fairness_audit.bwer import BWERConfig, compute_slice_scores
+from rsfm_fairness_audit.bwer import BWERConfig, compute_slice_scores, is_invalid_balance_variable
 from rsfm_fairness_audit.io import ensure_dir, write_csv
 
 
@@ -134,6 +134,7 @@ def evaluate_slice_support(
         split=str(working_rows[0].get("split", "all")) if working_rows else "all",
         min_samples_per_slice=int(min_samples_per_slice if min_samples_per_slice is not None else taxonomy.get("min_samples_per_slice", 1) or 1),
         min_positive_support=taxonomy.get("min_positive_support"),
+        min_valid_pixel_support=taxonomy.get("min_valid_pixel_support"),
         min_units_required=int(min_units_required if min_units_required is not None else taxonomy.get("min_units_required", 1) or 1),
         min_slices_required=int(min_slices_required if min_slices_required is not None else taxonomy.get("min_slices_required", 2) or 2),
     )
@@ -174,6 +175,34 @@ def evaluate_slice_support(
                     "balance_variable": balance_variable,
                     "recommendation": "not_recommended",
                     "reason": f"missing balance column: {balance_variable}",
+                    "n_units": len(working_rows),
+                    "n_slices_total": 0,
+                    "n_slices_valid": 0,
+                    "min_units_per_slice": 0,
+                    "median_units_per_slice": 0,
+                    "max_units_per_slice": 0,
+                    "n_balance_levels": 0,
+                    "missing_slice_balance_count": "",
+                    "slice_balance_cell_count": "",
+                    "missing_slice_balance_ratio": "",
+                    "raw_bwer_appropriate": False,
+                    "balanced_bwer_appropriate": False,
+                    "formal_bwer_runnable": False,
+                    "preferred_bwer": "none",
+                }
+            )
+            continue
+        invalid_balance, invalid_reason = is_invalid_balance_variable(working_rows, slice_variable, balance_variable)
+        if invalid_balance:
+            warning = f"Invalid {label}: {invalid_reason}."
+            warnings.append(warning)
+            recommendation_rows.append(
+                {
+                    "candidate": label,
+                    "slice_variable": slice_variable,
+                    "balance_variable": balance_variable or "",
+                    "recommendation": "not_recommended",
+                    "reason": warning,
                     "n_units": len(working_rows),
                     "n_slices_total": 0,
                     "n_slices_valid": 0,
@@ -312,7 +341,9 @@ def _write_slice_support_report(
         f"- Model: `{model}`",
         f"- Task: `{task}`",
         "",
-        "This report checks whether candidate raw or balanced BWER configurations have enough slice support before paper-grade BWER runs. It is a design diagnostic, not a model-performance result.",
+        "This report checks whether candidate raw or balanced BWER configurations have enough task-aware support before paper-grade BWER runs. BWER is a support-aware, composition-standardised, CVaR-style tail-risk statistic for deployment-relevant remote sensing slices.",
+        "",
+        "For native Sen1Floods11 segmentation, support is pixel/effective support from aggregated mask statistics, not chip count alone. `event_id` is an operational disaster-event slice, not a causal country fairness attribute.",
         "",
         "## Recommendations",
         "",

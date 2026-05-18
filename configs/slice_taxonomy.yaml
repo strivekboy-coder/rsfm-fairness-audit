@@ -44,12 +44,13 @@ datasets:
     secondary_slices: [event_id__class_label, event__class_label]
     balance_variables: [class_label, month, season, event_id, event]
     default_tail_fraction: 0.10
-    min_samples_per_slice: 20
+    min_samples_per_slice: 1
     min_positive_support: 1000
+    min_valid_pixel_support: 1000
     min_slices_required: 2
-    min_units_required: 20
+    min_units_required: 1000
     bootstrap_cluster_key: event_id
-    notes: 64-sample smoke runs are wiring validation only; paper-grade disaster conclusions need larger event-balanced subsets.
+    notes: Native segmentation audits use event-level aggregated pixel counts; small smoke runs are wiring validation only and paper-grade disaster conclusions need larger event-balanced subsets.
 
   sen1floods11_classification:
     task_type: classification
@@ -70,9 +71,10 @@ datasets:
     secondary_slices: [event_id__class_label, event__class_label]
     balance_variables: [class_label, month, season, event_id, event]
     default_tail_fraction: 0.10
-    min_samples_per_slice: 20
+    min_samples_per_slice: 1
     min_positive_support: 1000
+    min_valid_pixel_support: 1000
     min_slices_required: 2
-    min_units_required: 20
+    min_units_required: 1000
     bootstrap_cluster_key: event_id
-    notes: Pixel-level segmentation audits require positive foreground support; 1000 positive pixels is not intended for chip-level classification.
+    notes: Pixel-level segmentation audits use aggregated TP/FP/FN/TN and effective pixel support; chip count alone is not sufficient for formal support.

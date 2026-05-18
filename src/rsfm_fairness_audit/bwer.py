@@ -19,12 +19,14 @@ class BWERConfig:
     weighting: str = "uniform"
     min_samples_per_slice: int = 1
     min_positive_support: int | None = None
+    min_valid_pixel_support: int | None = None
     min_slices_required: int = 2
     min_units_required: int = 1
     missing_balance_policy: str = "renormalize"
     bootstrap_n: int = 0
     bootstrap_method: str = "none"
     cluster_key: str | None = None
+    selective_coverage: float | None = None
     seed: int = 42
 
 
@@ -49,6 +51,56 @@ def _as_float(value: Any, default: float = float("nan")) -> float:
         return default
 
 
+def _is_segmentation_task(task: str) -> bool:
+    return "segmentation" in str(task).lower()
+
+
+def _is_multilabel_task(task: str) -> bool:
+    text = str(task).lower()
+    return "multilabel" in text or "multi-label" in text
+
+
+def _sum_column(rows: Sequence[Mapping[str, Any]], *names: str) -> float:
+    total = 0.0
+    found = False
+    for row in rows:
+        for name in names:
+            if name in row and not _is_missing(row.get(name)):
+                total += max(0.0, _as_float(row.get(name), 0.0))
+                found = True
+                break
+    return total if found else float("nan")
+
+
+def _segmentation_counts_available(rows: Sequence[Mapping[str, Any]]) -> bool:
+    if not rows:
+        return False
+    columns = set().union(*(row.keys() for row in rows))
+    return {"TP", "FP", "FN"}.issubset(columns) or {"tp", "fp", "fn"}.issubset(columns)
+
+
+def _segmentation_score_and_risk(
+    rows: Sequence[Mapping[str, Any]],
+    score_column: str | None = None,
+    risk_column: str | None = None,
+) -> tuple[float, float, str]:
+    tp = _sum_column(rows, "TP", "tp", "true_positive", "true_positives")
+    fp = _sum_column(rows, "FP", "fp", "false_positive", "false_positives")
+    fn = _sum_column(rows, "FN", "fn", "false_negative", "false_negatives")
+    if math.isnan(tp) or math.isnan(fp) or math.isnan(fn):
+        risks = [_get_score_and_risk(row, score_column, risk_column)[1] for row in rows]
+        risk = float(np.nanmean(np.asarray(risks, dtype=float)))
+        return 1.0 - risk, risk, risk_column or "risk"
+    iou_den = tp + fp + fn
+    dice_den = (2.0 * tp) + fp + fn
+    iou = 1.0 if iou_den == 0 else float(tp / iou_den)
+    dice = 1.0 if dice_den == 0 else float((2.0 * tp) / dice_den)
+    name = (risk_column or score_column or "iou").lower()
+    if "dice" in name or name in {"f1", "f1_risk"}:
+        return dice, 1.0 - dice, "1_minus_dice"
+    return iou, 1.0 - iou, "1_minus_iou"
+
+
 def _get_score_and_risk(row: Mapping[str, Any], score_column: str | None, risk_column: str | None) -> tuple[float, float]:
     if risk_column and risk_column in row and not _is_missing(row.get(risk_column)):
         risk = _as_float(row.get(risk_column))
@@ -68,16 +120,91 @@ def _get_score_and_risk(row: Mapping[str, Any], score_column: str | None, risk_c
 
 
 def _positive_support(rows: Sequence[Mapping[str, Any]]) -> int:
+    if rows and any(key in rows[0] for key in ["TP", "tp", "FN", "fn"]):
+        return int(_sum_column(rows, "TP", "tp") + _sum_column(rows, "FN", "fn"))
+    if rows and any(key in rows[0] for key in ["positive_pixel_count", "positive_pixels", "n_positive_pixels"]):
+        return int(_sum_column(rows, "positive_pixel_count", "positive_pixels", "n_positive_pixels"))
     if rows and "n_positive" in rows[0]:
         return int(sum(max(0.0, _as_float(row.get("n_positive"), 0.0)) for row in rows))
-    if rows and "positive_pixels" in rows[0]:
-        return int(sum(max(0.0, _as_float(row.get("positive_pixels"), 0.0)) for row in rows))
     count = 0
     for row in rows:
         value = row.get("class_label", row.get("label", row.get("y_true")))
         if str(value) in {"1", "water", "flood", "foreground", "positive", "True", "true"}:
             count += 1
     return count
+
+
+def _valid_pixel_support(rows: Sequence[Mapping[str, Any]]) -> int:
+    total = _sum_column(rows, "valid_pixel_count", "valid_pixels", "n_valid_pixels")
+    if not math.isnan(total):
+        return int(total)
+    if rows and any(key in rows[0] for key in ["TP", "FP", "FN", "TN", "tp", "fp", "fn", "tn"]):
+        values = [
+            _sum_column(rows, "TP", "tp"),
+            _sum_column(rows, "FP", "fp"),
+            _sum_column(rows, "FN", "fn"),
+            _sum_column(rows, "TN", "tn"),
+        ]
+        return int(sum(0.0 if math.isnan(value) else value for value in values))
+    return len(rows)
+
+
+def _predicted_positive_support(rows: Sequence[Mapping[str, Any]]) -> int:
+    total = _sum_column(rows, "predicted_positive_pixel_count", "predicted_positive_pixels", "n_predicted_positive_pixels")
+    if not math.isnan(total):
+        return int(total)
+    if rows and any(key in rows[0] for key in ["TP", "FP", "tp", "fp"]):
+        return int(_sum_column(rows, "TP", "tp") + _sum_column(rows, "FP", "fp"))
+    return 0
+
+
+def _effective_support(rows: Sequence[Mapping[str, Any]], config: BWERConfig) -> int:
+    if _is_segmentation_task(config.task):
+        return _valid_pixel_support(rows)
+    return len(rows)
+
+
+def _sample_count(rows: Sequence[Mapping[str, Any]]) -> int:
+    total = _sum_column(rows, "sample_count", "n_samples")
+    if math.isnan(total) or total <= 0:
+        return len(rows)
+    return int(total)
+
+
+def _common_value(rows: Sequence[Mapping[str, Any]], key: str) -> Any:
+    values = {str(row.get(key)) for row in rows if key in row and not _is_missing(row.get(key))}
+    if len(values) == 1:
+        return next(iter(values))
+    return ""
+
+
+def _column_values(rows: Sequence[Mapping[str, Any]], column: str) -> list[str]:
+    return [str(row.get(column)) for row in rows if column in row and not _is_missing(row.get(column))]
+
+
+def is_invalid_balance_variable(rows: Sequence[Mapping[str, Any]], slice_variable: str, balance_variable: str | None) -> tuple[bool, str]:
+    if not balance_variable:
+        return False, ""
+    if balance_variable == slice_variable:
+        return True, "balance variable is identical to slice variable"
+    if not rows or slice_variable not in rows[0] or balance_variable not in rows[0]:
+        return False, ""
+    slice_values = _column_values(rows, slice_variable)
+    balance_values = _column_values(rows, balance_variable)
+    if slice_values and slice_values == balance_values:
+        return True, "balance variable has identical row values to slice variable"
+    forward: dict[str, set[str]] = {}
+    reverse: dict[str, set[str]] = {}
+    for row in rows:
+        if _is_missing(row.get(slice_variable)) or _is_missing(row.get(balance_variable)):
+            continue
+        g = str(row.get(slice_variable))
+        z = str(row.get(balance_variable))
+        forward.setdefault(g, set()).add(z)
+        reverse.setdefault(z, set()).add(g)
+    if forward and all(len(values) == 1 for values in forward.values()) and all(len(values) == 1 for values in reverse.values()):
+        return True, "balance variable is a deterministic proxy of slice variable"
+    return False, ""
 
 
 def _group_by(rows: Sequence[Mapping[str, Any]], column: str) -> dict[str, list[Mapping[str, Any]]]:
@@ -137,14 +264,21 @@ def compute_slice_scores(
         return [], [], [f"Missing slice column: {slice_variable}"], balance_stats
     if balance_variable and balance_variable not in audit_rows[0]:
         return [], [], [f"Missing balance column: {balance_variable}"], balance_stats
+    invalid_balance, invalid_reason = is_invalid_balance_variable(audit_rows, slice_variable, balance_variable)
+    if invalid_balance:
+        return [], [], [f"Invalid BWER({slice_variable} | {balance_variable}): {invalid_reason}."], balance_stats
     if config.missing_balance_policy not in {"renormalize", "invalidate", "overlap"}:
         raise ValueError("missing_balance_policy must be one of: renormalize, invalidate, overlap.")
 
     prepared = []
+    use_segmentation_counts = _is_segmentation_task(config.task) and _segmentation_counts_available(audit_rows)
     for row in audit_rows:
         if _is_missing(row.get(slice_variable)):
             continue
-        score, risk = _get_score_and_risk(row, score_column or config.score_name, risk_column or config.risk_name)
+        if use_segmentation_counts:
+            score, risk, _ = _segmentation_score_and_risk([row], score_column or config.score_name, risk_column)
+        else:
+            score, risk = _get_score_and_risk(row, score_column or config.score_name, risk_column or config.risk_name)
         item = dict(row)
         item["_score"] = score
         item["_risk"] = risk
@@ -156,9 +290,13 @@ def compute_slice_scores(
     basic_valid_slices: set[str] = set()
     for slice_value, items in groups.items():
         n_positive = _positive_support(items)
-        is_basic_valid = len(items) >= config.min_samples_per_slice and len(items) >= config.min_units_required
+        effective_support = _effective_support(items, config)
+        sample_count = _sample_count(items)
+        is_basic_valid = sample_count >= config.min_samples_per_slice and effective_support >= config.min_units_required
         if config.min_positive_support is not None:
             is_basic_valid = is_basic_valid and n_positive >= config.min_positive_support
+        if config.min_valid_pixel_support is not None and _is_segmentation_task(config.task):
+            is_basic_valid = is_basic_valid and _valid_pixel_support(items) >= config.min_valid_pixel_support
         if is_basic_valid:
             basic_valid_slices.add(slice_value)
     observed_by_slice: dict[str, set[str]] = {}
@@ -186,7 +324,16 @@ def compute_slice_scores(
         risks = np.asarray([_as_float(row["_risk"]) for row in items], dtype=float)
         scores = np.asarray([_as_float(row["_score"]) for row in items], dtype=float)
         n_positive = _positive_support(items)
-        raw_risk = float(np.nanmean(risks))
+        valid_pixel_support = _valid_pixel_support(items) if _is_segmentation_task(config.task) else ""
+        predicted_positive_support = _predicted_positive_support(items) if _is_segmentation_task(config.task) else ""
+        effective_support = _effective_support(items, config)
+        sample_count = _sample_count(items)
+        if use_segmentation_counts:
+            raw_score, raw_risk, risk_source = _segmentation_score_and_risk(items, score_column or config.score_name, risk_column)
+        else:
+            raw_score = float(np.nanmean(scores))
+            raw_risk = float(np.nanmean(risks))
+            risk_source = risk_column or config.risk_name
         balanced_risk = raw_risk
         support_warning = ""
         missing: list[str] = []
@@ -208,13 +355,19 @@ def compute_slice_scores(
                         "balance_variable": balance_variable,
                         "slice_value": slice_value,
                         "balance_level": level,
-                        "n_units": len(z_groups.get(level, [])),
+                        "n_units": _effective_support(z_groups.get(level, []), config),
+                        "sample_count": _sample_count(z_groups.get(level, [])),
+                        "valid_pixel_support": _valid_pixel_support(z_groups.get(level, [])) if _is_segmentation_task(config.task) else "",
+                        "positive_pixel_support": _positive_support(z_groups.get(level, [])) if _is_segmentation_task(config.task) else "",
                         "has_support": bool(has_support),
                         "used_in_balanced_risk": bool(used),
                         "missing_balance_policy": config.missing_balance_policy,
                     }
                 )
-            z_risks = {z: float(np.nanmean([_as_float(row["_risk"]) for row in z_items])) for z, z_items in z_groups.items()}
+            if use_segmentation_counts:
+                z_risks = {z: _segmentation_score_and_risk(z_items, score_column or config.score_name, risk_column)[1] for z, z_items in z_groups.items()}
+            else:
+                z_risks = {z: float(np.nanmean([_as_float(row["_risk"]) for row in z_items])) for z, z_items in z_groups.items()}
             allowed = required_levels if config.missing_balance_policy == "overlap" else None
             balanced_risk, missing, n_used = _weighted_available(z_risks, weights, allowed)
             if missing:
@@ -231,6 +384,8 @@ def compute_slice_scores(
             is_valid = False
         if config.min_positive_support is not None:
             is_valid = is_valid and n_positive >= config.min_positive_support
+        if config.min_valid_pixel_support is not None and _is_segmentation_task(config.task):
+            is_valid = is_valid and _valid_pixel_support(items) >= config.min_valid_pixel_support
         if not is_valid and not support_warning:
             support_warning = "below_support_threshold"
         rows.append(
@@ -242,9 +397,14 @@ def compute_slice_scores(
                 "slice_variable": slice_variable,
                 "balance_variable": balance_variable or "",
                 "slice_value": slice_value,
-                "n_units": len(items),
+                "n_units": effective_support,
+                "sample_count": sample_count,
                 "n_positive": n_positive,
-                "raw_score": float(np.nanmean(scores)),
+                "valid_pixel_support": valid_pixel_support,
+                "positive_pixel_support": n_positive if _is_segmentation_task(config.task) else "",
+                "predicted_positive_support": predicted_positive_support,
+                "risk_source": risk_source,
+                "raw_score": raw_score,
                 "raw_risk": raw_risk,
                 "balanced_risk": balanced_risk,
                 "is_valid_slice": bool(is_valid),
@@ -342,6 +502,14 @@ def compute_bwer(
         "bootstrap_n": config.bootstrap_n,
         "bootstrap_method": config.bootstrap_method,
         "tail_slices": ";".join(tail_slices),
+        "task_type": "segmentation" if _is_segmentation_task(config.task) else "multilabel_classification" if _is_multilabel_task(config.task) else "classification",
+        "input_mode": _common_value(audit_rows, "input_mode"),
+        "adaptation_protocol": _common_value(audit_rows, "adaptation_protocol"),
+        "training_budget": _common_value(audit_rows, "training_budget") or _common_value(audit_rows, "training_setup"),
+        "split_protocol": _common_value(audit_rows, "split_protocol"),
+        "selective_coverage": "" if config.selective_coverage is None else config.selective_coverage,
+        "retained_coverage": "",
+        "abstention_rate": "",
         "warnings": " | ".join(sorted(set(warnings))),
     }
     return BWERComputation(summary=summary, by_slice=by_slice, support_diagnostics=support_diagnostics, warnings=warnings)
@@ -426,9 +594,14 @@ def compute_bwer_family(
             continue
         for balance_variable in balance_variables:
             if balance_variable == slice_variable:
+                warnings.append(f"Skipping invalid BWER({slice_variable} | {balance_variable}): balance variable is identical to slice variable.")
                 continue
             if balance_variable and balance_variable not in columns:
                 warnings.append(f"Skipping {slice_variable}|{balance_variable}: missing balance variable.")
+                continue
+            invalid_balance, invalid_reason = is_invalid_balance_variable(audit_rows, slice_variable, balance_variable)
+            if invalid_balance:
+                warnings.append(f"Skipping invalid BWER({slice_variable} | {balance_variable}): {invalid_reason}.")
                 continue
             result = compute_bwer(audit_rows, config, slice_variable, balance_variable, score_column, risk_column)
             summary = dict(result.summary)

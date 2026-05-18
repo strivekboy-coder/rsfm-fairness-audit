@@ -15,6 +15,15 @@ Official documentation lists Sentinel-1 imagery with VV and VH bands, Sentinel-2
 
 This dataset is well suited for flood-event, country, orbit, sensor, and label-source fairness. The first subset should use hand-labeled chips only, grouped by flood event and ISO country.
 
+For this project, chip-level Sen1Floods11 classification is a sanity audit only.
+The paper-grade path is native pixel-level flood segmentation with Sentinel-2
+hand-labeled chips, `LabelHand` masks, valid-pixel handling, and event-level
+aggregation from TP/FP/FN/TN counts. BWER is a support-aware,
+composition-standardised, CVaR-style tail-risk statistic for
+deployment-relevant remote sensing slices; in Sen1Floods11, `event_id` should be
+read as an operational disaster-event slice rather than a causal country
+fairness attribute.
+
 ## Open Items
 
 - Current official license or terms in the GCS bucket: to_verify.

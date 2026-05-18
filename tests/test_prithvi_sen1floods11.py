@@ -177,6 +177,31 @@ def test_prepare_sen1floods11_maps_13_band_s2_to_prithvi_shape(monkeypatch) -> N
     assert rows[0]["source_dataset"] == "sen1floods11"
 
 
+def test_prepare_sen1floods11_max_samples_zero_uses_all_local_pairs(monkeypatch) -> None:
+    source = Path("outputs/test_sen1_prepare_all_source")
+    source.mkdir(parents=True, exist_ok=True)
+    for name in ["Bolivia_001", "Bolivia_002"]:
+        (source / f"{name}_S2Hand.tif").write_text("mock", encoding="utf-8")
+        (source / f"{name}_LabelHand.tif").write_text("mock", encoding="utf-8")
+
+    def fake_read_tif(path: Path) -> np.ndarray:
+        if "LabelHand" in path.name:
+            mask = np.zeros((5, 7), dtype=np.float32)
+            mask[1:3, 1:3] = 1
+            return mask[None, :, :]
+        return np.ones((13, 5, 7), dtype=np.float32)
+
+    monkeypatch.setattr(prep, "_read_tif", fake_read_tif)
+    metadata_path = prep.prepare_sen1floods11_subset(
+        output_dir=Path("outputs/test_sen1_prepare_all_output"),
+        source_root=source,
+        max_samples=0,
+        target_size=16,
+    )
+    rows = read_csv_rows(metadata_path)
+    assert len(rows) == 2
+
+
 def test_sen1floods11_gcs_label_candidates_prefer_official_labelhand() -> None:
     uri = "gs://sen1floods11/v1.1/data/flood_events/HandLabeled/S2Hand/India_123_S2Hand.tif"
     candidates = prep._label_uri_candidates(uri)

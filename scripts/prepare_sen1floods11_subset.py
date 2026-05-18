@@ -364,15 +364,16 @@ def prepare_sen1floods11_subset(
     candidate_limit: int = 1000,
     parallel_download: bool = True,
 ) -> Path:
-    if max_samples <= 0:
-        raise ValueError("--max-samples must be positive.")
+    if max_samples < 0:
+        raise ValueError("--max-samples must be non-negative; use 0 for all selected candidates.")
     start_time = time.time()
     _log(
-        f"[stage] Preparing Sen1Floods11 subset output_dir={output_dir} max_samples={max_samples} "
+        f"[stage] Preparing Sen1Floods11 subset output_dir={output_dir} max_samples={max_samples or 'all'} "
         f"candidate_limit={candidate_limit} source_root={source_root or 'GCS'}"
     )
     if source_root is not None:
-        pairs = _local_pairs(source_root)[:max_samples]
+        local_pairs = _local_pairs(source_root)
+        pairs = local_pairs if max_samples == 0 else local_pairs[:max_samples]
     else:
         manifest_rows = _build_gcs_pair_manifest(gcs_root, cache_dir)
         if event_filter:
@@ -380,7 +381,7 @@ def prepare_sen1floods11_subset(
             manifest_rows = [row for row in manifest_rows if row["event"].lower() in filters]
             _log(f"[stage] Event filters {sorted(filters)} retained {len(manifest_rows)} pairs")
         limited_rows = manifest_rows[:candidate_limit]
-        selected_rows = limited_rows[:max_samples]
+        selected_rows = limited_rows if max_samples == 0 else limited_rows[:max_samples]
         _log(f"[stage] Selected {len(selected_rows)} paired samples from {len(manifest_rows)} manifest pairs")
         raw_dir = cache_dir / "raw"
         if parallel_download:
@@ -465,7 +466,7 @@ def prepare_sen1floods11_subset(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Prepare a Prithvi-compatible Sen1Floods11 S2/label subset.")
     parser.add_argument("--output-dir", type=Path, default=Path("data/sen1floods11_prithvi_subset64"))
-    parser.add_argument("--max-samples", type=int, default=64)
+    parser.add_argument("--max-samples", type=int, default=64, help="Number of pairs to prepare; use 0 for all selected candidates.")
     parser.add_argument("--source-root", type=Path, help="Optional local root containing S2/label GeoTIFF pairs.")
     parser.add_argument("--cache-dir", type=Path, default=Path("data/_cache/sen1floods11"))
     parser.add_argument("--gcs-root", default=GCS_ROOT)

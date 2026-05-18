@@ -11,6 +11,24 @@ class AuditTableError(RuntimeError):
     """Raised when an audit table cannot be built or validated."""
 
 
+ALLOWED_ADAPTATION_PROTOCOLS = {
+    "",
+    "frozen_probe",
+    "frozen_encoder_lightweight_head",
+    "task_adapted_decoder",
+    "full_finetune",
+    "supervised_baseline",
+}
+
+ALLOWED_SPLIT_PROTOCOLS = {
+    "",
+    "standard_split",
+    "event_held_out",
+    "leave_one_event_out",
+    "spatial_split",
+}
+
+
 def _is_missing(value: Any) -> bool:
     return value is None or value == "" or str(value).lower() in {"nan", "none", "null"}
 
@@ -33,6 +51,19 @@ def _risk_from_score(score: Any) -> float | str:
     if _is_missing(score):
         return ""
     return 1.0 - _as_float(score)
+
+
+def _metric_from_counts(row: Mapping[str, Any], metric: str = "iou") -> float | str:
+    if not all(key in row and not _is_missing(row.get(key)) for key in ["TP", "FP", "FN"]):
+        return ""
+    tp = _as_float(row.get("TP"))
+    fp = _as_float(row.get("FP"))
+    fn = _as_float(row.get("FN"))
+    if metric.lower() in {"dice", "f1"}:
+        denom = (2.0 * tp) + fp + fn
+        return 1.0 if denom == 0 else (2.0 * tp) / denom
+    denom = tp + fp + fn
+    return 1.0 if denom == 0 else tp / denom
 
 
 def _read_optional(path: str | Path | None) -> list[dict[str, str]]:
@@ -79,6 +110,10 @@ def build_audit_table_from_predictions(
             "split": _coalesce(pred, "split", default=_coalesce(meta, "split", default=split)),
             "unit_id": sample_id,
             "sample_id": sample_id,
+            "input_mode": _coalesce(pred, "input_mode", default=_coalesce(meta, "input_mode", default="")),
+            "adaptation_protocol": _coalesce(pred, "adaptation_protocol", default=_coalesce(meta, "adaptation_protocol", default="")),
+            "training_budget": _coalesce(pred, "training_budget", "training_setup", default=_coalesce(meta, "training_budget", "training_setup", default="")),
+            "split_protocol": _coalesce(pred, "split_protocol", default=_coalesce(meta, "split_protocol", default="")),
             "label": label,
             "y_true": label,
             "y_pred": prediction,
@@ -111,18 +146,28 @@ def build_audit_table_from_segmentation_metrics(
     for index, metric in enumerate(metrics):
         sample_id = str(_coalesce(metric, "sample_id", "unit_id", default=index))
         meta = metadata.get(sample_id, {})
-        score = _coalesce(metric, score_column, "score", "mean_water_iou", default="")
+        score = _coalesce(metric, score_column, "score", "micro_iou", "iou", "water_iou", "mean_water_iou", default="")
+        if _is_missing(score):
+            score = _metric_from_counts(metric, "iou")
+        aggregation_level = _coalesce(metric, "aggregation_level", default="sample")
+        unit_id = _coalesce(metric, "unit_id", default="")
+        if _is_missing(unit_id):
+            unit_id = _coalesce(metric, "event_id", "event", default=sample_id) if str(aggregation_level) in {"event", "slice"} else sample_id
         row: dict[str, Any] = {
             "dataset": dataset or _coalesce(metric, "dataset", default=_coalesce(meta, "dataset", default="")),
             "model": model or _coalesce(metric, "model", default=_coalesce(meta, "model", default="")),
             "task": task or _coalesce(metric, "task", default=_coalesce(meta, "task", default="segmentation")),
             "split": _coalesce(metric, "split", default=_coalesce(meta, "split", default=split)),
-            "unit_id": sample_id,
+            "unit_id": unit_id,
             "sample_id": sample_id,
+            "input_mode": _coalesce(metric, "input_mode", default=_coalesce(meta, "input_mode", default="")),
+            "adaptation_protocol": _coalesce(metric, "adaptation_protocol", default=_coalesce(meta, "adaptation_protocol", default="")),
+            "training_budget": _coalesce(metric, "training_budget", "training_setup", default=_coalesce(meta, "training_budget", "training_setup", default="")),
+            "split_protocol": _coalesce(metric, "split_protocol", default=_coalesce(meta, "split_protocol", default="")),
             "score": score,
             "risk": _risk_from_score(score),
             "class_label": _coalesce(metric, "class_label", default="water"),
-            "aggregation_level": _coalesce(metric, "aggregation_level", default="sample"),
+            "aggregation_level": aggregation_level,
         }
         for source in [meta, metric]:
             for key, value in source.items():
@@ -151,6 +196,10 @@ def build_audit_table_from_classwise_metrics(
                 "task": task or _coalesce(metric, "task", default="classification"),
                 "split": _coalesce(metric, "split", default="all"),
                 "unit_id": f"class-{class_label}",
+                "input_mode": _coalesce(metric, "input_mode", default=""),
+                "adaptation_protocol": _coalesce(metric, "adaptation_protocol", default=""),
+                "training_budget": _coalesce(metric, "training_budget", "training_setup", default=""),
+                "split_protocol": _coalesce(metric, "split_protocol", default=""),
                 "score": score,
                 "risk": _risk_from_score(score),
                 "class_label": class_label,
@@ -165,7 +214,7 @@ def build_audit_table_from_classwise_metrics(
 def validate_audit_table(rows: Sequence[Mapping[str, Any]]) -> None:
     if not rows:
         raise AuditTableError("Audit table is empty.")
-    required_any = [("score",), ("risk",), ("correct",), ("label", "prediction"), ("y_true", "y_pred")]
+    required_any = [("score",), ("risk",), ("correct",), ("label", "prediction"), ("y_true", "y_pred"), ("TP", "FP", "FN")]
     score_like_columns = ["score", "correct", "water_iou", "iou", "dice", "f1", "accuracy"]
     for row_index, row in enumerate(rows, start=1):
         for key in ["dataset", "model", "task", "split", "unit_id"]:
@@ -192,6 +241,18 @@ def validate_audit_table(rows: Sequence[Mapping[str, Any]]) -> None:
                 raise AuditTableError(f"Audit table row {row_index} column risk must be finite.")
             if value < 0.0 or value > 1.0:
                 raise AuditTableError(f"Audit table row {row_index} column risk must be in [0, 1].")
+        protocol = str(row.get("adaptation_protocol", "") or "")
+        if protocol not in ALLOWED_ADAPTATION_PROTOCOLS:
+            allowed = ", ".join(sorted(value for value in ALLOWED_ADAPTATION_PROTOCOLS if value))
+            raise AuditTableError(f"Audit table row {row_index} has unsupported adaptation_protocol={protocol!r}. Allowed: {allowed}.")
+        split_protocol = str(row.get("split_protocol", "") or "")
+        if split_protocol not in ALLOWED_SPLIT_PROTOCOLS:
+            allowed = ", ".join(sorted(value for value in ALLOWED_SPLIT_PROTOCOLS if value))
+            raise AuditTableError(f"Audit table row {row_index} has unsupported split_protocol={split_protocol!r}. Allowed: {allowed}.")
+        if "confidence" in row and not _is_missing(row.get("confidence")):
+            value = _as_float(row.get("confidence"))
+            if not math.isfinite(value) or value < 0.0 or value > 1.0:
+                raise AuditTableError(f"Audit table row {row_index} column confidence must be finite and in [0, 1].")
 
 
 def write_audit_table(path: str | Path, rows: Sequence[Mapping[str, Any]]) -> None:

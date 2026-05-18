@@ -52,6 +52,8 @@ def _interaction_columns(rows: list[dict[str, Any]], taxonomy: Mapping[str, Any]
 
 def _balance_variants(columns: set[str], taxonomy: Mapping[str, Any], override: str | None) -> list[str | None]:
     if override:
+        if override.lower() in {"raw", "none", "null"}:
+            return [None]
         return [override]
     variants: list[str | None] = [None]
     for value in taxonomy.get("balance_variables", []) or []:
@@ -85,6 +87,7 @@ def evaluate_bwer_table(
     score_column: str | None = None,
     risk_column: str | None = None,
     audit_level: str = "pilot",
+    selective_coverage: float | None = None,
 ) -> dict[str, Path]:
     output = ensure_dir(output_dir)
     taxonomy, warnings = _dataset_taxonomy(slice_config, dataset, task)
@@ -109,13 +112,17 @@ def evaluate_bwer_table(
         missing_balance_policy=missing_balance_policy,
         min_samples_per_slice=int(taxonomy.get("min_samples_per_slice", 1) or 1),
         min_positive_support=taxonomy.get("min_positive_support"),
+        min_valid_pixel_support=taxonomy.get("min_valid_pixel_support"),
         min_slices_required=int(taxonomy.get("min_slices_required", 2) or 2),
         min_units_required=int(taxonomy.get("min_units_required", 1) or 1),
         bootstrap_n=bootstrap,
         bootstrap_method="cluster" if cluster_key else "ordinary" if bootstrap else "none",
         cluster_key=cluster_key or taxonomy.get("bootstrap_cluster_key"),
+        selective_coverage=selective_coverage,
         seed=seed,
     )
+    if any("confidence" in row for row in rows):
+        warnings.append("Confidence field detected; selective_risk/confidence_conditioned_slice_risk hooks are recorded but fixed-coverage selective risk is not yet implemented.")
     effective_cluster = cluster_key or taxonomy.get("bootstrap_cluster_key")
     if effective_cluster and effective_cluster not in columns:
         warnings.append(f"Skipping cluster bootstrap key {effective_cluster}: column missing.")
