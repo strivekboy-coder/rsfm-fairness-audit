@@ -59,6 +59,10 @@ def segmentation_confusion_counts(mask: np.ndarray, prediction: np.ndarray) -> d
     }
 
 
+def _ratio(numerator: float, denominator: float) -> float:
+    return float(numerator / denominator) if denominator else float("nan")
+
+
 def segmentation_metrics_from_counts(counts: dict[str, Any]) -> dict[str, float]:
     tp = float(counts.get("TP", 0) or 0)
     fp = float(counts.get("FP", 0) or 0)
@@ -74,6 +78,8 @@ def segmentation_metrics_from_counts(counts: dict[str, Any]) -> dict[str, float]
     precision = 1.0 if precision_den == 0 else float(tp / precision_den)
     recall = 1.0 if recall_den == 0 else float(tp / recall_den)
     accuracy = float((tp + tn) / valid) if valid else float("nan")
+    gt_positive_ratio = _ratio(float(counts.get("positive_pixel_count", tp + fn) or 0), valid)
+    pred_positive_ratio = _ratio(float(counts.get("predicted_positive_pixel_count", tp + fp) or 0), valid)
     return {
         "iou": iou,
         "water_iou": iou,
@@ -85,20 +91,77 @@ def segmentation_metrics_from_counts(counts: dict[str, Any]) -> dict[str, float]
         "precision": precision,
         "recall": recall,
         "pixel_accuracy": accuracy,
+        "ground_truth_positive_pixel_ratio": gt_positive_ratio,
+        "predicted_positive_pixel_ratio": pred_positive_ratio,
         "risk": 1.0 - iou,
         "risk_source": "1_minus_iou",
     }
 
 
-def _predict_from_features(features: np.ndarray) -> np.ndarray:
+def _score_map_from_features(features: np.ndarray) -> np.ndarray:
     if features.ndim == 3:
-        score = features.mean(axis=0)
+        return np.asarray(features.mean(axis=0), dtype=np.float32)
     elif features.ndim == 4:
-        score = features.mean(axis=0)
-    else:
-        raise ValueError(f"Expected segmentation features [C,H,W] or [T,C,H,W], got {features.shape}.")
+        return np.asarray(features.mean(axis=0), dtype=np.float32)
+    raise ValueError(f"Expected segmentation features [C,H,W] or [T,C,H,W], got {features.shape}.")
+
+
+def _predict_from_features(features: np.ndarray) -> np.ndarray:
+    score = _score_map_from_features(features)
     threshold = float(np.nanmean(score))
     return (score >= threshold).astype(np.int16)
+
+
+def _value_counts(array: np.ndarray) -> str:
+    values, counts = np.unique(array, return_counts=True)
+    return json.dumps({str(int(value)): int(count) for value, count in zip(values, counts)}, sort_keys=True)
+
+
+def _band_stats(array: np.ndarray, prefix: str) -> dict[str, Any]:
+    arr = np.asarray(array, dtype=np.float32)
+    if arr.ndim == 4:
+        arr = arr.mean(axis=0)
+    if arr.ndim != 3:
+        return {}
+    return {
+        f"{prefix}_min": float(np.nanmin(arr)),
+        f"{prefix}_max": float(np.nanmax(arr)),
+        f"{prefix}_mean": float(np.nanmean(arr)),
+        f"{prefix}_std": float(np.nanstd(arr)),
+        f"{prefix}_per_band_min": json.dumps([float(np.nanmin(arr[index])) for index in range(arr.shape[0])]),
+        f"{prefix}_per_band_max": json.dumps([float(np.nanmax(arr[index])) for index in range(arr.shape[0])]),
+        f"{prefix}_per_band_mean": json.dumps([float(np.nanmean(arr[index])) for index in range(arr.shape[0])]),
+    }
+
+
+def segmentation_diagnostics(
+    mask: np.ndarray,
+    prediction: np.ndarray,
+    score_map: np.ndarray,
+    raw_image: np.ndarray,
+    normalized_image: np.ndarray,
+    band_names: Sequence[str],
+) -> dict[str, Any]:
+    valid = np.asarray(mask) >= 0
+    diagnostics: dict[str, Any] = {
+        "label_values_distribution": _value_counts(np.asarray(mask)),
+        "valid_label_values_distribution": _value_counts(np.asarray(mask)[valid]) if np.any(valid) else "{}",
+        "prediction_unique_values": _value_counts(np.asarray(prediction)),
+        "prediction_valid_unique_values": _value_counts(np.asarray(prediction)[valid]) if np.any(valid) else "{}",
+        "prediction_threshold": float(np.nanmean(score_map)),
+        "prediction_score_min": float(np.nanmin(score_map)),
+        "prediction_score_max": float(np.nanmax(score_map)),
+        "prediction_score_mean": float(np.nanmean(score_map)),
+        "prediction_score_std": float(np.nanstd(score_map)),
+        "input_band_order": ",".join(str(name) for name in band_names),
+        "mask_shape": "x".join(str(value) for value in np.asarray(mask).shape),
+        "prediction_shape": "x".join(str(value) for value in np.asarray(prediction).shape),
+        "input_shape": "x".join(str(value) for value in np.asarray(raw_image).shape),
+        "mask_resize_alignment": "image=bilinear_224x224;mask=nearest_224x224;source=LabelHand",
+    }
+    diagnostics.update(_band_stats(raw_image, "input_raw"))
+    diagnostics.update(_band_stats(normalized_image, "input_normalized"))
+    return diagnostics
 
 
 def aggregate_segmentation_metrics(
@@ -209,10 +272,20 @@ def run_segmentation_smoke(
         features = model.segmentation_features(batch)
         masks = batch["masks"]
         for local_index, dataset_index in enumerate(indices):
-            prediction = _predict_from_features(features[local_index])
+            score_map = _score_map_from_features(features[local_index])
+            threshold = float(np.nanmean(score_map))
+            prediction = (score_map >= threshold).astype(np.int16)
             mask = masks[local_index].astype(np.int16)
             counts = segmentation_confusion_counts(mask, prediction)
             metrics = segmentation_metrics_from_counts(counts)
+            diagnostics = segmentation_diagnostics(
+                mask=mask,
+                prediction=prediction,
+                score_map=score_map,
+                raw_image=np.asarray(batch["raw_images"][local_index]),
+                normalized_image=np.asarray(batch["images"][local_index]),
+                band_names=getattr(model, "band_names", []),
+            )
             row = dict(metadata[dataset_index])
             event_id = str(row.get("event_id") or row.get("event") or row.get("region") or "to_verify")
             row["event_id"] = event_id
@@ -232,6 +305,7 @@ def run_segmentation_smoke(
                     "TP_plus_FN_support": counts["TP"] + counts["FN"],
                     **counts,
                     **metrics,
+                    **diagnostics,
                     "score": metrics["micro_iou"],
                 }
             )

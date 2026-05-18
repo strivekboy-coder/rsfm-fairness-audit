@@ -144,6 +144,12 @@ def test_run_segmentation_smoke_writes_artifacts() -> None:
     assert artifacts["iou_by_group"].exists()
     rows = read_csv_rows(artifacts["segmentation_metrics"])
     assert len(rows) == 4
+    assert "predicted_positive_pixel_ratio" in rows[0]
+    assert "ground_truth_positive_pixel_ratio" in rows[0]
+    assert "label_values_distribution" in rows[0]
+    assert "prediction_unique_values" in rows[0]
+    assert rows[0]["input_band_order"] == "B02,B03,B04,B05,B06,B07"
+    assert rows[0]["mask_resize_alignment"] == "image=bilinear_224x224;mask=nearest_224x224;source=LabelHand"
 
 
 def test_prepare_sen1floods11_maps_13_band_s2_to_prithvi_shape(monkeypatch) -> None:
