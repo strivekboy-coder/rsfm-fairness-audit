@@ -293,6 +293,7 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
         )
         self.checkpoint_path = Path(checkpoint_path) if checkpoint_path else None
         self.terratorch_config_path = Path(terratorch_config_path) if terratorch_config_path else None
+        self.datamodule: Any | None = None
 
     @classmethod
     def from_config(
@@ -328,12 +329,7 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
             self._maybe_eval()
             return
         if self.terratorch_config_path and self.checkpoint_path:
-            try:
-                from terratorch.cli_tools import LightningInferenceModel
-            except ImportError as exc:
-                raise PrithviConfigurationError("TerraTorch is required for official Prithvi Sen1Floods11 TL loading.") from exc
-            inference_model = LightningInferenceModel.from_config(str(self.terratorch_config_path), str(self.checkpoint_path))
-            self.model = self._unwrap_lightning_inference(inference_model)
+            self.model = self._load_lightning_inference(self.terratorch_config_path, self.checkpoint_path)
             self._maybe_eval()
             return
         if not self.allow_hf_download:
@@ -341,13 +337,28 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
                 "Official Prithvi Sen1Floods11 TL loading is disabled. Set allow_hf_download: true, "
                 "or provide terratorch_config_path plus checkpoint_path, or inject a mock model in tests."
             )
+        config_path, checkpoint_path = self._download_official_inference_files()
+        self.model = self._load_lightning_inference(config_path, checkpoint_path)
+        self._maybe_eval()
+
+    def _download_official_inference_files(self) -> tuple[Path, Path]:
         try:
-            from terratorch.registry import BACKBONE_REGISTRY
+            from huggingface_hub import hf_hub_download
+        except ImportError as exc:
+            raise PrithviConfigurationError(
+                "huggingface_hub is required to download the official Prithvi Sen1Floods11 TL config/checkpoint."
+            ) from exc
+        config_path = Path(hf_hub_download(repo_id=self.hf_model_id, filename="config.yaml"))
+        checkpoint_path = Path(hf_hub_download(repo_id=self.hf_model_id, filename=self.official_checkpoint_name))
+        return config_path, checkpoint_path
+
+    def _load_lightning_inference(self, config_path: Path, checkpoint_path: Path) -> Any:
+        try:
+            from terratorch.cli_tools import LightningInferenceModel
         except ImportError as exc:
             raise PrithviConfigurationError("TerraTorch is required for official Prithvi Sen1Floods11 TL loading.") from exc
-        self.model = BACKBONE_REGISTRY.build(self.terratorch_model_name)
-        self.model = self._move_to_device(self.model)
-        self._maybe_eval()
+        inference_model = LightningInferenceModel.from_config(str(config_path), str(checkpoint_path))
+        return self._unwrap_lightning_inference(inference_model)
 
     def _validate_config(self) -> None:
         if self.hf_model_id != self.official_hf_model_id:
@@ -365,6 +376,7 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
 
     def _unwrap_lightning_inference(self, model: Any) -> Any:
         if hasattr(model, "model"):
+            self.datamodule = getattr(model, "datamodule", None)
             wrapped = model.model
             if hasattr(wrapped, "device"):
                 self._torch_device = wrapped.device
@@ -431,6 +443,13 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
         if np.nanmax(array) > 1.5:
             array = array / 10000.0
         tensor = torch.as_tensor(array, dtype=torch.float32).permute(0, 2, 1, 3, 4).to(self._resolve_device())
+        if self.datamodule is not None and hasattr(self.datamodule, "test_transform") and hasattr(self.datamodule, "aug"):
+            transformed = []
+            for item in tensor.cpu():
+                image = item.squeeze().numpy().transpose(1, 2, 0)
+                image = self.datamodule.test_transform(image=image)
+                transformed.append(self.datamodule.aug(image)["image"])
+            tensor = torch.stack(transformed).to(self._resolve_device())
         with torch.no_grad():
             try:
                 output = self.model(tensor, temporal_coords=None, location_coords=None)

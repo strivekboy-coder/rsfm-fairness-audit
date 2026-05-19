@@ -32,7 +32,7 @@ The native segmentation path ignores invalid mask pixels and writes per-chip TP/
 
 The non-TL Prithvi route is honestly labeled `frozen_encoder_lightweight_head` because it uses the frozen encoder with a lightweight threshold head, not a supervised flood decoder. Diagnostic runs showed that this head badly overpredicts water and produces very low IoU; NDWI-like diagnostic baselines perform much better on the validation subset, which supports the conclusion that the data/label path is plausible and the naive head is the weak link.
 
-The official TL route is labeled `task_adapted_decoder` with `training_budget=official_sen1floods11_finetune`. Use `configs/models/prithvi_tl_sen1floods11.yaml` and `--model prithvi_tl_sen1floods11` for the formal Sen1Floods11 native segmentation path.
+The official TL route is labeled `task_adapted_decoder` with `training_budget=official_sen1floods11_finetune`. Use `configs/models/prithvi_tl_sen1floods11.yaml` and `--model prithvi_tl_sen1floods11` for the formal Sen1Floods11 native segmentation path. To avoid TerraTorch registry-name drift across releases, the adapter downloads the official Hugging Face `config.yaml` and `Prithvi-EO-V2-300M-TL-Sen1Floods11.pt` files and loads them with `LightningInferenceModel.from_config`, matching the official inference script.
 
 Colab entrypoint: [prithvi_sen1floods11_colab.ipynb](D:/Codex/rsfm-fairness-audit/notebooks/prithvi_sen1floods11_colab.ipynb).
 
