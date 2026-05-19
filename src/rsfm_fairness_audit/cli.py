@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from rsfm_fairness_audit.audit_pipeline import evaluate_bwer_from_file, run_audit_from_outputs
+from rsfm_fairness_audit.bwer_v2 import run_bwer_v2_posthoc
 from rsfm_fairness_audit.pipeline import (
     build_real_adapters,
     compare_model_runs,
@@ -124,6 +125,12 @@ def build_parser() -> argparse.ArgumentParser:
     bwer.add_argument("--risk-column")
     bwer.add_argument("--selective-coverage", type=float, help="Reserved hook for future fixed-coverage selective_risk runs, e.g. 0.8.")
     bwer.add_argument("--audit-level", choices=["smoke", "pilot", "paper"], default="pilot")
+
+    bwer_v2 = subparsers.add_parser("run-bwer-v2", help="Generate post-hoc BWER-Audit v2 outputs from a completed audit output directory.")
+    bwer_v2.add_argument("--input-dir", type=Path, required=True, help="Completed run output directory containing event_segmentation_metrics.csv.")
+    bwer_v2.add_argument("--output-dir", type=Path, required=True, help="Directory to write BWER-Audit v2 outputs, usually <input-dir>/bwer_v2.")
+    bwer_v2.add_argument("--bootstrap", type=int, default=1000, help="Post-hoc event bootstrap replicates for Raw-BWER CI.")
+    bwer_v2.add_argument("--seed", type=int, default=42)
 
     audit = subparsers.add_parser("run-audit", help="Build an audit table from existing outputs and evaluate BWER.")
     audit.add_argument("--predictions", type=Path)
@@ -281,6 +288,11 @@ def main() -> None:
             audit_level=args.audit_level,
         )
         print(f"BWER audit complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "run-bwer-v2":
+        artifacts = run_bwer_v2_posthoc(args.input_dir, args.output_dir, bootstrap=args.bootstrap, seed=args.seed)
+        print(f"BWER-Audit v2 post-hoc analysis complete: {args.output_dir}")
         for name, path in artifacts.items():
             print(f"{name}: {path}")
     elif args.command == "run-audit":

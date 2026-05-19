@@ -618,17 +618,19 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
                     "mean": float(np.nanmean(array)),
                 }
             )
-            if array.ndim >= 2:
-                channel_axis = 1
+            channel_axis = 1 if array.ndim >= 4 else 0 if array.ndim == 3 and array.shape[0] <= 16 else None
+            if channel_axis is not None:
                 summary["per_channel"] = [
                     {
                         "channel": index,
-                        "min": float(np.nanmin(array[:, index])),
-                        "max": float(np.nanmax(array[:, index])),
-                        "mean": float(np.nanmean(array[:, index])),
+                        "min": float(np.nanmin(np.take(array, index, axis=channel_axis))),
+                        "max": float(np.nanmax(np.take(array, index, axis=channel_axis))),
+                        "mean": float(np.nanmean(np.take(array, index, axis=channel_axis))),
                     }
-                    for index in range(array.shape[channel_axis])
+                    for index in range(min(array.shape[channel_axis], 16))
                 ]
+                if array.shape[channel_axis] > 16:
+                    summary["per_channel_truncated"] = int(array.shape[channel_axis])
         return summary
 
     def _record_prediction_debug(

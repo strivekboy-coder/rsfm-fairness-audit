@@ -34,6 +34,10 @@ The non-TL Prithvi route is honestly labeled `frozen_encoder_lightweight_head` b
 
 The official TL route is labeled `task_adapted_decoder` with `training_budget=official_sen1floods11_finetune`. Use `configs/models/prithvi_tl_sen1floods11.yaml` and `--model prithvi_tl_sen1floods11` for the formal Sen1Floods11 native segmentation path. To avoid TerraTorch registry-name drift across releases, the adapter downloads the official Hugging Face `config.yaml` and `Prithvi-EO-V2-300M-TL-Sen1Floods11.pt` files and loads them with `LightningInferenceModel.from_config`, matching the official inference script.
 
+For the TL route, the prepared band profile must be `prithvi_tl_sen1floods11`, not the non-TL `B02-B07` compatibility profile. The TL profile selects Sentinel-2 source indices `[1,2,3,8,11,12]`, corresponding to `BLUE,GREEN,RED,NIR_NARROW,SWIR_1,SWIR_2`.
+
+The TL adapter must reproduce the official preprocessing path: scale source reflectance to `0-1`, run the TerraTorch datamodule `test_transform` and `aug`, restore the singleton time axis, and feed the model as `[B,C,T,H,W]`. It also uses 512x512 windowed inference to match the official inference path. Skipping the datamodule transform can produce highly confident all-background predictions even when the checkpoint and bands are otherwise correct.
+
 Colab entrypoint: [prithvi_sen1floods11_colab.ipynb](D:/Codex/rsfm-fairness-audit/notebooks/prithvi_sen1floods11_colab.ipynb).
 
 The preparation script scans official S2 candidates and keeps trying until it finds valid S2/label pairs. It resolves valid pairs first, then uses `gsutil -m cp -I` to batch-download missing GeoTIFFs into the cache; `--no-parallel-download` is available as a conservative fallback. If a specific flood event has missing labels in GCS, use `--event-filter India` or another event, or increase `--candidate-limit`. If GCS is unavailable, pass `--source-root` pointing at a local rsync/HF mirror with matching `S2Hand` and `LabelHand` files.
@@ -45,3 +49,43 @@ The preparation script scans official S2 candidates and keeps trying until it fi
 - If TerraTorch does not expose dense token features in a stable output key, the non-TL segmentation path uses transparent spectral-feature fallback for mask/metric validation.
 - The official TL model should be evaluated with an explicitly recorded prepared resolution. The Colab-friendly 224x224 preparation is useful for validation; final paper runs may choose 512x512 to match the official chip size if memory allows.
 - Sen1Floods11 `event_id` is an operational disaster-event slice, not a causal country fairness attribute.
+
+## Final Colab Artifact Names
+
+Prepared data:
+
+```text
+/content/data/sen1floods11_tl_official_full_512
+/content/drive/MyDrive/rsfm_fairness_audit/prepared_zips/sen1floods11_prithvi_tl_official_full_512.zip
+```
+
+Output:
+
+```text
+/content/outputs/prithvi_tl_sen1floods11_official_full_512
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/prithvi_tl_sen1floods11_official_full_512.zip
+```
+
+Post-hoc BWER-Audit v2 enrichment:
+
+```text
+python -m rsfm_fairness_audit.cli run-bwer-v2 \
+  --input-dir /content/outputs/prithvi_tl_sen1floods11_official_full_512 \
+  --output-dir /content/outputs/prithvi_tl_sen1floods11_official_full_512/bwer_v2
+
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/prithvi_tl_sen1floods11_official_full_512_with_bwer_v2.zip
+```
+
+The BWER v2 step is post-hoc. It reads saved event-level segmentation metrics
+and reports; it does not rerun model inference, re-prepare data, or overwrite
+the original successful output zip.
+
+Expected full-run checks:
+
+```text
+446 chip rows in segmentation_metrics.csv
+11 event rows in event_segmentation_metrics.csv
+nonzero predicted_positive_pixel_count overall
+BWER(event_id) in bwer_summary.csv
+warnings.json contains invalid-balance warnings for country|country and event_id|event
+```

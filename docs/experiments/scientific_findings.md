@@ -61,3 +61,58 @@ The current prepared data cache may contain 224x224 resized chips for Colab-frie
 
 Update after the first official TL full run:
 An initial 446-chip TL run produced all-background predictions and must not be interpreted scientifically. The failure exposed a band-profile mismatch: the older prepared NPZ cache used the non-TL compatibility bands `B02-B07`, while the official Sen1Floods11 TL checkpoint expects Sentinel-2 indices `[1,2,3,8,11,12]` corresponding to `BLUE,GREEN,RED,NIR_NARROW,SWIR_1,SWIR_2`. The pipeline now has a dedicated `prithvi_tl_sen1floods11` preparation profile, rejects incompatible cached prepared data for the TL adapter, and writes model/probability debug diagnostics before any future full-run interpretation.
+
+Additional adapter debugging:
+The second all-background failure occurred after the correct TL band profile was in place. The model was loaded from the official Hugging Face checkpoint and the logits were shaped correctly, but water probabilities remained near zero. The root cause was incomplete reproduction of the official inference preprocessing: the adapter had skipped the TerraTorch datamodule `test_transform` and `aug` path after fixing a time/channel layout bug. Restoring the official preprocessing and 512x512 sliding-window inference resolved the failure.
+
+## Official Prithvi TL Sen1Floods11 Native Segmentation Full Run
+
+Recorded: 2026-05-19.
+
+Protocol:
+- Model: `prithvi_tl_sen1floods11`.
+- Model family: Prithvi.
+- Dataset/task: Sen1Floods11 native pixel-level flood segmentation.
+- Prepared data: 446 hand-labeled Sentinel-2 chips, 11 events, 512x512 prepared resolution.
+- Band profile: `BLUE,GREEN,RED,NIR_NARROW,SWIR_1,SWIR_2`, corresponding to Sentinel-2 indices `[1,2,3,8,11,12]`.
+- Adaptation protocol: `task_adapted_decoder`.
+- Training budget label: `official_sen1floods11_finetune`.
+- Split protocol label: `standard_split`.
+
+Main aggregate result:
+- Overall pixel-count micro IoU across all chips: 0.8052.
+- Overall pixel-count micro Dice: 0.8921.
+- Total valid pixels: 100,983,314.
+- Total ground-truth positive pixels: 10,705,605.
+- Total predicted positive pixels: 10,172,293.
+- Total TP/FP/FN/TN: 9,312,469 / 859,824 / 1,393,136 / 89,417,885.
+
+Event-level micro IoU:
+- Pakistan: 0.6550.
+- Bolivia: 0.6766.
+- Ghana: 0.7303.
+- Somalia: 0.7389.
+- India: 0.7404.
+- Paraguay: 0.7724.
+- USA: 0.7871.
+- Spain: 0.8354.
+- Sri-Lanka: 0.8709.
+- Nigeria: 0.8932.
+- Mekong: 0.9159.
+
+BWER(event_id):
+- BWER = 0.1175.
+- Mean risk = 0.2167.
+- Tail risk = 0.3342.
+- Worst slice = Pakistan, risk = 0.3450.
+- Best slice = Mekong, risk = 0.0841.
+- Tail slices = Pakistan; Bolivia.
+
+Interpretation:
+The official task-adapted Prithvi decoder produces strong average native segmentation performance, but event-level deployment risk remains heterogeneous. Pakistan and Bolivia form the event-tail under the current raw event-level BWER audit. This is a meaningful paper-grade event fairness signal, unlike the earlier chip-level classification sanity run or the frozen non-TL threshold diagnostics.
+
+Quality notes:
+- Five chips have zero valid pixels and should remain documented as data QC edge cases.
+- Fifty-three chips have zero predicted positive pixels, while fifty-two chips have zero ground-truth positive pixels; this does not indicate a global all-background failure.
+- `event_id` is an operational disaster-event slice, not a causal country fairness attribute.
+- `support_diagnostics.csv` was empty in this run; the primary evidence tables are `segmentation_metrics.csv`, `event_segmentation_metrics.csv`, `bwer_summary.csv`, `warnings.json`, report, and figures.
