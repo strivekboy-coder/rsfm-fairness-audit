@@ -7,12 +7,12 @@ expected_frames: 1
 expected_bands: 6
 image_size: 224
 band_names:
-  - B02
-  - B03
-  - B04
-  - B05
-  - B06
-  - B07
+  - BLUE
+  - GREEN
+  - RED
+  - NIR_NARROW
+  - SWIR_1
+  - SWIR_2
 adaptation_protocol: task_adapted_decoder
 training_budget: official_sen1floods11_finetune
 split_protocol: standard_split

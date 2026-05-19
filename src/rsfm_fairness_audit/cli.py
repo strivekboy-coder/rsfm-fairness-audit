@@ -103,6 +103,7 @@ def build_parser() -> argparse.ArgumentParser:
     seg.add_argument("--split", choices=["train", "val", "test", "all"], default="all")
     seg.add_argument("--output-dir", type=Path, default=Path("outputs/prithvi_sen1floods11_seg64"))
     seg.add_argument("--model-config", "--config", dest="model_config", type=Path, required=True)
+    seg.add_argument("--debug-samples", type=int, default=0, help="Save raw output/probability diagnostics and quick-look PNGs for the first N chips.")
 
     bwer = subparsers.add_parser("evaluate-bwer", help="Evaluate BWER slice fairness from a normalized audit table.")
     bwer.add_argument("--audit-table", type=Path, required=True)
@@ -254,7 +255,7 @@ def main() -> None:
             sensor_mode="S2",
             model_config=args.model_config,
         )
-        artifacts = run_segmentation_smoke(dataset, model, args.output_dir)
+        artifacts = run_segmentation_smoke(dataset, model, args.output_dir, debug_samples=args.debug_samples)
         print(f"Real segmentation smoke complete: {args.output_dir}")
         for name, path in artifacts.items():
             print(f"{name}: {path}")

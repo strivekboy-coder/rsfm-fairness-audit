@@ -204,6 +204,49 @@ def segmentation_diagnostics(
     return diagnostics
 
 
+def probability_diagnostics(
+    probabilities: np.ndarray | None,
+    prediction: np.ndarray,
+    mask: np.ndarray,
+    confidence: np.ndarray | None = None,
+) -> dict[str, Any]:
+    if probabilities is None:
+        return {}
+    probs = np.asarray(probabilities, dtype=np.float32)
+    if probs.ndim != 3 or probs.shape[0] < 2:
+        return {"probability_shape": "x".join(str(value) for value in probs.shape)}
+    background = probs[0]
+    water = probs[1]
+    values, counts = np.unique(prediction, return_counts=True)
+    valid = np.asarray(mask) >= 0
+    diagnostics: dict[str, Any] = {
+        "probability_shape": "x".join(str(value) for value in probs.shape),
+        "background_prob_min": float(np.nanmin(background)),
+        "background_prob_max": float(np.nanmax(background)),
+        "background_prob_mean": float(np.nanmean(background)),
+        "water_prob_min": float(np.nanmin(water)),
+        "water_prob_max": float(np.nanmax(water)),
+        "water_prob_mean": float(np.nanmean(water)),
+        "water_prob_valid_mean": float(np.nanmean(water[valid])) if np.any(valid) else float("nan"),
+        "argmax_class_distribution": json.dumps({str(int(value)): int(count) for value, count in zip(values, counts)}, sort_keys=True),
+        "positive_class_definition": "class_1_water_flood",
+        "background_class_definition": "class_0_no_water",
+        "ignore_label_definition": "label_-1_ignored",
+        "confidence_source": "max_softmax_probability",
+    }
+    if confidence is not None:
+        conf = np.asarray(confidence, dtype=np.float32)
+        diagnostics.update(
+            {
+                "confidence_min": float(np.nanmin(conf)),
+                "confidence_max": float(np.nanmax(conf)),
+                "confidence_mean": float(np.nanmean(conf)),
+                "confidence_valid_mean": float(np.nanmean(conf[valid])) if np.any(valid) else float("nan"),
+            }
+        )
+    return diagnostics
+
+
 def aggregate_segmentation_metrics(
     rows: Sequence[dict[str, Any]],
     group_key: str,
@@ -361,15 +404,56 @@ def plot_segmentation_iou_by_group(rows: Sequence[dict[str, Any]], output_path: 
     plt.close(fig)
 
 
+def save_debug_visual(
+    path: str | Path,
+    raw_image: np.ndarray,
+    mask: np.ndarray,
+    prediction: np.ndarray,
+    water_probability: np.ndarray,
+    title: str,
+) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    image = np.asarray(raw_image, dtype=np.float32)
+    if image.ndim == 4:
+        image = image[0]
+    if image.shape[0] >= 3:
+        rgb = np.stack([image[2], image[1], image[0]], axis=-1)
+        low, high = np.nanpercentile(rgb, [2, 98])
+        rgb = np.clip((rgb - low) / max(high - low, 1e-6), 0, 1)
+    else:
+        rgb = image[0]
+    fig, axes = plt.subplots(1, 4, figsize=(12, 3))
+    axes[0].imshow(rgb)
+    axes[0].set_title("input RGB")
+    axes[1].imshow(np.ma.masked_where(mask < 0, mask), vmin=0, vmax=1, cmap="Blues")
+    axes[1].set_title("GT mask")
+    axes[2].imshow(prediction, vmin=0, vmax=1, cmap="Blues")
+    axes[2].set_title("pred mask")
+    axes[3].imshow(water_probability, vmin=0, vmax=1, cmap="viridis")
+    axes[3].set_title("water prob")
+    for axis in axes:
+        axis.axis("off")
+    fig.suptitle(title)
+    fig.tight_layout()
+    fig.savefig(path, dpi=160)
+    plt.close(fig)
+
+
 def run_segmentation_smoke(
     dataset: DatasetAdapter,
     model: PrithviAdapter,
     output_dir: str | Path,
     batch_size: int | None = None,
+    debug_samples: int = 0,
 ) -> dict[str, Path]:
     output = ensure_dir(output_dir)
     figures = ensure_dir(output / "figures")
     tables = ensure_dir(output / "tables")
+    debug_dir = ensure_dir(output / "debug")
     metadata = dataset.load_metadata()
     model.load_model()
     model_metadata = _segmentation_model_metadata(model)
@@ -385,11 +469,13 @@ def run_segmentation_smoke(
             features = np.asarray(segmentation_output["score_maps"], dtype=np.float32)[:, None, :, :]
             predictions = np.asarray(segmentation_output["predictions"], dtype=np.int16)
             confidences = segmentation_output.get("confidence")
+            probabilities = segmentation_output.get("probabilities")
         else:
             segmentation_output = None
             features = model.segmentation_features(batch)
             predictions = None
             confidences = None
+            probabilities = None
         masks = batch["masks"]
         for local_index, dataset_index in enumerate(indices):
             score_map = _score_map_from_features(features[local_index])
@@ -406,6 +492,9 @@ def run_segmentation_smoke(
                 normalized_image=np.asarray(batch["images"][local_index]),
                 band_names=getattr(model, "band_names", []),
             )
+            sample_probabilities = np.asarray(probabilities[local_index], dtype=np.float32) if probabilities is not None else None
+            sample_confidence = np.asarray(confidences[local_index], dtype=np.float32) if confidences is not None else None
+            diagnostics.update(probability_diagnostics(sample_probabilities, prediction, mask, sample_confidence))
             row = dict(metadata[dataset_index])
             event_id = str(row.get("event_id") or row.get("event") or row.get("region") or "to_verify")
             row["event_id"] = event_id
@@ -432,11 +521,22 @@ def run_segmentation_smoke(
                 }
             )
             if confidences is not None:
-                confidence = np.asarray(confidences[local_index], dtype=np.float32)
+                confidence = sample_confidence
                 valid = mask >= 0
                 row["mean_confidence"] = float(np.nanmean(confidence[valid])) if np.any(valid) else float("nan")
                 row["confidence_source"] = "max_softmax_probability"
             metric_rows.append(row)
+            if debug_samples and len(metric_rows) <= debug_samples:
+                water_probability = sample_probabilities[1] if sample_probabilities is not None and sample_probabilities.shape[0] > 1 else score_map
+                debug_png = debug_dir / f"{len(metric_rows):03d}_{row.get('sample_id', dataset_index)}.png"
+                save_debug_visual(
+                    debug_png,
+                    raw_image=np.asarray(batch["raw_images"][local_index]),
+                    mask=mask,
+                    prediction=prediction,
+                    water_probability=water_probability,
+                    title=f"{row.get('sample_id')} IoU={metrics['iou']:.4f} Dice={metrics['dice']:.4f}",
+                )
             for baseline_name, baseline_prediction in diagnostic_baseline_predictions(features[local_index], batch["raw_images"][local_index]).items():
                 baseline_counts = segmentation_confusion_counts(mask, baseline_prediction)
                 baseline_metrics = segmentation_metrics_from_counts(baseline_counts)
@@ -487,7 +587,13 @@ def run_segmentation_smoke(
         "iou_by_group": figures / "segmentation_iou_by_group.png",
         "segmentation_report": output / "segmentation_report.md",
         "report": output / "report.md",
+        "model_debug": output / "model_debug.json",
+        "raw_model_output_debug": debug_dir / "raw_model_output_debug.json",
     }
+    model_debug = getattr(model, "load_diagnostics", {})
+    artifacts["model_debug"].write_text(json.dumps(model_debug, indent=2), encoding="utf-8")
+    debug_records = getattr(model, "debug_records", [])
+    artifacts["raw_model_output_debug"].write_text(json.dumps(debug_records[: max(debug_samples, 2)], indent=2), encoding="utf-8")
     write_csv(artifacts["segmentation_metrics"], metric_rows)
     write_csv(artifacts["segmentation_predictions"], metric_rows)
     write_csv(artifacts["event_segmentation_metrics"], event_metric_rows)

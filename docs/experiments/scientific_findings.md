@@ -58,3 +58,6 @@ Current protocol decision:
 
 Remaining limitations:
 The current prepared data cache may contain 224x224 resized chips for Colab-friendly validation. For final paper-grade reporting, the official task-adapted decoder should be run with a deliberately chosen prepared resolution and the report should state that resolution explicitly.
+
+Update after the first official TL full run:
+An initial 446-chip TL run produced all-background predictions and must not be interpreted scientifically. The failure exposed a band-profile mismatch: the older prepared NPZ cache used the non-TL compatibility bands `B02-B07`, while the official Sen1Floods11 TL checkpoint expects Sentinel-2 indices `[1,2,3,8,11,12]` corresponding to `BLUE,GREEN,RED,NIR_NARROW,SWIR_1,SWIR_2`. The pipeline now has a dedicated `prithvi_tl_sen1floods11` preparation profile, rejects incompatible cached prepared data for the TL adapter, and writes model/probability debug diagnostics before any future full-run interpretation.

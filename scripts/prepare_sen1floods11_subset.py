@@ -14,6 +14,19 @@ import numpy as np
 
 GCS_ROOT = "gs://sen1floods11"
 PRITHVI_BAND_INDICES = [1, 2, 3, 4, 5, 6]  # B02-B07 from 13-band Sen1Floods11 S2 GeoTIFFs.
+BAND_PROFILES = {
+    "prithvi_hls_6band_4frame_compat": {
+        "indices": [1, 2, 3, 4, 5, 6],
+        "names": ["B02", "B03", "B04", "B05", "B06", "B07"],
+        "frames": 4,
+    },
+    "prithvi_tl_sen1floods11": {
+        # Official HF inference default input_indices=[1,2,3,8,11,12] for S2L1C.
+        "indices": [1, 2, 3, 8, 11, 12],
+        "names": ["BLUE", "GREEN", "RED", "NIR_NARROW", "SWIR_1", "SWIR_2"],
+        "frames": 1,
+    },
+}
 TARGET_SIZE = 224
 WATER_PRESENT_THRESHOLD = 0.01
 
@@ -48,13 +61,19 @@ def _read_tif(path: Path) -> np.ndarray:
         return src.read().astype(np.float32)
 
 
-def _prithvi_chip_from_s2(path: Path, target_size: int = TARGET_SIZE) -> np.ndarray:
+def _prithvi_chip_from_s2(
+    path: Path,
+    target_size: int = TARGET_SIZE,
+    band_indices: list[int] | None = None,
+    frames: int = 4,
+) -> np.ndarray:
     image = _read_tif(path)
     if image.shape[0] < 13:
         raise RuntimeError(f"Expected a 13-band Sen1Floods11 S2 GeoTIFF, got shape {image.shape} for {path}.")
-    bands = [_resize_2d(image[index], target_size) for index in PRITHVI_BAND_INDICES]
+    indices = band_indices or PRITHVI_BAND_INDICES
+    bands = [_resize_2d(image[index], target_size) for index in indices]
     single_frame = np.stack(bands).astype(np.float32)
-    return np.repeat(single_frame[None, :, :, :], 4, axis=0)
+    return np.repeat(single_frame[None, :, :, :], frames, axis=0)
 
 
 def _mask_from_label(path: Path, target_size: int = TARGET_SIZE) -> np.ndarray:
@@ -363,13 +382,20 @@ def prepare_sen1floods11_subset(
     event_filter: list[str] | None = None,
     candidate_limit: int = 1000,
     parallel_download: bool = True,
+    band_profile: str = "prithvi_hls_6band_4frame_compat",
 ) -> Path:
     if max_samples < 0:
         raise ValueError("--max-samples must be non-negative; use 0 for all selected candidates.")
     start_time = time.time()
+    if band_profile not in BAND_PROFILES:
+        raise ValueError(f"Unknown band_profile={band_profile!r}. Allowed: {sorted(BAND_PROFILES)}")
+    profile = BAND_PROFILES[band_profile]
+    band_indices = list(profile["indices"])
+    band_names = list(profile["names"])
+    frames = int(profile["frames"])
     _log(
         f"[stage] Preparing Sen1Floods11 subset output_dir={output_dir} max_samples={max_samples or 'all'} "
-        f"candidate_limit={candidate_limit} source_root={source_root or 'GCS'}"
+        f"candidate_limit={candidate_limit} source_root={source_root or 'GCS'} band_profile={band_profile}"
     )
     if source_root is not None:
         local_pairs = _local_pairs(source_root)
@@ -423,9 +449,9 @@ def prepare_sen1floods11_subset(
     _log(f"[stage] Converting {len(pairs)} GeoTIFF pairs to Prithvi-ready NPZ chips")
     for index, (s2_path, label_path) in enumerate(pairs, start=1):
         sample_id = _sample_id(s2_path)
-        chip = _prithvi_chip_from_s2(s2_path, target_size=target_size)
+        chip = _prithvi_chip_from_s2(s2_path, target_size=target_size, band_indices=band_indices, frames=frames)
         mask = _mask_from_label(label_path, target_size=target_size)
-        if chip.shape != (4, 6, target_size, target_size):
+        if chip.shape != (frames, 6, target_size, target_size):
             raise RuntimeError(f"Prepared Prithvi chip has wrong shape for {sample_id}: {chip.shape}.")
         if mask.shape != (target_size, target_size):
             raise RuntimeError(f"Prepared label mask has wrong shape for {sample_id}: {mask.shape}.")
@@ -447,7 +473,9 @@ def prepare_sen1floods11_subset(
                 "fallback_group": event,
                 "sensor": "S2",
                 "source_dataset": "sen1floods11",
-                "band_profile": "prithvi_hls_6band_4frame_compat",
+                "band_profile": band_profile,
+                "band_indices": json.dumps(band_indices),
+                "band_names": json.dumps(band_names),
                 "split": "all",
             }
         )
@@ -475,6 +503,12 @@ def main() -> None:
     parser.add_argument("--candidate-limit", type=int, default=1000, help="Maximum listed S2 candidates to inspect while searching for valid S2/label pairs.")
     parser.add_argument("--no-parallel-download", action="store_true", help="Disable gsutil -m cp batch download and use per-pair fallback only.")
     parser.add_argument("--refresh-manifest", action="store_true", help="Refresh cached GCS S2/LabelHand pair manifest before preparing data.")
+    parser.add_argument(
+        "--band-profile",
+        choices=sorted(BAND_PROFILES),
+        default="prithvi_hls_6band_4frame_compat",
+        help="Prepared band profile. Use prithvi_tl_sen1floods11 for the official TL segmentation checkpoint.",
+    )
     args = parser.parse_args()
     if args.refresh_manifest and args.source_root is None:
         _build_gcs_pair_manifest(args.gcs_root, args.cache_dir, refresh=True)
@@ -488,6 +522,7 @@ def main() -> None:
         event_filter=args.event_filter,
         candidate_limit=args.candidate_limit,
         parallel_download=not args.no_parallel_download,
+        band_profile=args.band_profile,
     )
 
 

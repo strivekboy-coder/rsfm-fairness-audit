@@ -251,12 +251,14 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
 
     official_hf_model_id = "ibm-nasa-geospatial/Prithvi-EO-2.0-300M-TL-Sen1Floods11"
     official_checkpoint_name = "Prithvi-EO-V2-300M-TL-Sen1Floods11.pt"
+    official_band_names = ["BLUE", "GREEN", "RED", "NIR_NARROW", "SWIR_1", "SWIR_2"]
     accepted_model_names = (official_hf_model_id,)
     protocol_model_name = "prithvi_tl_sen1floods11"
     model_family = "Prithvi"
     adaptation_protocol = "task_adapted_decoder"
     training_budget = "official_sen1floods11_finetune"
     checkpoint_source = "official_huggingface"
+    expected_band_profile = "prithvi_tl_sen1floods11"
 
     def __init__(
         self,
@@ -294,6 +296,8 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
         self.checkpoint_path = Path(checkpoint_path) if checkpoint_path else None
         self.terratorch_config_path = Path(terratorch_config_path) if terratorch_config_path else None
         self.datamodule: Any | None = None
+        self.load_diagnostics: dict[str, Any] = {}
+        self.debug_records: list[dict[str, Any]] = []
 
     @classmethod
     def from_config(
@@ -322,15 +326,18 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
         self._validate_config()
         if self.model is not None:
             self._maybe_eval()
+            self._set_load_diagnostics("injected_model")
             return
         if self.model_loader is not None:
             self.model = self.model_loader()
             self.model = self._unwrap_lightning_inference(self.model)
             self._maybe_eval()
+            self._set_load_diagnostics("model_loader")
             return
         if self.terratorch_config_path and self.checkpoint_path:
             self.model = self._load_lightning_inference(self.terratorch_config_path, self.checkpoint_path)
             self._maybe_eval()
+            self._set_load_diagnostics("local_config_checkpoint")
             return
         if not self.allow_hf_download:
             raise PrithviConfigurationError(
@@ -338,8 +345,11 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
                 "or provide terratorch_config_path plus checkpoint_path, or inject a mock model in tests."
             )
         config_path, checkpoint_path = self._download_official_inference_files()
+        self.terratorch_config_path = config_path
+        self.checkpoint_path = checkpoint_path
         self.model = self._load_lightning_inference(config_path, checkpoint_path)
         self._maybe_eval()
+        self._set_load_diagnostics("hf_config_checkpoint")
 
     def _download_official_inference_files(self) -> tuple[Path, Path]:
         try:
@@ -383,9 +393,43 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
             return wrapped
         return self._move_to_device(model)
 
+    def _set_load_diagnostics(self, load_source: str) -> None:
+        missing_keys = getattr(self.model, "missing_keys", None)
+        unexpected_keys = getattr(self.model, "unexpected_keys", None)
+        self.load_diagnostics = {
+            "load_source": load_source,
+            "hf_model_id": self.hf_model_id,
+            "checkpoint_source": self.checkpoint_source,
+            "checkpoint_path": str(self.checkpoint_path) if self.checkpoint_path else "",
+            "terratorch_config_path": str(self.terratorch_config_path) if self.terratorch_config_path else "",
+            "model_class": f"{self.model.__class__.__module__}.{self.model.__class__.__name__}" if self.model is not None else "",
+            "datamodule_class": f"{self.datamodule.__class__.__module__}.{self.datamodule.__class__.__name__}" if self.datamodule is not None else "",
+            "head_class": f"{getattr(self.model, 'head').__class__.__module__}.{getattr(self.model, 'head').__class__.__name__}"
+            if self.model is not None and hasattr(self.model, "head")
+            else "",
+            "decoder_class": f"{getattr(self.model, 'decoder').__class__.__module__}.{getattr(self.model, 'decoder').__class__.__name__}"
+            if self.model is not None and hasattr(self.model, "decoder")
+            else "",
+            "missing_keys": list(missing_keys) if missing_keys is not None else "not_reported_by_loader",
+            "unexpected_keys": list(unexpected_keys) if unexpected_keys is not None else "not_reported_by_loader",
+            "class_semantics": {"0": "no_water/background", "1": "water/flood", "-1": "ignore_label_in_ground_truth"},
+            "expected_input_layout": "[B,6,1,H,W]",
+            "expected_band_order": self.official_band_names,
+            "expected_input_size_note": "Official inference uses 512x512 sliding windows; config trains with 224x224 random crops. 224x224 is a debug-compatible crop, 512x512 is recommended for final runs if memory allows.",
+        }
+
     def preprocess(self, batch: Mapping[str, Any]) -> Mapping[str, Any]:
         self._validate_config()
         samples = list(batch["samples"])
+        for meta in batch.get("metadata", []):
+            profile = meta.get("band_profile") if isinstance(meta, Mapping) else None
+            if profile and str(profile) != self.expected_band_profile:
+                raise PrithviConfigurationError(
+                    "Official Prithvi Sen1Floods11 TL requires prepared band_profile="
+                    f"{self.expected_band_profile!r} with BLUE/GREEN/RED/NIR_NARROW/SWIR_1/SWIR_2. "
+                    f"Got {profile!r}. Re-run scripts/prepare_sen1floods11_subset.py with "
+                    "--band-profile prithvi_tl_sen1floods11; cached B02-B07 prepared zips are invalid for this model."
+                )
         arrays = []
         masks = []
         for sample in samples:
@@ -427,6 +471,7 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
         logits = self._resize_logits(logits, target_shape)
         probabilities = self._softmax(logits, axis=1)
         predictions = np.argmax(probabilities, axis=1).astype(np.int16)
+        self._record_prediction_debug(batch["images"], logits, probabilities, predictions)
         return {
             "predictions": predictions,
             "score_maps": probabilities[:, 1, :, :].astype(np.float32),
@@ -448,6 +493,17 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
                 output = self.model(tensor, temporal_coords=None, location_coords=None)
             except TypeError:
                 output = self.model(tensor)
+        self.debug_records.append(
+            {
+                "stage": "raw_model_output",
+                "input_array_shape_B_T_C_H_W": list(np.asarray(images).shape),
+                "model_tensor_shape_B_C_T_H_W": list(tensor.shape),
+                "input_min": float(np.nanmin(array)),
+                "input_max": float(np.nanmax(array)),
+                "input_mean": float(np.nanmean(array)),
+                "output_summary": self._summarize_output(output),
+            }
+        )
         logits = self._extract_logits(output)
         if hasattr(logits, "detach"):
             logits = logits.detach().cpu().numpy()
@@ -469,6 +525,74 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
         if isinstance(output, (tuple, list)):
             return output[0]
         return output
+
+    def _summarize_output(self, output: Any) -> Any:
+        if hasattr(output, "detach"):
+            return self._summarize_array(output)
+        if hasattr(output, "output"):
+            return {"type": f"{output.__class__.__module__}.{output.__class__.__name__}", "output": self._summarize_array(output.output)}
+        if isinstance(output, Mapping):
+            return {
+                "type": "dict",
+                "keys": list(output.keys()),
+                "values": {str(key): self._summarize_output(value) for key, value in output.items()},
+            }
+        if isinstance(output, (tuple, list)):
+            return {
+                "type": type(output).__name__,
+                "length": len(output),
+                "values": [self._summarize_output(value) for value in output],
+            }
+        return {"type": f"{output.__class__.__module__}.{output.__class__.__name__}"}
+
+    def _summarize_array(self, value: Any) -> dict[str, Any]:
+        if hasattr(value, "detach"):
+            value = value.detach().cpu().numpy()
+        array = np.asarray(value)
+        summary: dict[str, Any] = {"shape": list(array.shape), "dtype": str(array.dtype)}
+        if array.size:
+            summary.update(
+                {
+                    "min": float(np.nanmin(array)),
+                    "max": float(np.nanmax(array)),
+                    "mean": float(np.nanmean(array)),
+                }
+            )
+            if array.ndim >= 2:
+                channel_axis = 1
+                summary["per_channel"] = [
+                    {
+                        "channel": index,
+                        "min": float(np.nanmin(array[:, index])),
+                        "max": float(np.nanmax(array[:, index])),
+                        "mean": float(np.nanmean(array[:, index])),
+                    }
+                    for index in range(array.shape[channel_axis])
+                ]
+        return summary
+
+    def _record_prediction_debug(
+        self,
+        images: np.ndarray,
+        logits: np.ndarray,
+        probabilities: np.ndarray,
+        predictions: np.ndarray,
+    ) -> None:
+        values, counts = np.unique(predictions, return_counts=True)
+        self.debug_records.append(
+            {
+                "stage": "decoded_prediction",
+                "input_array_shape_B_T_C_H_W": list(np.asarray(images).shape),
+                "logits": self._summarize_array(logits),
+                "probabilities": self._summarize_array(probabilities),
+                "background_prob": self._summarize_array(probabilities[:, 0, :, :]),
+                "water_prob": self._summarize_array(probabilities[:, 1, :, :]) if probabilities.shape[1] > 1 else {},
+                "argmax_class_distribution": {str(int(value)): int(count) for value, count in zip(values, counts)},
+                "predicted_positive_ratio": float(np.mean(predictions == 1)),
+                "positive_class_definition": "prediction == 1",
+                "softmax_axis": 1,
+            }
+        )
 
     def _resize_logits(self, logits: np.ndarray, target_shape: tuple[int, int]) -> np.ndarray:
         if tuple(logits.shape[-2:]) == target_shape:
