@@ -23,6 +23,7 @@ ALLOWED_ADAPTATION_PROTOCOLS = {
 ALLOWED_SPLIT_PROTOCOLS = {
     "",
     "standard_split",
+    "random_chip_split",
     "event_held_out",
     "leave_one_event_out",
     "spatial_split",

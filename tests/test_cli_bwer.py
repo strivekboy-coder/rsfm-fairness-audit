@@ -30,6 +30,8 @@ def test_run_unet_cli_passes_protocol_and_training_args(monkeypatch) -> None:
             "2",
             "--learning-rate",
             "0.0005",
+            "--early-stopping-patience",
+            "7",
             "--split-protocol",
             "event_held_out",
             "--held-out-event",
@@ -48,6 +50,7 @@ def test_run_unet_cli_passes_protocol_and_training_args(monkeypatch) -> None:
     assert config.epochs == 3
     assert config.batch_size == 2
     assert config.learning_rate == 0.0005
+    assert config.early_stopping_patience == 7
     assert config.split_protocol == "event_held_out"
     assert config.held_out_events == ("Pakistan", "Bolivia")
     assert config.eval_split == "test"

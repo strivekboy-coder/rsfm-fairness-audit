@@ -13,4 +13,6 @@ in `bwer_v2_posthoc.md`.
 The supervised U-Net Sen1Floods11 native segmentation baseline is documented in
 `unet_sen1floods11.md`. It is Protocol C (`adaptation_protocol =
 supervised_baseline`) and produces the same BWER-compatible event-level outputs
-as the Prithvi TL segmentation run.
+as the Prithvi TL segmentation run. The same guide documents the standalone
+Prithvi-vs-U-Net comparison workflow; comparison outputs live under
+`outputs/comparisons/` rather than inside either single-model run directory.

@@ -47,6 +47,24 @@ def test_infinite_risk_row_is_rejected() -> None:
         validate_audit_table(rows)
 
 
+def test_random_chip_split_is_valid_split_protocol() -> None:
+    validate_audit_table(
+        [
+            {
+                "dataset": "sen1floods11",
+                "model": "unet_sen1floods11_s2_512",
+                "task": "segmentation",
+                "split": "test",
+                "unit_id": "Pakistan",
+                "score": 0.64,
+                "risk": 0.36,
+                "adaptation_protocol": "supervised_baseline",
+                "split_protocol": "random_chip_split",
+            }
+        ]
+    )
+
+
 def test_segmentation_metrics_convert_to_audit_table() -> None:
     root = __import__("pathlib").Path("outputs/test_audit_table_segmentation")
     root.mkdir(parents=True, exist_ok=True)

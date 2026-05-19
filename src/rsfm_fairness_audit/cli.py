@@ -76,7 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--sensor-mode", choices=["S1", "S2", "S1+S2"], default="S2")
     check.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
-    compare = subparsers.add_parser("compare-runs", help="Create a compact model comparison table from completed runs.")
+    compare = subparsers.add_parser("compare-runs", help="Compare completed runs; segmentation outputs use protocol-aware BWER v2 comparison.")
     compare.add_argument("--dataset", default="bigearthnet")
     compare.add_argument(
         "--run",
@@ -110,11 +110,13 @@ def build_parser() -> argparse.ArgumentParser:
     unet = subparsers.add_parser("run-unet-sen1floods11", help="Train and evaluate the supervised U-Net Sen1Floods11 segmentation baseline.")
     unet.add_argument("--data-root", "--dataset-root", dest="data_root", type=Path, required=True)
     unet.add_argument("--output-dir", type=Path, default=Path("outputs/unet_sen1floods11_full_512"))
-    unet.add_argument("--epochs", type=int, default=8)
+    unet.add_argument("--epochs", type=int, default=50)
     unet.add_argument("--batch-size", type=int, default=4)
     unet.add_argument("--learning-rate", type=float, default=1e-3)
     unet.add_argument("--weight-decay", type=float, default=1e-4)
     unet.add_argument("--base-channels", type=int, default=16)
+    unet.add_argument("--early-stopping-patience", type=int, default=10)
+    unet.add_argument("--early-stopping-min-delta", type=float, default=1e-4)
     unet.add_argument("--split-protocol", choices=["random_chip_split", "event_held_out"], default="random_chip_split")
     unet.add_argument("--val-fraction", type=float, default=0.15)
     unet.add_argument("--test-fraction", type=float, default=0.20)
@@ -298,6 +300,8 @@ def main() -> None:
                 learning_rate=args.learning_rate,
                 weight_decay=args.weight_decay,
                 base_channels=args.base_channels,
+                early_stopping_patience=args.early_stopping_patience,
+                early_stopping_min_delta=args.early_stopping_min_delta,
                 split_protocol=args.split_protocol,
                 val_fraction=args.val_fraction,
                 test_fraction=args.test_fraction,

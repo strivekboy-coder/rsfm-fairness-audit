@@ -53,15 +53,20 @@ python -m rsfm_fairness_audit.cli run-unet-sen1floods11 \
 
 ## Full Baseline
 
-Default Colab-friendly full run:
+The recommended final supervised baseline uses a simple but stronger training
+budget than the first 8-epoch smoke run: up to 50 epochs, best-checkpoint
+selection by validation IoU, ReduceLROnPlateau scheduling, and early stopping
+with patience 10. This gives the U-Net a fair chance while staying reproducible
+on Colab L4/A100.
 
 ```bash
 python -m rsfm_fairness_audit.cli run-unet-sen1floods11 \
   --data-root /content/data/sen1floods11_tl_official_full_512 \
   --output-dir /content/outputs/unet_sen1floods11_full_512 \
-  --epochs 8 \
+  --epochs 50 \
   --batch-size 4 \
   --learning-rate 1e-3 \
+  --early-stopping-patience 10 \
   --split-protocol random_chip_split \
   --eval-split test \
   --run-bwer-v2
@@ -73,9 +78,10 @@ For an event-held-out diagnostic:
 python -m rsfm_fairness_audit.cli run-unet-sen1floods11 \
   --data-root /content/data/sen1floods11_tl_official_full_512 \
   --output-dir /content/outputs/unet_sen1floods11_event_held_out_512 \
-  --epochs 8 \
+  --epochs 50 \
   --batch-size 4 \
   --learning-rate 1e-3 \
+  --early-stopping-patience 10 \
   --split-protocol event_held_out \
   --held-out-event Pakistan \
   --held-out-event Bolivia \
@@ -119,9 +125,10 @@ os.chdir(PROJECT_DIR)
 subprocess.run(["python", "-m", "pip", "install", "-e", ".[unet]"], check=True)
 subprocess.run([
     "python", "scripts/run_unet_sen1floods11_colab.py",
-    "--epochs", "8",
+    "--epochs", "50",
     "--batch-size", "4",
     "--learning-rate", "1e-3",
+    "--early-stopping-patience", "10",
     "--split-protocol", "random_chip_split",
     "--eval-split", "test",
     "--force",
@@ -139,9 +146,10 @@ The helper script performs the reproducible workflow after the repo is present:
 
 ```bash
 python scripts/run_unet_sen1floods11_colab.py \
-  --epochs 8 \
+  --epochs 50 \
   --batch-size 4 \
   --learning-rate 1e-3 \
+  --early-stopping-patience 10 \
   --split-protocol random_chip_split \
   --eval-split test \
   --force
@@ -174,6 +182,40 @@ unet_sen1floods11_full_512/
     bwer_audit_report.md
     figures/
 ```
+
+## Standalone Prithvi vs U-Net Comparison
+
+Comparison outputs are stored separately from single-model result zips so they
+can later include more runs, such as event-held-out U-Net, NDWI, DOFA, or CROMA
+variants.
+
+Explicit CLI:
+
+```bash
+python -m rsfm_fairness_audit.cli compare-runs \
+  --dataset sen1floods11 \
+  --run prithvi=/content/outputs/prithvi_tl_sen1floods11_official_full_512 \
+  --run unet=/content/outputs/unet_sen1floods11_full_512 \
+  --output-dir /content/outputs/comparisons/sen1floods11_prithvi_vs_unet_512
+```
+
+Colab helper:
+
+```bash
+python scripts/run_sen1floods11_comparison_colab.py --force
+```
+
+Expected standalone comparison zip:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/comparisons/sen1floods11_prithvi_vs_unet_512.zip
+```
+
+The comparison writes `comparison_summary.csv`, `average_vs_bwer.csv`,
+`event_level_comparison.csv`, figures, and `comparison_report.md`. The report
+is protocol-aware: Prithvi is the official task-adapted checkpoint; U-Net is a
+`supervised_baseline` under `random_chip_split` test evaluation unless a
+different split is explicitly recorded.
 
 ## Interpretation
 

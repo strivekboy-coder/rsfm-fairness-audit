@@ -113,9 +113,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("/content/drive/MyDrive/rsfm_fairness_audit/outputs/unet_sen1floods11_full_512.zip"),
         help="Final enriched output zip containing the original U-Net outputs plus bwer_v2/.",
     )
-    parser.add_argument("--epochs", type=int, default=8)
+    parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument("--early-stopping-patience", type=int, default=10)
+    parser.add_argument("--early-stopping-min-delta", type=float, default=1e-4)
     parser.add_argument("--split-protocol", choices=["random_chip_split", "event_held_out"], default="random_chip_split")
     parser.add_argument("--held-out-event", action="append", default=[])
     parser.add_argument("--seed", type=int, default=42)
@@ -151,6 +153,10 @@ def main() -> None:
         str(args.batch_size),
         "--learning-rate",
         str(args.learning_rate),
+        "--early-stopping-patience",
+        str(args.early_stopping_patience),
+        "--early-stopping-min-delta",
+        str(args.early_stopping_min_delta),
         "--split-protocol",
         args.split_protocol,
         "--seed",

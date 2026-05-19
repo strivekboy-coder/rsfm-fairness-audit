@@ -35,11 +35,13 @@ def _require_torch() -> Any:
 class UnetConfig:
     data_root: Path
     output_dir: Path
-    epochs: int = 8
+    epochs: int = 50
     batch_size: int = 4
     learning_rate: float = 1e-3
     weight_decay: float = 1e-4
     base_channels: int = 16
+    early_stopping_patience: int = 10
+    early_stopping_min_delta: float = 1e-4
     split_protocol: str = "random_chip_split"
     val_fraction: float = 0.15
     test_fraction: float = 0.20
@@ -388,7 +390,7 @@ def _metadata_for_run(rows: Sequence[dict[str, Any]], config: UnetConfig, splits
         "model_family": "unet",
         "model_variant": "unet_sen1floods11_s2_512",
         "adaptation_protocol": "supervised_baseline",
-        "training_budget": f"epochs={config.epochs};batch_size={config.batch_size};learning_rate={config.learning_rate};optimizer=adamw;loss=bce_plus_dice;image_size={data_info['resolution']};seed={config.seed}",
+        "training_budget": f"epochs={config.epochs};batch_size={config.batch_size};learning_rate={config.learning_rate};optimizer=adamw;loss=bce_plus_dice;image_size={data_info['resolution']};early_stopping_patience={config.early_stopping_patience};seed={config.seed}",
         "split_protocol": config.split_protocol,
         "eval_split": config.eval_split,
         "resolution": data_info["resolution"],
@@ -405,6 +407,8 @@ def _metadata_for_run(rows: Sequence[dict[str, Any]], config: UnetConfig, splits
         "learning_rate": config.learning_rate,
         "weight_decay": config.weight_decay,
         "base_channels": config.base_channels,
+        "early_stopping_patience": config.early_stopping_patience,
+        "early_stopping_min_delta": config.early_stopping_min_delta,
         "seed": config.seed,
         "device": str(device),
         "train_chip_count": len(splits["train"]),
@@ -452,6 +456,13 @@ def run_unet_sen1floods11(config: UnetConfig) -> dict[str, Path]:
     best_state = None
     best_val_iou = -1.0
     best_epoch = 0
+    epochs_without_improvement = 0
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="max",
+        factor=0.5,
+        patience=max(2, config.early_stopping_patience // 3) if config.early_stopping_patience else 5,
+    )
     for epoch in range(1, config.epochs + 1):
         model.train()
         losses: list[float] = []
@@ -468,15 +479,27 @@ def run_unet_sen1floods11(config: UnetConfig) -> dict[str, Path]:
             losses.append(float(loss.detach().cpu()))
         val_metrics, _ = _evaluate_loader(model, val_loader, device)
         val_iou = float(val_metrics["micro_iou"])
-        history.append({"epoch": epoch, "train_loss": float(np.mean(losses)) if losses else float("nan"), "val_micro_iou": val_iou, "val_micro_dice": val_metrics["micro_dice"]})
+        scheduler.step(val_iou)
+        current_lr = float(optimizer.param_groups[0]["lr"])
+        history.append({"epoch": epoch, "train_loss": float(np.mean(losses)) if losses else float("nan"), "val_micro_iou": val_iou, "val_micro_dice": val_metrics["micro_dice"], "learning_rate": current_lr})
         print(
-            f"[epoch {epoch}/{config.epochs}] train_loss={history[-1]['train_loss']:.4f} val_micro_iou={val_iou:.4f} val_micro_dice={val_metrics['micro_dice']:.4f}",
+            f"[epoch {epoch}/{config.epochs}] train_loss={history[-1]['train_loss']:.4f} val_micro_iou={val_iou:.4f} val_micro_dice={val_metrics['micro_dice']:.4f} lr={current_lr:.6g}",
             flush=True,
         )
-        if not math.isnan(val_iou) and val_iou > best_val_iou:
+        improved = not math.isnan(val_iou) and val_iou > (best_val_iou + config.early_stopping_min_delta)
+        if improved:
             best_val_iou = val_iou
             best_epoch = epoch
             best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+        if config.early_stopping_patience and epochs_without_improvement >= config.early_stopping_patience:
+            print(
+                f"[stage] Early stopping at epoch {epoch}; best_epoch={best_epoch} best_val_iou={best_val_iou:.4f}",
+                flush=True,
+            )
+            break
     if best_state is not None:
         model.load_state_dict(best_state)
     eval_rows_source = rows if config.eval_split == "all" else splits[config.eval_split]

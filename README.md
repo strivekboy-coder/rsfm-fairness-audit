@@ -237,9 +237,10 @@ event-held-out generalization.
 python -m rsfm_fairness_audit.cli run-unet-sen1floods11 `
   --data-root data/sen1floods11_tl_official_full_512 `
   --output-dir outputs/unet_sen1floods11_full_512 `
-  --epochs 8 `
+  --epochs 50 `
   --batch-size 4 `
   --learning-rate 1e-3 `
+  --early-stopping-patience 10 `
   --split-protocol random_chip_split `
   --eval-split test `
   --run-bwer-v2
@@ -249,9 +250,10 @@ For Colab, reuse the prepared 512 zip and produce one fused output archive:
 
 ```powershell
 python scripts/run_unet_sen1floods11_colab.py `
-  --epochs 8 `
+  --epochs 50 `
   --batch-size 4 `
   --learning-rate 1e-3 `
+  --early-stopping-patience 10 `
   --force
 ```
 
@@ -259,6 +261,16 @@ The expected final archive is
 `/content/drive/MyDrive/rsfm_fairness_audit/outputs/unet_sen1floods11_full_512.zip`.
 It contains the original U-Net outputs plus `bwer_v2/`. See
 [unet_sen1floods11.md](D:/Codex/rsfm-fairness-audit/docs/reproduction/unet_sen1floods11.md).
+
+Standalone Sen1Floods11 Prithvi-vs-U-Net comparison:
+
+```powershell
+python -m rsfm_fairness_audit.cli compare-runs `
+  --dataset sen1floods11 `
+  --run prithvi=outputs/prithvi_tl_sen1floods11_official_full_512 `
+  --run unet=outputs/unet_sen1floods11_full_512 `
+  --output-dir outputs/comparisons/sen1floods11_prithvi_vs_unet_512
+```
 
 ## BWER Slice Fairness Audit
 
