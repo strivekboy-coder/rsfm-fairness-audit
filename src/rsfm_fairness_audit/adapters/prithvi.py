@@ -443,13 +443,6 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
         if np.nanmax(array) > 1.5:
             array = array / 10000.0
         tensor = torch.as_tensor(array, dtype=torch.float32).permute(0, 2, 1, 3, 4).to(self._resolve_device())
-        if self.datamodule is not None and hasattr(self.datamodule, "test_transform") and hasattr(self.datamodule, "aug"):
-            transformed = []
-            for item in tensor.cpu():
-                image = item.squeeze().numpy().transpose(1, 2, 0)
-                image = self.datamodule.test_transform(image=image)
-                transformed.append(self.datamodule.aug(image)["image"])
-            tensor = torch.stack(transformed).to(self._resolve_device())
         with torch.no_grad():
             try:
                 output = self.model(tensor, temporal_coords=None, location_coords=None)
