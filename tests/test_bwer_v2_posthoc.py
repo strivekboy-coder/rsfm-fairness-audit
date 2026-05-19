@@ -133,6 +133,7 @@ def test_run_bwer_v2_posthoc_writes_full_output_set() -> None:
     assert summary["slice_variable"] == "event_id"
     assert summary["resolution"] == "512"
     assert "valid_pixel_count" in summary["support_definition"]
+    assert summary["bootstrap_method"] == "posthoc_event_bootstrap"
 
     alpha = read_csv_rows(out / "alpha_sensitivity.csv")
     assert [row["alpha"] for row in alpha] == ["0.1", "0.2", "0.3", "0.4"]
