@@ -175,3 +175,27 @@ def test_run_bwer_v2_cli(monkeypatch) -> None:
     main()
     assert (out / "bwer_v2_summary.csv").exists()
     assert (out / "bwer_audit_report.md").exists()
+
+
+def test_bwer_v2_summary_treats_none_bootstrap_method_as_missing() -> None:
+    run_dir = Path("outputs") / f"test_bwer_v2_existing_ci_{uuid.uuid4().hex}" / "run"
+    run_dir.mkdir(parents=True)
+    _write_completed_segmentation_run(run_dir)
+    write_csv(
+        run_dir / "bootstrap_ci.csv",
+        [
+            {
+                "source": "bwer_v2_posthoc",
+                "status": "computed",
+                "method": "posthoc_event_bootstrap",
+                "bootstrap_method": "none",
+                "ci_low": 0.01,
+                "ci_high": 0.02,
+                "bootstrap_n": 1000,
+            }
+        ],
+    )
+    out = run_dir / "bwer_v2"
+    run_bwer_v2_posthoc(run_dir, out, bootstrap=5, seed=7)
+    summary = read_csv_rows(out / "bwer_v2_summary.csv")[0]
+    assert summary["bootstrap_method"] == "posthoc_event_bootstrap"

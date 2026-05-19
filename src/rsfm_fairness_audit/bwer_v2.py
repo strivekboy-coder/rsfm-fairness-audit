@@ -33,6 +33,13 @@ def _num(value: Any, default: float = float("nan")) -> float:
         return default
 
 
+def _first_nonempty(*values: Any) -> Any:
+    for value in values:
+        if not _is_missing(value) and str(value).lower() != "none":
+            return value
+    return ""
+
+
 def _read_csv_if_exists(path: Path) -> list[dict[str, str]]:
     if not path.exists() or path.stat().st_size == 0:
         return []
@@ -46,6 +53,15 @@ def _read_json_if_exists(path: Path) -> dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return {"json_parse_error": str(path)}
+
+
+def _rectangularize(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    columns: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in columns:
+                columns.append(str(key))
+    return [{key: row.get(key, "") for key in columns} for row in rows]
 
 
 def _first_existing(input_dir: Path, names: Sequence[str]) -> Path | None:
@@ -233,7 +249,7 @@ def _summary_row(
         "support_definition": "segmentation effective support = valid_pixel_count; positive support = TP+FN",
         "ci_low": ci.get("ci_low", summary.get("ci_low", "")),
         "ci_high": ci.get("ci_high", summary.get("ci_high", "")),
-        "bootstrap_method": ci.get("bootstrap_method", ci.get("method", summary.get("bootstrap_method", ""))),
+        "bootstrap_method": _first_nonempty(ci.get("bootstrap_method"), ci.get("method"), summary.get("bootstrap_method", "")),
         "bootstrap_n": ci.get("bootstrap_n", summary.get("bootstrap_n", "")),
         "resolution": meta["resolution"],
         "run_directory": str(input_dir),
@@ -653,7 +669,8 @@ def run_bwer_v2_posthoc(input_dir: str | Path, output_dir: str | Path, *, bootst
 
     baseline = _compute_raw(event_rows, meta, alpha=0.1, min_support=10)
     bootstrap_rows = _bootstrap_ci(input_path, event_rows, meta, bootstrap, seed)
-    ci = next((row for row in bootstrap_rows if row.get("source") == "bwer_v2_posthoc" and row.get("status") == "computed"), {})
+    posthoc_ci_rows = [row for row in bootstrap_rows if row.get("source") == "bwer_v2_posthoc" and row.get("status") == "computed"]
+    ci = posthoc_ci_rows[-1] if posthoc_ci_rows else {}
     summary_rows = [_summary_row(baseline, meta, input_path, source_files, ci)]
     alpha_rows = _alpha_sensitivity(event_rows, meta)
     support_rows = _support_sensitivity(event_rows, meta)
@@ -688,7 +705,7 @@ def run_bwer_v2_posthoc(input_dir: str | Path, output_dir: str | Path, *, bootst
     write_csv(artifacts["missing_policy_sensitivity"], missing_rows)
     write_csv(artifacts["stabilised_bwer"], stabilised_rows)
     write_csv(artifacts["leave_one_slice_out"], loo_rows)
-    write_csv(artifacts["bootstrap_ci"], bootstrap_rows)
+    write_csv(artifacts["bootstrap_ci"], _rectangularize(bootstrap_rows))
     write_csv(artifacts["event_failure_analysis"], event_failure)
     write_csv(artifacts["event_ranking"], event_ranking)
     _write_metric_primitives_report(artifacts["metric_primitives_report"], summary_rows[0])
