@@ -18,6 +18,8 @@ DEFAULT_SUPPORT_THRESHOLDS = (10, 20, 30)
 DEFAULT_TAUS = (10, 20, 50)
 REFERENCE_WEIGHTINGS = ("uniform", "empirical")
 MISSING_POLICIES = ("overlap", "renormalize", "invalidate")
+PRIMARY_DERIVED_BALANCE = "flood_extent_bin"
+DERIVED_BALANCE_COLUMNS = ("flood_extent_bin", "invalid_pixel_ratio_bin")
 
 
 def _is_missing(value: Any) -> bool:
@@ -157,6 +159,124 @@ def _normalise_event_rows(input_dir: Path) -> tuple[list[dict[str, Any]], dict[s
             default=_metric(row, "TP", default=0.0) + _metric(row, "FP", default=0.0),
         )
     return rows, source_files
+
+
+def _ratio_bin(value: float, q1: float, q2: float, prefix: str) -> str:
+    if math.isnan(value):
+        return ""
+    if value <= q1:
+        return f"low_{prefix}"
+    if value <= q2:
+        return f"medium_{prefix}"
+    return f"high_{prefix}"
+
+
+def _quantile_edges(values: Sequence[float]) -> tuple[float, float] | None:
+    clean = [float(value) for value in values if not math.isnan(float(value))]
+    if len(clean) < 3 or len(set(clean)) < 2:
+        return None
+    q1, q2 = np.quantile(np.asarray(clean, dtype=float), [1.0 / 3.0, 2.0 / 3.0])
+    if q1 == q2:
+        unique = sorted(set(clean))
+        if len(unique) < 3:
+            return unique[0], unique[-1]
+    return float(q1), float(q2)
+
+
+def _chip_id(row: Mapping[str, Any]) -> str:
+    for key in ("sample_id", "chip_id", "unit_id"):
+        if key in row and not _is_missing(row.get(key)):
+            return str(row.get(key))
+    return ""
+
+
+def _normalise_chip_rows(input_dir: Path, meta: Mapping[str, str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    metrics_path = input_dir / "segmentation_metrics.csv"
+    if not metrics_path.exists():
+        return [], [], ["segmentation_metrics.csv is unavailable, so derived chip-level balance variables cannot be computed."]
+    raw_rows = [dict(row) for row in read_csv_rows(metrics_path)]
+    if not raw_rows:
+        return [], [], ["segmentation_metrics.csv is empty, so derived chip-level balance variables cannot be computed."]
+    resolution = _num(meta.get("resolution"), float("nan"))
+    total_pixels_from_resolution = int(resolution * resolution) if not math.isnan(resolution) and resolution > 0 else 0
+    rows: list[dict[str, Any]] = []
+    derived_rows: list[dict[str, Any]] = []
+    notes: list[str] = []
+    gt_ratios: list[float] = []
+    invalid_ratios: list[float] = []
+    invalid_available = False
+    for raw in raw_rows:
+        row = dict(raw)
+        event_id = _event_name(row)
+        valid = _metric(row, "valid_pixel_count", "valid_pixels", default=0.0)
+        positive = _metric(row, "positive_pixel_count", "positive_pixels", "n_positive_pixels", default=_metric(row, "TP", default=0.0) + _metric(row, "FN", default=0.0))
+        predicted = _metric(
+            row,
+            "predicted_positive_pixel_count",
+            "predicted_positive_pixels",
+            default=_metric(row, "TP", default=0.0) + _metric(row, "FP", default=0.0),
+        )
+        gt_ratio = _metric(row, "ground_truth_positive_pixel_ratio", "positive_pixel_ratio", default=positive / valid if valid else float("nan"))
+        invalid_count = _metric(row, "invalid_pixel_count", "invalid_pixels")
+        total_pixels = _metric(row, "total_pixel_count", "total_pixels", default=float(total_pixels_from_resolution or "nan"))
+        if math.isnan(invalid_count) and not math.isnan(total_pixels) and total_pixels > 0 and valid >= 0 and valid <= total_pixels:
+            invalid_count = max(0.0, total_pixels - valid)
+        invalid_ratio = invalid_count / total_pixels if not math.isnan(invalid_count) and not math.isnan(total_pixels) and total_pixels > 0 else float("nan")
+        if not math.isnan(invalid_ratio):
+            invalid_available = True
+            invalid_ratios.append(invalid_ratio)
+        if not math.isnan(gt_ratio):
+            gt_ratios.append(gt_ratio)
+        row.update(
+            {
+                "dataset": row.get("dataset") or meta["dataset"],
+                "model": row.get("model") or meta["model"],
+                "task": row.get("task") or meta["task"],
+                "event_id": event_id,
+                "unit_id": _chip_id(row) or event_id,
+                "sample_id": _chip_id(row) or event_id,
+                "aggregation_level": "chip",
+                "valid_pixel_count": valid,
+                "positive_pixel_count": positive,
+                "predicted_positive_pixel_count": predicted,
+                "ground_truth_positive_ratio": gt_ratio,
+                "invalid_pixel_ratio": invalid_ratio if not math.isnan(invalid_ratio) else "",
+                "input_mode": row.get("input_mode") or meta.get("input_mode", ""),
+                "adaptation_protocol": row.get("adaptation_protocol") or meta.get("adaptation_protocol", ""),
+                "training_budget": row.get("training_budget") or meta.get("training_budget", ""),
+                "split_protocol": row.get("split_protocol") or meta.get("split_protocol", ""),
+            }
+        )
+        rows.append(row)
+    flood_edges = _quantile_edges(gt_ratios)
+    invalid_edges = _quantile_edges(invalid_ratios) if invalid_available else None
+    if flood_edges is None:
+        notes.append("flood_extent_bin unavailable: fewer than two distinct ground-truth positive-ratio values.")
+    if not invalid_available:
+        notes.append("invalid_pixel_ratio_bin unavailable: invalid_pixel_count/total_pixel_count not saved and cannot be inferred reliably.")
+    elif invalid_edges is None:
+        notes.append("invalid_pixel_ratio_bin unavailable: inferred invalid ratios have too few distinct values for a meaningful balance variable.")
+    for row in rows:
+        gt_ratio = _metric(row, "ground_truth_positive_ratio")
+        invalid_ratio = _metric(row, "invalid_pixel_ratio")
+        flood_bin = _ratio_bin(gt_ratio, flood_edges[0], flood_edges[1], "flood_extent") if flood_edges else ""
+        invalid_bin = _ratio_bin(invalid_ratio, invalid_edges[0], invalid_edges[1], "invalid_ratio") if invalid_edges else ""
+        row["flood_extent_bin"] = flood_bin
+        row["invalid_pixel_ratio_bin"] = invalid_bin
+        derived_rows.append(
+            {
+                "sample_id": row.get("sample_id", ""),
+                "event_id": row.get("event_id", ""),
+                "valid_pixel_count": row.get("valid_pixel_count", ""),
+                "positive_pixel_count": row.get("positive_pixel_count", ""),
+                "ground_truth_positive_ratio": gt_ratio if not math.isnan(gt_ratio) else "",
+                "flood_extent_bin": flood_bin,
+                "invalid_pixel_ratio": invalid_ratio if not math.isnan(invalid_ratio) else "",
+                "invalid_pixel_ratio_bin": invalid_bin,
+                "notes": "; ".join(notes),
+            }
+        )
+    return rows, derived_rows, notes
 
 
 def _metadata(rows: Sequence[Mapping[str, Any]], input_dir: Path, model_debug: Mapping[str, Any]) -> dict[str, str]:
@@ -321,7 +441,93 @@ def _not_applicable_rows(kind: str, diagnostics: Sequence[Mapping[str, Any]]) ->
     return [{"analysis": kind, "status": "not_applicable", "reason": reason, "balance_diagnostics": invalid}]
 
 
-def _reference_weight_sensitivity(rows: Sequence[Mapping[str, Any]], meta: Mapping[str, str], balances: Sequence[str], diagnostics: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _available_derived_balances(rows: Sequence[Mapping[str, Any]]) -> tuple[list[str], list[dict[str, Any]]]:
+    valid: list[str] = []
+    diagnostics: list[dict[str, Any]] = []
+    columns = set(rows[0]) if rows else set()
+    for balance in DERIVED_BALANCE_COLUMNS:
+        if balance not in columns:
+            diagnostics.append({"balance_variable": balance, "n_levels": 0, "valid": False, "reason": "missing derived column"})
+            continue
+        levels = {str(row.get(balance)) for row in rows if not _is_missing(row.get(balance))}
+        invalid, reason = is_invalid_balance_variable(rows, EVENT_SLICE, balance)
+        if len(levels) < 2:
+            invalid = True
+            reason = reason or "derived balance variable has fewer than two observed levels"
+        diagnostics.append({"balance_variable": balance, "n_levels": len(levels), "valid": not invalid, "reason": reason})
+        if not invalid:
+            valid.append(balance)
+    return valid, diagnostics
+
+
+def _standardised_row(result: Any, raw_result: Any, balance: str, weighting: str, policy: str) -> dict[str, Any]:
+    summary = dict(result.summary)
+    return {
+        "analysis": "standardised_bwer",
+        "status": "computed" if not math.isnan(_num(summary.get("bwer"))) else "limited",
+        "slice_variable": EVENT_SLICE,
+        "balance_variable": balance,
+        "reference_weighting": weighting,
+        "missing_policy": policy,
+        "mean_risk": summary.get("mean_risk", ""),
+        "tail_risk": summary.get("tail_risk", ""),
+        "standardised_BWER": summary.get("bwer", ""),
+        "bwer": summary.get("bwer", ""),
+        "raw_BWER": raw_result.summary.get("bwer", ""),
+        "max_bwer": summary.get("max_bwer", ""),
+        "worst_slice": summary.get("worst_slice", ""),
+        "tail_slices": summary.get("tail_slices", ""),
+        "valid_slice_count": summary.get("n_slices_valid", ""),
+        "valid_balance_bins": summary.get("n_used_balance_levels", ""),
+        "missing_cell_count": summary.get("missing_gz_count", ""),
+        "missing_cell_fraction": summary.get("missing_gz_fraction", ""),
+        "support_definition": "segmentation event x derived-Z cells use aggregated valid pixels and TP/FP/FN counts",
+        "notes": "Standardised over measured chip-level segmentation composition; not a causal adjustment.",
+    }
+
+
+def _standardised_bwer_rows(rows: Sequence[Mapping[str, Any]], meta: Mapping[str, str], raw_result: Any, balances: Sequence[str]) -> list[dict[str, Any]]:
+    if not balances:
+        return []
+    output = []
+    for balance in balances:
+        for weighting in REFERENCE_WEIGHTINGS:
+            for policy in MISSING_POLICIES:
+                config = _config(meta, alpha=0.1, min_support=10, weighting=weighting, missing_policy=policy)
+                result = compute_bwer(rows, config, EVENT_SLICE, balance, "micro_iou", "risk")
+                output.append(_standardised_row(result, raw_result, balance, weighting, policy))
+    return output
+
+
+def _primary_standardised_summary_rows(
+    rows: Sequence[Mapping[str, Any]],
+    meta: Mapping[str, str],
+    input_dir: Path,
+    source_files: Mapping[str, Path],
+    raw_result: Any,
+    balances: Sequence[str],
+) -> list[dict[str, Any]]:
+    output = []
+    for balance in balances:
+        config = _config(meta, alpha=0.1, min_support=10, weighting="uniform", missing_policy="renormalize")
+        result = compute_bwer(rows, config, EVENT_SLICE, balance, "micro_iou", "risk")
+        row = _summary_row(result, meta, input_dir, source_files)
+        row.update(
+            {
+                "analysis_type": "standardised",
+                "balance_variable": balance,
+                "standardised_bwer": row.get("bwer", ""),
+                "raw_bwer": raw_result.summary.get("bwer", ""),
+                "valid_balance_bins": result.summary.get("n_used_balance_levels", ""),
+                "missing_cell_count": result.summary.get("missing_gz_count", ""),
+                "notes": f"Standardised-BWER(event_id | {balance}) using uniform reference and renormalize missing policy.",
+            }
+        )
+        output.append(row)
+    return output
+
+
+def _reference_weight_sensitivity(rows: Sequence[Mapping[str, Any]], meta: Mapping[str, str], balances: Sequence[str], diagnostics: Sequence[Mapping[str, Any]], raw_result: Any | None = None) -> list[dict[str, Any]]:
     if not balances:
         return _not_applicable_rows("reference_weight_sensitivity", diagnostics)
     output = []
@@ -329,11 +535,11 @@ def _reference_weight_sensitivity(rows: Sequence[Mapping[str, Any]], meta: Mappi
         for weighting in REFERENCE_WEIGHTINGS:
             config = _config(meta, alpha=0.1, min_support=10, weighting=weighting, missing_policy="renormalize")
             result = compute_bwer(rows, config, EVENT_SLICE, balance, "micro_iou", "risk")
-            output.append(_rows_from_result(result, {"reference_weighting": weighting, "standardised_bwer": True}))
+            output.append(_standardised_row(result, raw_result or result, balance, weighting, "renormalize"))
     return output
 
 
-def _missing_policy_sensitivity(rows: Sequence[Mapping[str, Any]], meta: Mapping[str, str], balances: Sequence[str], diagnostics: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _missing_policy_sensitivity(rows: Sequence[Mapping[str, Any]], meta: Mapping[str, str], balances: Sequence[str], diagnostics: Sequence[Mapping[str, Any]], raw_result: Any | None = None) -> list[dict[str, Any]]:
     if not balances:
         return _not_applicable_rows("missing_policy_sensitivity", diagnostics)
     output = []
@@ -341,7 +547,7 @@ def _missing_policy_sensitivity(rows: Sequence[Mapping[str, Any]], meta: Mapping
         for policy in MISSING_POLICIES:
             config = _config(meta, alpha=0.1, min_support=10, weighting="uniform", missing_policy=policy)
             result = compute_bwer(rows, config, EVENT_SLICE, balance, "micro_iou", "risk")
-            output.append(_rows_from_result(result, {"missing_policy": policy, "standardised_bwer": True}))
+            output.append(_standardised_row(result, raw_result or result, balance, "uniform", policy))
     return output
 
 
@@ -511,9 +717,18 @@ def _event_failure_analysis(rows: Sequence[Mapping[str, Any]], baseline: Any) ->
     return failure, ranking
 
 
-def _write_figures(output_dir: Path, event_failure: Sequence[Mapping[str, Any]], alpha_rows: Sequence[Mapping[str, Any]]) -> dict[str, Path]:
+def _write_figures(
+    output_dir: Path,
+    event_failure: Sequence[Mapping[str, Any]],
+    alpha_rows: Sequence[Mapping[str, Any]],
+    derived_rows: Sequence[Mapping[str, Any]] | None = None,
+    summary_rows: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Path]:
     paths: dict[str, Path] = {}
     try:
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
         import matplotlib.pyplot as plt
     except Exception:
         return paths
@@ -542,6 +757,67 @@ def _write_figures(output_dir: Path, event_failure: Sequence[Mapping[str, Any]],
     fig.savefig(path, dpi=160)
     plt.close(fig)
     paths["alpha_sensitivity"] = path
+    derived_rows = derived_rows or []
+    if derived_rows:
+        by_event: dict[str, list[float]] = {}
+        support: dict[tuple[str, str], int] = {}
+        for row in derived_rows:
+            event = str(row.get("event_id", ""))
+            value = _num(row.get("ground_truth_positive_ratio"))
+            if event and not math.isnan(value):
+                by_event.setdefault(event, []).append(value)
+            bin_value = str(row.get("flood_extent_bin", ""))
+            if event and bin_value:
+                support[(event, bin_value)] = support.get((event, bin_value), 0) + 1
+        if by_event:
+            risk_by_event = {str(row.get("event_id")): _num(row.get("risk")) for row in event_failure}
+            events_sorted = sorted(by_event)
+            x = [float(np.mean(by_event[event])) for event in events_sorted]
+            y = [risk_by_event.get(event, float("nan")) for event in events_sorted]
+            path = figures / "event_risk_vs_flood_extent.png"
+            fig, ax = plt.subplots(figsize=(5.8, 4))
+            ax.scatter(x, y, s=55, color="#d95f02")
+            for event, x_value, y_value in zip(events_sorted, x, y):
+                if not math.isnan(y_value):
+                    ax.annotate(event, (x_value, y_value), xytext=(4, 4), textcoords="offset points", fontsize=7)
+            ax.set_xlabel("Mean chip ground-truth positive ratio")
+            ax.set_ylabel("Event risk (1 - IoU)")
+            ax.set_title("Event risk vs flood extent composition")
+            fig.tight_layout()
+            fig.savefig(path, dpi=160)
+            plt.close(fig)
+            paths["event_risk_vs_flood_extent"] = path
+        if support:
+            events = sorted({key[0] for key in support})
+            bins = ["low_flood_extent", "medium_flood_extent", "high_flood_extent"]
+            matrix = np.asarray([[support.get((event, bin_value), 0) for bin_value in bins] for event in events], dtype=float)
+            path = figures / "event_flood_extent_support_heatmap.png"
+            fig, ax = plt.subplots(figsize=(6.5, max(3.8, len(events) * 0.32)))
+            image = ax.imshow(matrix, aspect="auto", cmap="Blues")
+            ax.set_xticks(range(len(bins)), bins, rotation=30, ha="right")
+            ax.set_yticks(range(len(events)), events)
+            ax.set_title("Event x flood_extent_bin chip support")
+            fig.colorbar(image, ax=ax, label="chips")
+            fig.tight_layout()
+            fig.savefig(path, dpi=160)
+            plt.close(fig)
+            paths["event_flood_extent_support_heatmap"] = path
+    summary_rows = summary_rows or []
+    raw = next((row for row in summary_rows if row.get("analysis_type") == "raw"), None)
+    standardised = [row for row in summary_rows if row.get("analysis_type") == "standardised"]
+    if raw and standardised:
+        labels = ["raw"] + [str(row.get("balance_variable")) for row in standardised]
+        values = [_num(raw.get("bwer"))] + [_num(row.get("bwer")) for row in standardised]
+        path = figures / "raw_vs_standardised_bwer.png"
+        fig, ax = plt.subplots(figsize=(max(5, len(labels) * 1.8), 3.8))
+        ax.bar(labels, values, color=["#4c78a8"] + ["#59a14f"] * len(standardised))
+        ax.set_ylabel("BWER")
+        ax.set_title("Raw vs standardised BWER")
+        ax.tick_params(axis="x", rotation=20)
+        fig.tight_layout()
+        fig.savefig(path, dpi=160)
+        plt.close(fig)
+        paths["raw_vs_standardised_bwer"] = path
     return paths
 
 
@@ -549,7 +825,7 @@ def _report_header(title: str) -> list[str]:
     return [f"# {title}", ""]
 
 
-def _write_metric_primitives_report(path: Path, summary: Mapping[str, Any]) -> None:
+def _write_metric_primitives_report(path: Path, summary: Mapping[str, Any], derived_notes: Sequence[str] | None = None) -> None:
     lines = _report_header("BWER-Audit v2 Metric Primitives")
     lines.extend(
         [
@@ -564,8 +840,15 @@ def _write_metric_primitives_report(path: Path, summary: Mapping[str, Any]) -> N
             "Micro IoU, Dice/F1, precision, and recall are derived from event-level aggregated counts. Chip-level macro IoU is useful as an auxiliary diagnostic but is not the sole formal BWER risk source.",
             "",
             "Segmentation support is task-aware: effective support is valid pixels, positive support is TP+FN, and predicted positive support is TP+FP.",
+            "",
+            "Derived segmentation balance variables are measured composition controls. `flood_extent_bin` is derived from chip-level ground-truth positive pixel ratio (`positive_pixel_count / valid_pixel_count`). `invalid_pixel_ratio_bin` is derived from invalid/no-data support when saved directly or safely inferable from chip resolution and valid-pixel support.",
+            "",
+            "These balance variables support composition-standardised BWER sensitivity analysis; they are not causal proof and do not replace event-held-out evaluation.",
         ]
     )
+    if derived_notes:
+        lines.extend(["", "## Derived Balance Notes", ""])
+        lines.extend(f"- {note}" for note in sorted(set(note for note in derived_notes if note)))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -607,6 +890,7 @@ def _write_split_report(path: Path, meta: Mapping[str, str]) -> None:
             "- Therefore this result should be interpreted as an in-dataset / official adapted checkpoint audit unless official train/test split overlap is verified.",
             "- Event-held-out or leave-one-event-out generalization is not yet performed by this post-hoc command.",
             "- Future paper-grade generalization claims require event-held-out or leave-one-event-out sensitivity.",
+            "- Standardisation over derived flood/no-data composition variables does not replace event-held-out evaluation.",
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -616,6 +900,7 @@ def _write_bwer_audit_report(
     path: Path,
     meta: Mapping[str, str],
     summary: Mapping[str, Any],
+    summary_rows: Sequence[Mapping[str, Any]],
     event_failure: Sequence[Mapping[str, Any]],
     reference_rows: Sequence[Mapping[str, Any]],
     missing_rows: Sequence[Mapping[str, Any]],
@@ -645,6 +930,30 @@ def _write_bwer_audit_report(
             "Limitations: this is not causal country fairness, not yet event-held-out generalization, and the official checkpoint may share training events with the evaluated hand-labeled set.",
         ]
     )
+    standardised = [row for row in summary_rows if row.get("analysis_type") == "standardised"]
+    if standardised:
+        lines.extend(["", "## Standardised-BWER", ""])
+        for row in standardised:
+            value = _num(row.get("bwer"))
+            tail = str(row.get("tail_slices", ""))
+            balance = row.get("balance_variable", "")
+            lines.append(f"- Standardised-BWER(event_id | {balance}): {value:.4f}; tail slices: {tail}; worst slice: {row.get('worst_slice', '')}.")
+            if balance == PRIMARY_DERIVED_BALANCE:
+                raw_tail = str(summary.get("tail_slices", ""))
+                if tail == raw_tail:
+                    lines.append(
+                        "  Pakistan and Bolivia remain tail slices after standardising over measured flood extent composition, so the tail-risk signal persists under this measured composition control."
+                    )
+                else:
+                    lines.append(
+                        "  Tail slices change after flood-extent standardisation, so measured flood extent composition appears to affect the event-tail ranking."
+                    )
+        lines.extend(
+            [
+                "",
+                "Interpretation is cautious: persistence after standardising over measured flood extent composition does not mean the tail risk cannot be explained by any confounder.",
+            ]
+        )
     if reference_rows and reference_rows[0].get("status") == "not_applicable":
         lines.extend(["", "Standardised-BWER is not applicable here because no meaningful non-proxy balance variable is available."])
     if missing_rows and missing_rows[0].get("status") == "not_applicable":
@@ -666,24 +975,36 @@ def run_bwer_v2_posthoc(input_dir: str | Path, output_dir: str | Path, *, bootst
         source_files["bwer_summary"] = input_path / "bwer_summary.csv"
     model_debug = _read_json_if_exists(input_path / "model_debug.json")
     meta = _metadata(event_rows, input_path, model_debug)
+    chip_rows, derived_rows, derived_notes = _normalise_chip_rows(input_path, meta)
 
     baseline = _compute_raw(event_rows, meta, alpha=0.1, min_support=10)
     bootstrap_rows = _bootstrap_ci(input_path, event_rows, meta, bootstrap, seed)
     posthoc_ci_rows = [row for row in bootstrap_rows if row.get("source") == "bwer_v2_posthoc" and row.get("status") == "computed"]
     ci = posthoc_ci_rows[-1] if posthoc_ci_rows else {}
-    summary_rows = [_summary_row(baseline, meta, input_path, source_files, ci)]
+    raw_summary = _summary_row(baseline, meta, input_path, source_files, ci)
+    raw_summary["analysis_type"] = "raw"
+    raw_summary["raw_bwer"] = raw_summary.get("bwer", "")
+    summary_rows = [raw_summary]
     alpha_rows = _alpha_sensitivity(event_rows, meta)
     support_rows = _support_sensitivity(event_rows, meta)
-    balances, balance_diagnostics = _meaningful_balance_variables(event_rows)
-    reference_rows = _reference_weight_sensitivity(event_rows, meta, balances, balance_diagnostics)
-    missing_rows = _missing_policy_sensitivity(event_rows, meta, balances, balance_diagnostics)
+    derived_balances, derived_balance_diagnostics = _available_derived_balances(chip_rows)
+    summary_rows.extend(_primary_standardised_summary_rows(chip_rows, meta, input_path, source_files, baseline, derived_balances))
+    standardised_rows = _standardised_bwer_rows(chip_rows, meta, baseline, derived_balances)
+    fallback_balances, fallback_diagnostics = _meaningful_balance_variables(event_rows)
+    balances = derived_balances or fallback_balances
+    balance_diagnostics = derived_balance_diagnostics if derived_balances else fallback_diagnostics
+    standardisation_rows = chip_rows if derived_balances else event_rows
+    reference_rows = _reference_weight_sensitivity(standardisation_rows, meta, balances, balance_diagnostics, baseline)
+    missing_rows = _missing_policy_sensitivity(standardisation_rows, meta, balances, balance_diagnostics, baseline)
     stabilised_rows = _stabilised_bwer(event_rows, meta, baseline)
     loo_rows = _leave_one_slice_out(event_rows, meta)
     event_failure, event_ranking = _event_failure_analysis(event_rows, baseline)
-    figure_paths = _write_figures(output_path, event_failure, alpha_rows)
+    figure_paths = _write_figures(output_path, event_failure, alpha_rows, derived_rows, summary_rows)
 
     artifacts = {
         "bwer_v2_summary": output_path / "bwer_v2_summary.csv",
+        "derived_balance_variables": output_path / "derived_balance_variables.csv",
+        "standardised_bwer": output_path / "standardised_bwer.csv",
         "alpha_sensitivity": output_path / "alpha_sensitivity.csv",
         "support_sensitivity": output_path / "support_sensitivity.csv",
         "reference_weight_sensitivity": output_path / "reference_weight_sensitivity.csv",
@@ -698,7 +1019,9 @@ def run_bwer_v2_posthoc(input_dir: str | Path, output_dir: str | Path, *, bootst
         "split_diagnostics_report": output_path / "split_diagnostics_report.md",
         "bwer_audit_report": output_path / "bwer_audit_report.md",
     }
-    write_csv(artifacts["bwer_v2_summary"], summary_rows)
+    write_csv(artifacts["bwer_v2_summary"], _rectangularize(summary_rows))
+    write_csv(artifacts["derived_balance_variables"], derived_rows)
+    write_csv(artifacts["standardised_bwer"], standardised_rows or _not_applicable_rows("standardised_bwer", balance_diagnostics))
     write_csv(artifacts["alpha_sensitivity"], alpha_rows)
     write_csv(artifacts["support_sensitivity"], support_rows)
     write_csv(artifacts["reference_weight_sensitivity"], reference_rows)
@@ -708,9 +1031,9 @@ def run_bwer_v2_posthoc(input_dir: str | Path, output_dir: str | Path, *, bootst
     write_csv(artifacts["bootstrap_ci"], _rectangularize(bootstrap_rows))
     write_csv(artifacts["event_failure_analysis"], event_failure)
     write_csv(artifacts["event_ranking"], event_ranking)
-    _write_metric_primitives_report(artifacts["metric_primitives_report"], summary_rows[0])
+    _write_metric_primitives_report(artifacts["metric_primitives_report"], summary_rows[0], derived_notes)
     _write_adaptation_protocol_report(artifacts["adaptation_protocol_report"], meta, model_debug)
     _write_split_report(artifacts["split_diagnostics_report"], meta)
-    _write_bwer_audit_report(artifacts["bwer_audit_report"], meta, summary_rows[0], event_failure, reference_rows, missing_rows)
+    _write_bwer_audit_report(artifacts["bwer_audit_report"], meta, summary_rows[0], summary_rows, event_failure, reference_rows, missing_rows)
     artifacts.update({f"figure_{name}": path for name, path in figure_paths.items()})
     return artifacts

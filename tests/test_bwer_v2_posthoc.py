@@ -86,7 +86,33 @@ def _write_completed_segmentation_run(root: Path) -> None:
         },
     ]
     write_csv(root / "event_segmentation_metrics.csv", rows)
-    write_csv(root / "segmentation_metrics.csv", [{"sample_id": "x", "event_id": "Pakistan", "valid_pixel_count": 512 * 512}])
+    chip_rows = []
+    positives = {
+        "Pakistan": [20, 220, 820],
+        "Bolivia": [30, 260, 780],
+        "Mekong": [40, 300, 760],
+    }
+    for event_id, values in positives.items():
+        for index, positive in enumerate(values):
+            tp = int(positive * (0.70 if event_id != "Mekong" else 0.92))
+            fn = positive - tp
+            fp = 70 if event_id == "Pakistan" else 30 if event_id == "Bolivia" else 15
+            tn = 1000 - positive - fp
+            chip_rows.append(
+                {
+                    "sample_id": f"{event_id}_{index}",
+                    "event_id": event_id,
+                    "TP": tp,
+                    "FP": fp,
+                    "FN": fn,
+                    "TN": tn,
+                    "valid_pixel_count": 1000,
+                    "positive_pixel_count": positive,
+                    "predicted_positive_pixel_count": tp + fp,
+                    "ground_truth_positive_pixel_ratio": positive / 1000,
+                }
+            )
+    write_csv(root / "segmentation_metrics.csv", chip_rows)
     write_csv(root / "bwer_summary.csv", [{"slice_variable": "event_id", "bwer": 0.1}])
     (root / "model_debug.json").write_text(
         json.dumps(
@@ -111,6 +137,8 @@ def test_run_bwer_v2_posthoc_writes_full_output_set() -> None:
 
     expected = [
         "bwer_v2_summary",
+        "derived_balance_variables",
+        "standardised_bwer",
         "alpha_sensitivity",
         "support_sensitivity",
         "reference_weight_sensitivity",
@@ -135,6 +163,11 @@ def test_run_bwer_v2_posthoc_writes_full_output_set() -> None:
     assert summary["resolution"] == "512"
     assert "valid_pixel_count" in summary["support_definition"]
     assert summary["bootstrap_method"] == "posthoc_event_bootstrap"
+    summaries = read_csv_rows(out / "bwer_v2_summary.csv")
+    assert {row["analysis_type"] for row in summaries} >= {"raw", "standardised"}
+    assert any(row["balance_variable"] == "flood_extent_bin" for row in summaries)
+    derived = read_csv_rows(out / "derived_balance_variables.csv")
+    assert derived[0]["flood_extent_bin"] == "low_flood_extent"
 
     alpha = read_csv_rows(out / "alpha_sensitivity.csv")
     assert [row["alpha"] for row in alpha] == ["0.1", "0.2", "0.3", "0.4"]
@@ -143,8 +176,9 @@ def test_run_bwer_v2_posthoc_writes_full_output_set() -> None:
     assert all(row["all_events_valid"] == "True" for row in support)
 
     reference = read_csv_rows(out / "reference_weight_sensitivity.csv")
-    assert reference[0]["status"] == "not_applicable"
-    assert "non-proxy" in reference[0]["reason"]
+    assert any(row["balance_variable"] == "flood_extent_bin" for row in reference)
+    missing = read_csv_rows(out / "missing_policy_sensitivity.csv")
+    assert any(row["balance_variable"] == "flood_extent_bin" for row in missing)
 
     failure = read_csv_rows(out / "event_failure_analysis.csv")
     pakistan = next(row for row in failure if row["event_id"] == "Pakistan")

@@ -84,6 +84,12 @@ and reports; it does not rerun model inference or re-prepare data. The final
 published zip should be the fused output directory, not a separate BWER-only
 archive.
 
+BWER v2 also derives measured segmentation composition controls from saved
+chip-level metrics. The primary Standardised-BWER control is
+`flood_extent_bin`, derived from chip-level ground-truth positive ratio. If
+invalid/no-data support is available or safely inferable, `invalid_pixel_ratio_bin`
+is also reported; otherwise it is marked unavailable.
+
 Expected full-run checks:
 
 ```text

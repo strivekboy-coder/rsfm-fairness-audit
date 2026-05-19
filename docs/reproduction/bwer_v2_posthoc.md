@@ -52,6 +52,8 @@ an auxiliary diagnostic.
 The command writes:
 
 - `bwer_v2_summary.csv`
+- `derived_balance_variables.csv`
+- `standardised_bwer.csv`
 - `alpha_sensitivity.csv`
 - `support_sensitivity.csv`
 - `reference_weight_sensitivity.csv`
@@ -68,11 +70,14 @@ The command writes:
 - `figures/event_risk_ranking.png`
 - `figures/alpha_sensitivity.png`
 
-For the current official Prithvi TL Sen1Floods11 run, Standardised-BWER and
-missing-policy sensitivity are expected to be `not_applicable` because no
-meaningful non-proxy balance variable is present. Invalid balances such as
-`event_id|event`, `event_id|event_id`, and `country|country` are not formal
-standardisation variables.
+For Sen1Floods11 native segmentation, BWER v2 derives measured chip-level
+composition controls when `segmentation_metrics.csv` is available. The primary
+derived balance variable is `flood_extent_bin`, computed from chip-level
+ground-truth positive ratio (`positive_pixel_count / valid_pixel_count`).
+`invalid_pixel_ratio_bin` is also used when invalid/no-data support is saved or
+can be safely inferred from chip size and valid-pixel support. Invalid balances
+such as `event_id|event`, `event_id|event_id`, and `country|country` are not
+formal standardisation variables.
 
 ## Colab unzip -> BWER v2 -> rezip helper
 
