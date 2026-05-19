@@ -53,9 +53,29 @@ standardisation variables.
 
 ## Colab unzip -> BWER v2 -> rezip helper
 
-This cell assumes the repository is already cloned and dependencies are
+The helper script assumes the repository is already cloned and dependencies are
 installed. It only unzips the completed output archive, runs post-hoc BWER v2,
 and writes a new enriched archive.
+
+Default Drive-backed path:
+
+```python
+!python scripts/run_bwer_v2_from_colab_zip.py
+```
+
+Manual-upload path that avoids Drive synchronization issues:
+
+```python
+!python scripts/run_bwer_v2_from_colab_zip.py \
+  --no-mount-drive \
+  --input-zip /content/prithvi_tl_sen1floods11_official_full_512.zip \
+  --output-zip /content/prithvi_tl_sen1floods11_official_full_512_with_bwer_v2.zip
+```
+
+The script injects `/content/rsfm-fairness-audit/src` into `PYTHONPATH` for the
+subprocess, so it can run from a cloned repo even before package installation.
+
+Equivalent explicit cell:
 
 ```python
 from pathlib import Path
@@ -112,4 +132,3 @@ Exact enriched output zip:
 ```text
 /content/drive/MyDrive/rsfm_fairness_audit/outputs/prithvi_tl_sen1floods11_official_full_512_with_bwer_v2.zip
 ```
-
