@@ -298,6 +298,7 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
         self.datamodule: Any | None = None
         self.load_diagnostics: dict[str, Any] = {}
         self.debug_records: list[dict[str, Any]] = []
+        self.official_inference_window_size = 512
 
     @classmethod
     def from_config(
@@ -415,7 +416,9 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
             "class_semantics": {"0": "no_water/background", "1": "water/flood", "-1": "ignore_label_in_ground_truth"},
             "expected_input_layout": "[B,6,1,H,W]",
             "expected_band_order": self.official_band_names,
-            "expected_input_size_note": "Official inference uses 512x512 sliding windows; config trains with 224x224 random crops. 224x224 is a debug-compatible crop, 512x512 is recommended for final runs if memory allows.",
+            "official_preprocessing": "scale_to_0_1_then_datamodule.test_transform_and_aug_then_restore_[B,C,1,H,W]",
+            "official_inference_window_size": self.official_inference_window_size,
+            "expected_input_size_note": "Official inference uses 512x512 sliding windows; config trains with 224x224 random crops. This adapter pads/crops through 512x512 windows to match official inference.",
         }
 
     def preprocess(self, batch: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -482,37 +485,94 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
     def _forward_segmentation(self, images: np.ndarray) -> np.ndarray:
         try:
             import torch
+            import torch.nn.functional as F
         except ImportError as exc:
             raise PrithviConfigurationError("PyTorch is required for official Prithvi Sen1Floods11 TL inference.") from exc
         array = np.asarray(images, dtype=np.float32)
         if np.nanmax(array) > 1.5:
             array = array / 10000.0
-        tensor = torch.as_tensor(array, dtype=torch.float32).permute(0, 2, 1, 3, 4).to(self._resolve_device())
+        tensor = torch.as_tensor(array, dtype=torch.float32).permute(0, 2, 1, 3, 4)
+        original_h, original_w = tensor.shape[-2:]
+        window_size = int(self.official_inference_window_size)
+        pad_h = (window_size - (original_h % window_size)) % window_size
+        pad_w = (window_size - (original_w % window_size)) % window_size
+        if pad_h or pad_w:
+            tensor = F.pad(tensor, (0, pad_w, 0, pad_h), mode="reflect")
+        batch_logits = []
+        model_inputs_seen: list[list[int]] = []
         with torch.no_grad():
-            try:
-                output = self.model(tensor, temporal_coords=None, location_coords=None)
-            except TypeError:
-                output = self.model(tensor)
+            for sample in tensor:
+                sample_logits = []
+                for top in range(0, sample.shape[-2], window_size):
+                    row_logits = []
+                    for left in range(0, sample.shape[-1], window_size):
+                        window = sample[:, :, top : top + window_size, left : left + window_size]
+                        model_input = self._prepare_official_window(window).to(self._resolve_device())
+                        model_inputs_seen.append(list(model_input.shape))
+                        try:
+                            output = self.model(model_input, temporal_coords=None, location_coords=None)
+                        except TypeError:
+                            output = self.model(model_input)
+                        logits_window = self._extract_logits(output)
+                        if hasattr(logits_window, "detach"):
+                            logits_window = logits_window.detach().cpu()
+                        logits_window = torch.as_tensor(logits_window, dtype=torch.float32)
+                        if logits_window.ndim == 5:
+                            logits_window = logits_window.mean(dim=2)
+                        if logits_window.ndim == 3:
+                            logits_window = logits_window.unsqueeze(0)
+                        if logits_window.shape[-2:] != (window_size, window_size):
+                            logits_window = F.interpolate(logits_window, size=(window_size, window_size), mode="bilinear", align_corners=False)
+                        row_logits.append(logits_window)
+                    sample_logits.append(torch.cat(row_logits, dim=-1))
+                sample_full = torch.cat(sample_logits, dim=-2)[..., :original_h, :original_w]
+                batch_logits.append(sample_full)
+        logits = torch.cat(batch_logits, dim=0).cpu().numpy().astype(np.float32)
         self.debug_records.append(
             {
                 "stage": "raw_model_output",
                 "input_array_shape_B_T_C_H_W": list(np.asarray(images).shape),
-                "model_tensor_shape_B_C_T_H_W": list(tensor.shape),
+                "scaled_input_min": float(np.nanmin(array)),
+                "scaled_input_max": float(np.nanmax(array)),
+                "scaled_input_mean": float(np.nanmean(array)),
+                "padded_tensor_shape_B_C_T_H_W": list(tensor.shape),
+                "model_window_input_shapes": model_inputs_seen[:5],
+                "official_inference_window_size": window_size,
+                "used_datamodule_transform": bool(self.datamodule is not None and hasattr(self.datamodule, "test_transform") and hasattr(self.datamodule, "aug")),
                 "input_min": float(np.nanmin(array)),
                 "input_max": float(np.nanmax(array)),
                 "input_mean": float(np.nanmean(array)),
-                "output_summary": self._summarize_output(output),
+                "output_summary": self._summarize_array(logits),
             }
         )
-        logits = self._extract_logits(output)
-        if hasattr(logits, "detach"):
-            logits = logits.detach().cpu().numpy()
-        logits = np.asarray(logits, dtype=np.float32)
-        if logits.ndim == 5:
-            logits = logits.mean(axis=2)
         if logits.ndim != 4:
             raise PrithviConfigurationError(f"Expected segmentation logits [B,C,H,W], got {logits.shape}.")
         return logits
+
+    def _prepare_official_window(self, window: Any) -> Any:
+        try:
+            import torch
+        except ImportError as exc:
+            raise PrithviConfigurationError("PyTorch is required for official Prithvi Sen1Floods11 TL inference.") from exc
+        if self.datamodule is None or not (hasattr(self.datamodule, "test_transform") and hasattr(self.datamodule, "aug")):
+            return window.unsqueeze(0)
+        # Official inference does: x.squeeze().numpy().transpose(1,2,0),
+        # datamodule.test_transform(...), datamodule.aug(...). That drops the
+        # singleton time axis; restore it before calling the TerraTorch model.
+        image = window.squeeze().cpu().numpy().transpose(1, 2, 0)
+        transformed = self.datamodule.test_transform(image=image)
+        augmented = self.datamodule.aug(transformed)
+        model_input = augmented["image"] if isinstance(augmented, Mapping) else augmented
+        if not hasattr(model_input, "detach"):
+            model_input = torch.as_tensor(model_input, dtype=torch.float32)
+        model_input = model_input.float()
+        if model_input.ndim == 3:
+            model_input = model_input.unsqueeze(0).unsqueeze(2)
+        elif model_input.ndim == 4:
+            model_input = model_input.unsqueeze(2)
+        if model_input.ndim != 5:
+            raise PrithviConfigurationError(f"Expected transformed TL input [B,C,T,H,W], got {tuple(model_input.shape)}.")
+        return model_input
 
     def _extract_logits(self, output: Any) -> Any:
         if hasattr(output, "output"):
