@@ -30,6 +30,10 @@ Keep run evidence zips in `outputs/`, named by model, dataset, scope, and resolu
 outputs/prithvi_tl_sen1floods11_official_full_512.zip
 ```
 
+For the official Sen1Floods11 TL result, this is the canonical final/public zip.
+It should contain the original segmentation output files and the `bwer_v2/`
+post-hoc analysis folder in the same run directory.
+
 Legacy roots such as `rsfm_fairness_audit_cache/` should not be used for current runs. If old artifacts are worth keeping, move them under a separate `rsfm_fairness_audit_legacy/` folder and do not mix them into the current workflow.
 
 ## What To Check Before A Full Run

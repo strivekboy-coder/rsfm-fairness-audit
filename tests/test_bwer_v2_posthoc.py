@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import uuid
 from pathlib import Path
 
 from rsfm_fairness_audit.bwer_v2 import run_bwer_v2_posthoc
@@ -100,7 +101,7 @@ def _write_completed_segmentation_run(root: Path) -> None:
 
 
 def test_run_bwer_v2_posthoc_writes_full_output_set() -> None:
-    run_dir = Path("outputs/test_bwer_v2_posthoc/prithvi_tl_sen1floods11_official_full_512")
+    run_dir = Path("outputs") / f"test_bwer_v2_posthoc_{uuid.uuid4().hex}" / "prithvi_tl_sen1floods11_official_full_512"
     if run_dir.parent.exists():
         shutil.rmtree(run_dir.parent)
     run_dir.mkdir(parents=True)
@@ -152,7 +153,7 @@ def test_run_bwer_v2_posthoc_writes_full_output_set() -> None:
 
 
 def test_run_bwer_v2_cli(monkeypatch) -> None:
-    run_dir = Path("outputs/test_bwer_v2_cli/run")
+    run_dir = Path("outputs") / f"test_bwer_v2_cli_{uuid.uuid4().hex}" / "run"
     if run_dir.parent.exists():
         shutil.rmtree(run_dir.parent)
     run_dir.mkdir(parents=True)

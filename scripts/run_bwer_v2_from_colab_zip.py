@@ -14,7 +14,7 @@ DEFAULT_RUN_NAME = "prithvi_tl_sen1floods11_official_full_512"
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Unzip a completed audit run, add BWER v2 outputs, and write a new enriched zip.")
+    parser = argparse.ArgumentParser(description="Unzip a completed audit run, add BWER v2 outputs, and write one canonical final result zip.")
     parser.add_argument(
         "--input-zip",
         type=Path,
@@ -24,7 +24,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--project-dir", type=Path, default=PROJECT_DIR, help="Cloned repository directory.")
     parser.add_argument("--content-outputs", type=Path, default=Path("/content/outputs"))
     parser.add_argument("--run-name", default=DEFAULT_RUN_NAME, help="Expected unzipped run directory name.")
-    parser.add_argument("--output-zip", type=Path, default=DRIVE_ROOT / "outputs" / f"{DEFAULT_RUN_NAME}_with_bwer_v2.zip")
+    parser.add_argument(
+        "--output-zip",
+        type=Path,
+        default=Path("/content") / f"{DEFAULT_RUN_NAME}.zip",
+        help="Canonical final result zip containing the original output files plus bwer_v2/. Defaults to /content for reliable manual download/upload.",
+    )
     parser.add_argument("--no-mount-drive", action="store_true", help="Skip Drive mounting; useful for manual uploads/downloads.")
     parser.add_argument("--bootstrap", type=int, default=1000)
     return parser

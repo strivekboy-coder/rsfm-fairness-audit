@@ -59,12 +59,15 @@ Prepared data:
 /content/drive/MyDrive/rsfm_fairness_audit/prepared_zips/sen1floods11_prithvi_tl_official_full_512.zip
 ```
 
-Output:
+Canonical final output:
 
 ```text
 /content/outputs/prithvi_tl_sen1floods11_official_full_512
 /content/drive/MyDrive/rsfm_fairness_audit/outputs/prithvi_tl_sen1floods11_official_full_512.zip
 ```
+
+The canonical output zip is the public/final result artifact. It contains the
+original segmentation audit outputs plus the post-hoc `bwer_v2/` directory.
 
 Post-hoc BWER-Audit v2 enrichment:
 
@@ -73,12 +76,13 @@ python -m rsfm_fairness_audit.cli run-bwer-v2 \
   --input-dir /content/outputs/prithvi_tl_sen1floods11_official_full_512 \
   --output-dir /content/outputs/prithvi_tl_sen1floods11_official_full_512/bwer_v2
 
-/content/drive/MyDrive/rsfm_fairness_audit/outputs/prithvi_tl_sen1floods11_official_full_512_with_bwer_v2.zip
+/content/outputs/prithvi_tl_sen1floods11_official_full_512/bwer_v2
 ```
 
 The BWER v2 step is post-hoc. It reads saved event-level segmentation metrics
-and reports; it does not rerun model inference, re-prepare data, or overwrite
-the original successful output zip.
+and reports; it does not rerun model inference or re-prepare data. The final
+published zip should be the fused output directory, not a separate BWER-only
+archive.
 
 Expected full-run checks:
 

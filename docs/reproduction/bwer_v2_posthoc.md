@@ -2,8 +2,31 @@
 
 BWER-Audit v2 is a post-hoc analysis layer for completed audit runs. It reads
 saved segmentation outputs and writes an enriched `bwer_v2/` directory. It does
-not rerun model inference, re-prepare Sen1Floods11 data, modify prepared data
-zips, or overwrite the original successful output zip.
+not rerun model inference, re-prepare Sen1Floods11 data, or modify prepared
+data zips.
+
+The canonical public result artifact is a single fused output zip named:
+
+```text
+prithvi_tl_sen1floods11_official_full_512.zip
+```
+
+That zip should contain both the original audit outputs and the `bwer_v2/`
+folder:
+
+```text
+prithvi_tl_sen1floods11_official_full_512/
+  segmentation_metrics.csv
+  event_segmentation_metrics.csv
+  bwer_summary.csv
+  ...
+  bwer_v2/
+    bwer_v2_summary.csv
+    event_failure_analysis.csv
+    bwer_audit_report.md
+    figures/
+    ...
+```
 
 ## CLI
 
@@ -55,7 +78,7 @@ standardisation variables.
 
 The helper script assumes the repository is already cloned and dependencies are
 installed. It only unzips the completed output archive, runs post-hoc BWER v2,
-and writes a new enriched archive.
+and writes one canonical final archive.
 
 Default Drive-backed path:
 
@@ -63,13 +86,18 @@ Default Drive-backed path:
 !python scripts/run_bwer_v2_from_colab_zip.py
 ```
 
+By default, the helper reads the Drive output zip and writes the fused final zip
+to `/content/prithvi_tl_sen1floods11_official_full_512.zip`. This avoids Colab
+Drive synchronization problems; download it from the Colab file panel or upload
+it manually to Drive.
+
 Manual-upload path that avoids Drive synchronization issues:
 
 ```python
 !python scripts/run_bwer_v2_from_colab_zip.py \
   --no-mount-drive \
   --input-zip /content/prithvi_tl_sen1floods11_official_full_512.zip \
-  --output-zip /content/prithvi_tl_sen1floods11_official_full_512_with_bwer_v2.zip
+  --output-zip /content/prithvi_tl_sen1floods11_official_full_512.zip
 ```
 
 The script injects `/content/rsfm-fairness-audit/src` into `PYTHONPATH` for the
@@ -90,7 +118,7 @@ INPUT_ZIP = DRIVE_ROOT / "outputs" / "prithvi_tl_sen1floods11_official_full_512.
 CONTENT_OUTPUTS = Path("/content/outputs")
 RUN_DIR = CONTENT_OUTPUTS / "prithvi_tl_sen1floods11_official_full_512"
 BWER_V2_DIR = RUN_DIR / "bwer_v2"
-ENRICHED_ZIP = DRIVE_ROOT / "outputs" / "prithvi_tl_sen1floods11_official_full_512_with_bwer_v2.zip"
+FINAL_ZIP = Path("/content/prithvi_tl_sen1floods11_official_full_512.zip")
 
 assert INPUT_ZIP.exists(), f"Missing input zip: {INPUT_ZIP}"
 CONTENT_OUTPUTS.mkdir(parents=True, exist_ok=True)
@@ -109,16 +137,16 @@ subprocess.run([
     "--output-dir", str(BWER_V2_DIR),
 ], check=True)
 
-if ENRICHED_ZIP.exists():
-    ENRICHED_ZIP.unlink()
-with zipfile.ZipFile(ENRICHED_ZIP, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+if FINAL_ZIP.exists():
+    FINAL_ZIP.unlink()
+with zipfile.ZipFile(FINAL_ZIP, "w", compression=zipfile.ZIP_DEFLATED) as zf:
     for path in RUN_DIR.rglob("*"):
         if path.is_file():
             zf.write(path, path.relative_to(CONTENT_OUTPUTS))
 
 print("Input zip:", INPUT_ZIP)
 print("BWER v2 dir:", BWER_V2_DIR)
-print("Enriched zip:", ENRICHED_ZIP)
+print("Canonical final zip:", FINAL_ZIP)
 ```
 
 Exact expected input zip:
@@ -127,8 +155,14 @@ Exact expected input zip:
 /content/drive/MyDrive/rsfm_fairness_audit/outputs/prithvi_tl_sen1floods11_official_full_512.zip
 ```
 
-Exact enriched output zip:
+Exact canonical final output zip:
 
 ```text
-/content/drive/MyDrive/rsfm_fairness_audit/outputs/prithvi_tl_sen1floods11_official_full_512_with_bwer_v2.zip
+/content/prithvi_tl_sen1floods11_official_full_512.zip
+```
+
+For long-term Drive storage, place that final zip at:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/prithvi_tl_sen1floods11_official_full_512.zip
 ```
