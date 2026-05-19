@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 import scripts.prepare_sen1floods11_subset as prep
-from rsfm_fairness_audit.adapters.prithvi import PrithviAdapter, PrithviConfigurationError
+from rsfm_fairness_audit.adapters.prithvi import PrithviAdapter, PrithviConfigurationError, PrithviSen1Floods11TLAdapter
 from rsfm_fairness_audit.adapters.sen1floods11 import Sen1Floods11DatasetAdapter
 from rsfm_fairness_audit.cli import build_parser
 from rsfm_fairness_audit.io import read_csv_rows
@@ -21,6 +21,25 @@ class MockPrithviModel:
 
     def extract_patch_features(self, images: np.ndarray) -> np.ndarray:
         return images.mean(axis=1).astype(np.float32)
+
+
+class MockPrithviTLModel:
+    def eval(self) -> None:
+        return None
+
+    def predict_segmentation(self, batch):
+        images = batch["images"]
+        # Make water probability high in the same top-left area
+        # used by odd fixture masks so tests exercise the official-prediction path.
+        batch_size, _, _, height, width = images.shape
+        score_maps = np.full((batch_size, height, width), 0.1, dtype=np.float32)
+        score_maps[:, :40, :40] = 0.9
+        predictions = (score_maps >= 0.5).astype(np.int16)
+        return {
+            "predictions": predictions,
+            "score_maps": score_maps,
+            "confidence": np.maximum(score_maps, 1.0 - score_maps),
+        }
 
 
 def _write_prepared_fixture(root: Path, count: int = 6) -> Path:
@@ -161,6 +180,22 @@ def test_run_segmentation_smoke_writes_artifacts() -> None:
         "ndwi_like_b03_b07_positive",
     } <= baselines
     assert any(row["event_id"] == "__overall__" for row in comparison)
+
+
+def test_run_segmentation_with_official_tl_adapter_preserves_protocol_metadata() -> None:
+    root = Path("outputs/test_prithvi_tl_seg")
+    _write_prepared_fixture(root, count=4)
+    dataset = Sen1Floods11DatasetAdapter(root, subset_size=4)
+    model = PrithviSen1Floods11TLAdapter(model=MockPrithviTLModel())
+    artifacts = run_segmentation_smoke(dataset, model, "outputs/test_prithvi_tl_seg_run")
+    rows = read_csv_rows(artifacts["segmentation_metrics"])
+    event_rows = read_csv_rows(artifacts["event_segmentation_metrics"])
+    assert rows[0]["model"] == "prithvi_tl_sen1floods11"
+    assert rows[0]["model_family"] == "Prithvi"
+    assert rows[0]["adaptation_protocol"] == "task_adapted_decoder"
+    assert rows[0]["training_budget"] == "official_sen1floods11_finetune"
+    assert rows[0]["confidence_source"] == "max_softmax_probability"
+    assert event_rows[0]["adaptation_protocol"] == "task_adapted_decoder"
 
 
 def test_prepare_sen1floods11_maps_13_band_s2_to_prithvi_shape(monkeypatch) -> None:
@@ -319,8 +354,22 @@ def test_prithvi_cli_commands_exist() -> None:
             "configs/models/prithvi.yaml",
         ]
     )
+    tl_seg_args = parser.parse_args(
+        [
+            "run-segmentation-real",
+            "--dataset",
+            "sen1floods11",
+            "--model",
+            "prithvi_tl_sen1floods11",
+            "--data-root",
+            "data/sen1",
+            "--model-config",
+            "configs/models/prithvi_tl_sen1floods11.yaml",
+        ]
+    )
     assert run_args.model == "prithvi"
     assert seg_args.command == "run-segmentation-real"
+    assert tl_seg_args.model == "prithvi_tl_sen1floods11"
 
 
 def test_prithvi_requirements_pin_numpy_below_numba_limit() -> None:
@@ -332,3 +381,9 @@ def test_prithvi_config_uses_current_terratorch_registry_name() -> None:
     text = Path("configs/models/prithvi.yaml").read_text(encoding="utf-8")
     assert "hf_model_id: ibm-nasa-geospatial/Prithvi-EO-2.0-300M" in text
     assert "terratorch_model_name: terratorch_prithvi_eo_v2_300" in text
+
+
+def test_prithvi_tl_sen1floods11_config_uses_official_hf_model() -> None:
+    text = Path("configs/models/prithvi_tl_sen1floods11.yaml").read_text(encoding="utf-8")
+    assert "hf_model_id: ibm-nasa-geospatial/Prithvi-EO-2.0-300M-TL-Sen1Floods11" in text
+    assert "adaptation_protocol: task_adapted_decoder" in text

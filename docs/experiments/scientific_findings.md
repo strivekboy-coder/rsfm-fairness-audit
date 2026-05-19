@@ -29,3 +29,32 @@ This provides paper-prep evidence that average performance can hide event-level 
 
 Limitations:
 This is still chip-level classification sanity evidence, not final pixel-level segmentation fairness. It should motivate segmentation-level and cross-model follow-up rather than be treated as the final main result.
+
+## Sen1Floods11 Native Segmentation Readiness Diagnostics
+
+Recorded: 2026-05-19.
+
+The native Sen1Floods11 segmentation audit pipeline now prepares the hand-labeled Sentinel-2/LabelHand path and writes pixel-count-based event metrics for BWER. A full prepared run confirmed 446 chips and 11 `event_id` slices, matching the official hand-labeled Sen1Floods11 scale used by the Prithvi TL Sen1Floods11 model card.
+
+Step A diagnostics on a 64-chip validation subset found that the prepared inputs are internally consistent:
+- Band order is `B02,B03,B04,B05,B06,B07`.
+- Label values are the expected `-1`, `0`, and `1`.
+- Mask and prediction grids are aligned at the prepared resolution.
+- A small number of zero-valid chips can appear and should be tracked, but event-level aggregation from valid pixels remains well-defined.
+
+The very low IoU from the frozen non-TL Prithvi threshold head is therefore not evidence that the dataset loader, label polarity, or mask alignment is broken. It is evidence that the transparent readiness head is not a competitive flood segmentation model.
+
+Step B diagnostic baselines on the same 64-chip subset strengthen this interpretation:
+- `mean_threshold_high_positive`, the original frozen threshold convention, produced overall micro IoU around 0.028.
+- The inverted threshold improved but still behaved like a diagnostic polarity test, not a defensible model.
+- NDWI-like baselines using B03 against B06/B07 produced much higher overall micro IoU, with B03/B06 around 0.63 and B03/B07 around 0.50 on the validation subset.
+
+Interpretation:
+The prepared Sen1Floods11 native segmentation data path is plausible, and the official task-adapted segmentation checkpoint is the correct next formal experiment. Diagnostic NDWI-like baselines should be retained for sanity checks and appendix-level troubleshooting only; they should not be presented as the main RSFM fairness result.
+
+Current protocol decision:
+- `prithvi` remains the frozen non-TL smoke/diagnostic path and is labeled `frozen_encoder_lightweight_head`.
+- `prithvi_tl_sen1floods11` is the formal Prithvi Sen1Floods11 route and is labeled `task_adapted_decoder` with `training_budget=official_sen1floods11_finetune`.
+
+Remaining limitations:
+The current prepared data cache may contain 224x224 resized chips for Colab-friendly validation. For final paper-grade reporting, the official task-adapted decoder should be run with a deliberately chosen prepared resolution and the report should state that resolution explicitly.

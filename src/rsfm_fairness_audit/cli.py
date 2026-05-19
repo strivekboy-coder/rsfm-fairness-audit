@@ -41,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     real = subparsers.add_parser("run-real", help="Run a subset-first real dataset/model smoke audit.")
     real.add_argument("--dataset", choices=["bigearthnet", "ben_ge", "sen1floods11"], required=True)
-    real.add_argument("--model", choices=["dofa", "croma", "prithvi"], required=True)
+    real.add_argument("--model", choices=["dofa", "croma", "prithvi", "prithvi_tl_sen1floods11"], required=True)
     real.add_argument("--data-root", "--dataset-root", dest="data_root", type=Path, required=True)
     real.add_argument("--metadata-path", type=Path)
     real.add_argument("--subset-size", "--max-samples", dest="subset_size", type=int)
@@ -65,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     check = subparsers.add_parser("check-real", help="Preflight-check a real dataset/model smoke run.")
     check.add_argument("--dataset", choices=["bigearthnet", "ben_ge", "sen1floods11"], required=True)
-    check.add_argument("--model", choices=["dofa", "croma", "prithvi"], required=True)
+    check.add_argument("--model", choices=["dofa", "croma", "prithvi", "prithvi_tl_sen1floods11"], required=True)
     check.add_argument("--model-config", type=Path, required=True)
     check.add_argument("--data-root", type=Path, required=True)
     check.add_argument("--metadata-path", type=Path)
@@ -96,7 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     seg = subparsers.add_parser("run-segmentation-real", help="Run native Sen1Floods11 segmentation metrics, preflight, and BWER audit.")
     seg.add_argument("--dataset", choices=["sen1floods11"], required=True)
-    seg.add_argument("--model", choices=["prithvi"], required=True)
+    seg.add_argument("--model", choices=["prithvi", "prithvi_tl_sen1floods11"], required=True)
     seg.add_argument("--data-root", "--dataset-root", dest="data_root", type=Path, required=True)
     seg.add_argument("--metadata-path", type=Path)
     seg.add_argument("--subset-size", "--max-samples", dest="subset_size", type=int)

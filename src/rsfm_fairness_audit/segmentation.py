@@ -112,6 +112,22 @@ def _predict_from_features(features: np.ndarray) -> np.ndarray:
     return (score >= threshold).astype(np.int16)
 
 
+def _segmentation_model_name(model: Any) -> str:
+    return str(getattr(model, "protocol_model_name", "prithvi"))
+
+
+def _segmentation_model_metadata(model: Any) -> dict[str, Any]:
+    return {
+        "model": _segmentation_model_name(model),
+        "model_family": str(getattr(model, "model_family", "Prithvi")),
+        "input_mode": str(getattr(model, "input_mode", "S2")),
+        "adaptation_protocol": str(getattr(model, "adaptation_protocol", "frozen_encoder_lightweight_head")),
+        "training_budget": str(getattr(model, "training_budget", "unsupervised_threshold_head")),
+        "split_protocol": str(getattr(model, "split_protocol", "standard_split")),
+        "checkpoint_source": str(getattr(model, "checkpoint_source", "project_config")),
+    }
+
+
 def _ndwi_score(raw_image: np.ndarray, nir_band_index: int) -> np.ndarray:
     image = np.asarray(raw_image, dtype=np.float32)
     if image.ndim == 4:
@@ -212,6 +228,7 @@ def aggregate_segmentation_metrics(
         row: dict[str, Any] = {
             "dataset": first.get("dataset", "sen1floods11"),
             "model": first.get("model", "prithvi"),
+            "model_family": first.get("model_family", ""),
             "task": "segmentation",
             "split": first.get("split", "all"),
             "unit_id": group,
@@ -225,6 +242,7 @@ def aggregate_segmentation_metrics(
             "adaptation_protocol": first.get("adaptation_protocol", "frozen_encoder_lightweight_head"),
             "training_budget": first.get("training_budget", "unsupervised_threshold_head"),
             "split_protocol": first.get("split_protocol", "standard_split"),
+            "checkpoint_source": first.get("checkpoint_source", ""),
             "aggregation_level": aggregation_level,
             "sample_count": len(items),
             "TP_plus_FN_support": counts["TP"] + counts["FN"],
@@ -232,7 +250,7 @@ def aggregate_segmentation_metrics(
             **metrics,
             "score": metrics["micro_iou"],
         }
-        for key in ["month", "season", "sensor", "label_source"]:
+        for key in ["month", "season", "sensor", "label_source", "mean_confidence", "confidence_source"]:
             if key in first:
                 row[key] = first[key]
         output.append(row)
@@ -354,6 +372,7 @@ def run_segmentation_smoke(
     tables = ensure_dir(output / "tables")
     metadata = dataset.load_metadata()
     model.load_model()
+    model_metadata = _segmentation_model_metadata(model)
     batch_size = batch_size or int(getattr(model, "batch_size", 2))
     metric_rows: list[dict[str, Any]] = []
     diagnostic_rows: list[dict[str, Any]] = []
@@ -361,12 +380,21 @@ def run_segmentation_smoke(
         indices = list(range(start, min(start + batch_size, len(metadata))))
         samples = [dataset.load_sample(index) for index in indices]
         batch = model.preprocess({"samples": samples, "metadata": [metadata[index] for index in indices]})
-        features = model.segmentation_features(batch)
+        if hasattr(model, "predict_segmentation"):
+            segmentation_output = model.predict_segmentation(batch)
+            features = np.asarray(segmentation_output["score_maps"], dtype=np.float32)[:, None, :, :]
+            predictions = np.asarray(segmentation_output["predictions"], dtype=np.int16)
+            confidences = segmentation_output.get("confidence")
+        else:
+            segmentation_output = None
+            features = model.segmentation_features(batch)
+            predictions = None
+            confidences = None
         masks = batch["masks"]
         for local_index, dataset_index in enumerate(indices):
             score_map = _score_map_from_features(features[local_index])
             threshold = float(np.nanmean(score_map))
-            prediction = (score_map >= threshold).astype(np.int16)
+            prediction = predictions[local_index] if predictions is not None else (score_map >= threshold).astype(np.int16)
             mask = masks[local_index].astype(np.int16)
             counts = segmentation_confusion_counts(mask, prediction)
             metrics = segmentation_metrics_from_counts(counts)
@@ -385,12 +413,14 @@ def run_segmentation_smoke(
             row.update(
                 {
                     "dataset": "sen1floods11",
-                    "model": "prithvi",
+                    "model": model_metadata["model"],
+                    "model_family": model_metadata["model_family"],
                     "task": "segmentation",
-                    "input_mode": "S2",
-                    "adaptation_protocol": "frozen_encoder_lightweight_head",
-                    "training_budget": "unsupervised_threshold_head",
-                    "split_protocol": "standard_split",
+                    "input_mode": model_metadata["input_mode"],
+                    "adaptation_protocol": model_metadata["adaptation_protocol"],
+                    "training_budget": model_metadata["training_budget"],
+                    "split_protocol": model_metadata["split_protocol"],
+                    "checkpoint_source": model_metadata["checkpoint_source"],
                     "aggregation_level": "chip",
                     "unit_id": row.get("sample_id"),
                     "class_label": "water",
@@ -401,6 +431,11 @@ def run_segmentation_smoke(
                     "score": metrics["micro_iou"],
                 }
             )
+            if confidences is not None:
+                confidence = np.asarray(confidences[local_index], dtype=np.float32)
+                valid = mask >= 0
+                row["mean_confidence"] = float(np.nanmean(confidence[valid])) if np.any(valid) else float("nan")
+                row["confidence_source"] = "max_softmax_probability"
             metric_rows.append(row)
             for baseline_name, baseline_prediction in diagnostic_baseline_predictions(features[local_index], batch["raw_images"][local_index]).items():
                 baseline_counts = segmentation_confusion_counts(mask, baseline_prediction)
@@ -469,7 +504,7 @@ def run_segmentation_smoke(
     preflight = evaluate_slice_support(
         audit_rows,
         dataset="sen1floods11",
-        model="prithvi",
+        model=model_metadata["model"],
         task="segmentation",
         output_dir=output,
         candidates=["event_id", "event_id|event", "event_id|month", "event_id|season", "country|country"],
@@ -482,7 +517,7 @@ def run_segmentation_smoke(
         bwer = evaluate_bwer_table(
             audit_rows,
             dataset="sen1floods11",
-            model="prithvi",
+            model=model_metadata["model"],
             task="segmentation",
             output_dir=output,
             slice_variable="event_id",
@@ -497,7 +532,7 @@ def run_segmentation_smoke(
         (output / "bwer_not_runnable.txt").write_text(str(exc) + "\n", encoding="utf-8")
         artifacts["bwer_not_runnable"] = output / "bwer_not_runnable.txt"
     report_path = artifacts["report"] if "bwer_not_runnable" in artifacts else artifacts["segmentation_report"]
-    _write_report(report_path, region_rows, event_rows, event_metric_rows)
+    _write_report(report_path, region_rows, event_rows, event_metric_rows, model_metadata)
     return artifacts
 
 
@@ -535,11 +570,33 @@ def _write_report(
     region_rows: list[dict[str, Any]],
     event_rows: list[dict[str, Any]],
     event_metric_rows: list[dict[str, Any]],
+    model_metadata: dict[str, Any],
 ) -> None:
+    if model_metadata.get("adaptation_protocol") == "task_adapted_decoder":
+        protocol_note = (
+            "This run uses the official Prithvi-EO-2.0-300M-TL-Sen1Floods11 segmentation fine-tune with a "
+            "task-adapted decoder. The protocol is recorded as `task_adapted_decoder` and the training budget as "
+            "`official_sen1floods11_finetune`."
+        )
+        fallback_note = (
+            "This is the intended formal Prithvi Sen1Floods11 segmentation route. Diagnostic baselines are still "
+            "written for sanity checks, but they are not the model reported for BWER."
+        )
+    else:
+        protocol_note = (
+            "This run uses Prithvi-EO-2.0-300M non-TL as a frozen encoder with a lightweight unsupervised threshold "
+            "head. The protocol is recorded as `frozen_encoder_lightweight_head`; it is a readiness path for native "
+            "pixel-level audit, not a supervised flood fine-tune."
+        )
+        fallback_note = (
+            "If the loaded Prithvi backbone does not expose dense patch features, this path uses a transparent "
+            "normalized-spectral fallback. Those fallback numbers validate pipeline wiring only and should not be "
+            "interpreted as Prithvi segmentation quality."
+        )
     lines = [
         "# Prithvi-EO-2.0 Sen1Floods11 Native Segmentation Audit",
         "",
-        "This run uses Prithvi-EO-2.0-300M non-TL as a frozen encoder with a lightweight unsupervised threshold head. The protocol is recorded as `frozen_encoder_lightweight_head`; it is a readiness path for native pixel-level audit, not a supervised flood fine-tune.",
+        protocol_note,
         "",
         "The native segmentation audit ignores hand-label mask pixels with value -1 and computes event-level IoU/Dice/F1/precision/recall from aggregated TP/FP/FN/TN counts.",
         "",
@@ -547,7 +604,7 @@ def _write_report(
         "",
         "Chip-level Sen1Floods11 classification is a sanity audit. Native pixel-level Sen1Floods11 segmentation is the paper-grade disaster/event fairness path. Here, `event_id` is an operational disaster-event slice, not a causal country fairness attribute.",
         "",
-        "If the loaded Prithvi backbone does not expose dense patch features, this path uses a transparent normalized-spectral fallback. Those fallback numbers validate pipeline wiring only and should not be interpreted as Prithvi segmentation quality.",
+        fallback_note,
         "",
         "## Region Groups",
         "",

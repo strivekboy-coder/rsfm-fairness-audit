@@ -244,3 +244,244 @@ class PrithviAdapter(ModelAdapter):
 
     def get_supported_modalities(self) -> Sequence[str]:
         return ("HLS", "S2_6B_COMPAT")
+
+
+class PrithviSen1Floods11TLAdapter(PrithviAdapter):
+    """Official Prithvi-EO-2.0 Sen1Floods11 segmentation fine-tune adapter."""
+
+    official_hf_model_id = "ibm-nasa-geospatial/Prithvi-EO-2.0-300M-TL-Sen1Floods11"
+    official_checkpoint_name = "Prithvi-EO-V2-300M-TL-Sen1Floods11.pt"
+    accepted_model_names = (official_hf_model_id,)
+    protocol_model_name = "prithvi_tl_sen1floods11"
+    model_family = "Prithvi"
+    adaptation_protocol = "task_adapted_decoder"
+    training_budget = "official_sen1floods11_finetune"
+    checkpoint_source = "official_huggingface"
+
+    def __init__(
+        self,
+        hf_model_id: str = official_hf_model_id,
+        terratorch_model_name: str | None = None,
+        allow_hf_download: bool = False,
+        device: str = "cpu",
+        batch_size: int = 1,
+        expected_frames: int = 1,
+        expected_bands: int = 6,
+        image_size: int = 224,
+        band_names: Sequence[str] | None = None,
+        normalization_mean: Sequence[float] | None = None,
+        normalization_std: Sequence[float] | None = None,
+        checkpoint_path: str | Path | None = None,
+        terratorch_config_path: str | Path | None = None,
+        model: Any | None = None,
+        model_loader: Callable[[], Any] | None = None,
+    ) -> None:
+        super().__init__(
+            hf_model_id=hf_model_id,
+            terratorch_model_name=terratorch_model_name or hf_model_id,
+            allow_hf_download=allow_hf_download,
+            device=device,
+            batch_size=batch_size,
+            expected_frames=expected_frames,
+            expected_bands=expected_bands,
+            image_size=image_size,
+            band_names=band_names or self.official_band_names,
+            normalization_mean=normalization_mean or [0.0] * expected_bands,
+            normalization_std=normalization_std or [1.0] * expected_bands,
+            model=model,
+            model_loader=model_loader,
+        )
+        self.checkpoint_path = Path(checkpoint_path) if checkpoint_path else None
+        self.terratorch_config_path = Path(terratorch_config_path) if terratorch_config_path else None
+
+    @classmethod
+    def from_config(
+        cls,
+        data: Mapping[str, Any],
+        model: Any | None = None,
+        model_loader: Callable[[], Any] | None = None,
+    ) -> "PrithviSen1Floods11TLAdapter":
+        return cls(
+            hf_model_id=str(data.get("hf_model_id", cls.official_hf_model_id)),
+            terratorch_model_name=data.get("terratorch_model_name"),
+            allow_hf_download=bool(data.get("allow_hf_download", False)),
+            device=str(data.get("device", "cpu")),
+            batch_size=int(data.get("batch_size", 1)),
+            expected_frames=int(data.get("expected_frames", 1)),
+            expected_bands=int(data.get("expected_bands", 6)),
+            image_size=int(data.get("image_size", 224)),
+            band_names=data.get("band_names"),
+            checkpoint_path=data.get("checkpoint_path"),
+            terratorch_config_path=data.get("terratorch_config_path") or data.get("config_path"),
+            model=model,
+            model_loader=model_loader,
+        )
+
+    def load_model(self) -> None:
+        self._validate_config()
+        if self.model is not None:
+            self._maybe_eval()
+            return
+        if self.model_loader is not None:
+            self.model = self.model_loader()
+            self.model = self._unwrap_lightning_inference(self.model)
+            self._maybe_eval()
+            return
+        if self.terratorch_config_path and self.checkpoint_path:
+            try:
+                from terratorch.cli_tools import LightningInferenceModel
+            except ImportError as exc:
+                raise PrithviConfigurationError("TerraTorch is required for official Prithvi Sen1Floods11 TL loading.") from exc
+            inference_model = LightningInferenceModel.from_config(str(self.terratorch_config_path), str(self.checkpoint_path))
+            self.model = self._unwrap_lightning_inference(inference_model)
+            self._maybe_eval()
+            return
+        if not self.allow_hf_download:
+            raise PrithviConfigurationError(
+                "Official Prithvi Sen1Floods11 TL loading is disabled. Set allow_hf_download: true, "
+                "or provide terratorch_config_path plus checkpoint_path, or inject a mock model in tests."
+            )
+        try:
+            from terratorch.registry import BACKBONE_REGISTRY
+        except ImportError as exc:
+            raise PrithviConfigurationError("TerraTorch is required for official Prithvi Sen1Floods11 TL loading.") from exc
+        self.model = BACKBONE_REGISTRY.build(self.terratorch_model_name)
+        self.model = self._move_to_device(self.model)
+        self._maybe_eval()
+
+    def _validate_config(self) -> None:
+        if self.hf_model_id != self.official_hf_model_id:
+            raise PrithviConfigurationError(
+                f"Official Sen1Floods11 TL runs use {self.official_hf_model_id!r}; got {self.hf_model_id!r}."
+            )
+        if self.terratorch_model_name not in self.accepted_model_names:
+            raise PrithviConfigurationError(
+                f"Prithvi Sen1Floods11 TL model name must be {self.official_hf_model_id!r}; got {self.terratorch_model_name!r}."
+            )
+        if self.expected_frames < 1 or self.expected_bands != 6:
+            raise PrithviConfigurationError("Prithvi Sen1Floods11 TL expects at least one timestamp and six optical bands.")
+        if self.band_names != self.official_band_names:
+            raise PrithviConfigurationError(f"Prithvi band_names must match official config: {self.official_band_names}.")
+
+    def _unwrap_lightning_inference(self, model: Any) -> Any:
+        if hasattr(model, "model"):
+            wrapped = model.model
+            if hasattr(wrapped, "device"):
+                self._torch_device = wrapped.device
+            return wrapped
+        return self._move_to_device(model)
+
+    def preprocess(self, batch: Mapping[str, Any]) -> Mapping[str, Any]:
+        self._validate_config()
+        samples = list(batch["samples"])
+        arrays = []
+        masks = []
+        for sample in samples:
+            image = np.asarray(sample["image"], dtype=np.float32)
+            if image.ndim == 3:
+                image = image[None, :, :, :]
+            if image.ndim != 4 or image.shape[1] != self.expected_bands:
+                raise PrithviConfigurationError(f"Expected Prithvi TL image [T,6,H,W], got {image.shape}.")
+            if image.shape[0] > self.expected_frames:
+                image = image[: self.expected_frames]
+            elif image.shape[0] < self.expected_frames:
+                image = np.repeat(image[:1], self.expected_frames, axis=0)
+            arrays.append(image)
+            if "mask" in sample:
+                masks.append(np.asarray(sample["mask"]))
+        images = np.stack(arrays).astype(np.float32)
+        result: dict[str, Any] = {
+            "images": images,
+            "raw_images": images.copy(),
+            "metadata": batch["metadata"],
+        }
+        if masks:
+            result["masks"] = np.stack(masks)
+        return result
+
+    def predict_segmentation(self, batch: Mapping[str, Any]) -> dict[str, np.ndarray]:
+        if self.model is None:
+            raise RuntimeError("load_model() must be called before predict_segmentation().")
+        if hasattr(self.model, "predict_segmentation"):
+            output = self.model.predict_segmentation(batch)
+            return {
+                "predictions": np.asarray(output["predictions"], dtype=np.int16),
+                "score_maps": np.asarray(output["score_maps"], dtype=np.float32),
+                "confidence": np.asarray(output.get("confidence", output["score_maps"]), dtype=np.float32),
+                **({"probabilities": np.asarray(output["probabilities"], dtype=np.float32)} if "probabilities" in output else {}),
+            }
+        logits = self._forward_segmentation(batch["images"])
+        target_shape = tuple(np.asarray(batch["masks"]).shape[-2:]) if "masks" in batch else tuple(logits.shape[-2:])
+        logits = self._resize_logits(logits, target_shape)
+        probabilities = self._softmax(logits, axis=1)
+        predictions = np.argmax(probabilities, axis=1).astype(np.int16)
+        return {
+            "predictions": predictions,
+            "score_maps": probabilities[:, 1, :, :].astype(np.float32),
+            "confidence": np.max(probabilities, axis=1).astype(np.float32),
+            "probabilities": probabilities.astype(np.float32),
+        }
+
+    def _forward_segmentation(self, images: np.ndarray) -> np.ndarray:
+        try:
+            import torch
+        except ImportError as exc:
+            raise PrithviConfigurationError("PyTorch is required for official Prithvi Sen1Floods11 TL inference.") from exc
+        array = np.asarray(images, dtype=np.float32)
+        if np.nanmax(array) > 1.5:
+            array = array / 10000.0
+        tensor = torch.as_tensor(array, dtype=torch.float32).permute(0, 2, 1, 3, 4).to(self._resolve_device())
+        with torch.no_grad():
+            try:
+                output = self.model(tensor, temporal_coords=None, location_coords=None)
+            except TypeError:
+                output = self.model(tensor)
+        logits = self._extract_logits(output)
+        if hasattr(logits, "detach"):
+            logits = logits.detach().cpu().numpy()
+        logits = np.asarray(logits, dtype=np.float32)
+        if logits.ndim == 5:
+            logits = logits.mean(axis=2)
+        if logits.ndim != 4:
+            raise PrithviConfigurationError(f"Expected segmentation logits [B,C,H,W], got {logits.shape}.")
+        return logits
+
+    def _extract_logits(self, output: Any) -> Any:
+        if hasattr(output, "output"):
+            return output.output
+        if isinstance(output, Mapping):
+            for key in ["output", "logits", "prediction", "pred"]:
+                if key in output:
+                    return output[key]
+            return next(iter(output.values()))
+        if isinstance(output, (tuple, list)):
+            return output[0]
+        return output
+
+    def _resize_logits(self, logits: np.ndarray, target_shape: tuple[int, int]) -> np.ndarray:
+        if tuple(logits.shape[-2:]) == target_shape:
+            return logits
+        try:
+            import torch
+            import torch.nn.functional as F
+        except ImportError as exc:
+            raise PrithviConfigurationError("PyTorch is required to resize Prithvi TL logits.") from exc
+        tensor = torch.as_tensor(logits, dtype=torch.float32)
+        resized = F.interpolate(tensor, size=target_shape, mode="bilinear", align_corners=False)
+        return resized.cpu().numpy().astype(np.float32)
+
+    def _softmax(self, logits: np.ndarray, axis: int) -> np.ndarray:
+        shifted = logits - np.nanmax(logits, axis=axis, keepdims=True)
+        exp = np.exp(shifted)
+        return exp / np.maximum(exp.sum(axis=axis, keepdims=True), 1e-8)
+
+    def extract_embeddings(self, batch: Mapping[str, Any]) -> np.ndarray:
+        prediction = self.predict_segmentation(batch)
+        return prediction["score_maps"].mean(axis=(1, 2), keepdims=False).reshape(-1, 1)
+
+    def segmentation_features(self, batch: Mapping[str, Any]) -> np.ndarray:
+        prediction = self.predict_segmentation(batch)
+        return prediction["score_maps"][:, None, :, :]
+
+    def get_supported_modalities(self) -> Sequence[str]:
+        return ("S2", "S2_6B_SEN1FLOODS11")

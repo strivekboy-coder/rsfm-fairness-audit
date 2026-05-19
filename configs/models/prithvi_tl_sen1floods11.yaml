@@ -1,0 +1,19 @@
+hf_model_id: ibm-nasa-geospatial/Prithvi-EO-2.0-300M-TL-Sen1Floods11
+terratorch_model_name: ibm-nasa-geospatial/Prithvi-EO-2.0-300M-TL-Sen1Floods11
+allow_hf_download: true
+device: auto
+batch_size: 1
+expected_frames: 1
+expected_bands: 6
+image_size: 224
+band_names:
+  - B02
+  - B03
+  - B04
+  - B05
+  - B06
+  - B07
+adaptation_protocol: task_adapted_decoder
+training_budget: official_sen1floods11_finetune
+split_protocol: standard_split
+checkpoint_source: official_huggingface

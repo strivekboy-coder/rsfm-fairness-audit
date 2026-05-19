@@ -130,11 +130,13 @@ models:
 
   prithvi-eo-2.0:
     status: verified
-    role_in_project: Third real RSFM target; frozen Prithvi-EO-2.0-300M non-TL backbone for Sen1Floods11 flood fairness smoke tests.
+    role_in_project: Third real RSFM target; non-TL Prithvi-EO-2.0-300M for sanity/diagnostics plus official Prithvi-EO-2.0-300M-TL-Sen1Floods11 for native flood segmentation.
     priority: third_real_model
     official_paper_url: https://arxiv.org/abs/2412.02732
     official_repo_url: https://github.com/NASA-IMPACT/Prithvi-EO-2.0
-    huggingface_model_url: https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-300M
+    huggingface_model_url:
+      non_tl_backbone: https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-300M
+      sen1floods11_tl_segmentation: https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-300M-TL-Sen1Floods11
     demo_or_colab_url:
       - https://huggingface.co/spaces/ibm-nasa-geospatial/Prithvi-EO-2.0-Demo
       - https://huggingface.co/spaces/ibm-nasa-geospatial/Prithvi-EO-2.0-Sen1Floods11-demo
@@ -146,6 +148,7 @@ models:
       note: compatibility shim only; not a real temporal experiment
     expected_input_bands:
       hls_band_order: [B02, B03, B04, B05, B06, B07]
+      tl_sen1floods11_band_order: [BLUE, GREEN, RED, NIR_NARROW, SWIR_1, SWIR_2]
       channel_count: 6
       sen1floods11_mapping: select B02-B07 from 13-band Sentinel-2 GeoTIFF before resizing/repeating
     expected_spatial_resolution: 30m_for_pretraining_hls_samples
@@ -163,20 +166,24 @@ models:
     checkpoint_loading_plan:
       - use ibm-nasa-geospatial/Prithvi-EO-2.0-300M through TerraTorch/Hugging Face
       - allow_hf_download true in Colab config for official checkpoint retrieval
-      - do not use 300M-TL-Sen1Floods11 fine-tuned weights in this phase
+      - use ibm-nasa-geospatial/Prithvi-EO-2.0-300M-TL-Sen1Floods11 for the formal native segmentation audit
+      - label non-TL runs as frozen_encoder_lightweight_head and TL-Sen1Floods11 runs as task_adapted_decoder
     first_minimal_reproduction_target: Run 64-sample Sen1Floods11 chip-level classification sanity plus segmentation fairness smoke.
     adapter_integration_plan:
       - load TerraTorch backbone from HF ID
       - validate [T=4, C=6, H=224, W=224] prepared chips
       - output global embeddings for the existing classification fairness pipeline
       - expose patch/pixel features for lightweight segmentation smoke metrics
+      - load official Sen1Floods11 TL decoder through a separate adapter and write pixel-count audit outputs with task_adapted_decoder protocol metadata
     known_risks:
       - Sen1Floods11 Sentinel-2 is not native HLS 30m time-series input
       - repeated frames are a compatibility shim and must not be interpreted as temporal fairness evidence
       - segmentation smoke uses frozen features/probe logic, not a fine-tuned flood segmentation model
+      - final paper-grade segmentation should state whether prepared chips were evaluated at 224x224 or native 512x512 resolution
     sources:
       - https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-300M
       - https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-300M-TL
+      - https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-300M-TL-Sen1Floods11
       - https://github.com/NASA-IMPACT/Prithvi-EO-2.0
       - https://huggingface.co/papers/2412.02732
       - https://ntrs.nasa.gov/citations/20240015391

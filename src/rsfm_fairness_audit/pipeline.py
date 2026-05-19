@@ -12,7 +12,7 @@ from rsfm_fairness_audit.adapters.bigearthnet import BigEarthNetDatasetAdapter
 from rsfm_fairness_audit.adapters.croma import CROMAAdapter
 from rsfm_fairness_audit.adapters.dofa import DOFAAdapter
 from rsfm_fairness_audit.adapters.dummy import DummyDatasetConfig, DummyEODataset, DummyModelAdapter
-from rsfm_fairness_audit.adapters.prithvi import PrithviAdapter
+from rsfm_fairness_audit.adapters.prithvi import PrithviAdapter, PrithviSen1Floods11TLAdapter
 from rsfm_fairness_audit.adapters.sen1floods11 import Sen1Floods11DatasetAdapter
 from rsfm_fairness_audit.config import load_yaml
 from rsfm_fairness_audit.embedding import extract_embeddings, extract_embeddings_to_chunks
@@ -236,8 +236,11 @@ def build_real_adapters(
 ) -> tuple[DatasetAdapter, ModelAdapter]:
     if dataset_name not in {"bigearthnet", "ben_ge", "sen1floods11"}:
         raise ValueError("Real smoke runs currently implement dataset='bigearthnet', dataset='ben_ge', or dataset='sen1floods11'.")
-    if model_name not in {"dofa", "croma", "prithvi"}:
-        raise ValueError("Real smoke runs currently implement model='dofa', model='croma', or model='prithvi'.")
+    if model_name not in {"dofa", "croma", "prithvi", "prithvi_tl_sen1floods11"}:
+        raise ValueError(
+            "Real smoke runs currently implement model='dofa', model='croma', model='prithvi', "
+            "or model='prithvi_tl_sen1floods11'."
+        )
     if dataset_name == "bigearthnet":
         dataset = BigEarthNetDatasetAdapter(
             data_root=data_root,
@@ -282,6 +285,11 @@ def build_real_adapters(
         model = CROMAAdapter.from_config(config)
     elif model_name == "croma":
         model = CROMAAdapter(device="auto", allow_hf_download=False)
+    elif model_name == "prithvi_tl_sen1floods11" and model_config is not None:
+        config = load_yaml(model_config)
+        model = PrithviSen1Floods11TLAdapter.from_config(config)
+    elif model_name == "prithvi_tl_sen1floods11":
+        model = PrithviSen1Floods11TLAdapter(device="auto", allow_hf_download=False)
     elif model_config is not None:
         config = load_yaml(model_config)
         model = PrithviAdapter.from_config(config)
