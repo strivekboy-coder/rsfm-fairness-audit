@@ -224,6 +224,42 @@ python -m rsfm_fairness_audit.cli run-segmentation-real `
   --max-samples 64
 ```
 
+## U-Net Sen1Floods11 Supervised Baseline
+
+The U-Net path is Protocol C: a fully supervised classical baseline for native
+Sen1Floods11 flood segmentation. It uses `adaptation_protocol =
+supervised_baseline`, records `split_protocol`, ignores `-1` label pixels, and
+writes the same event-level BWER-compatible segmentation outputs as Prithvi.
+Random chip split is the default baseline split and must not be described as
+event-held-out generalization.
+
+```powershell
+python -m rsfm_fairness_audit.cli run-unet-sen1floods11 `
+  --data-root data/sen1floods11_tl_official_full_512 `
+  --output-dir outputs/unet_sen1floods11_full_512 `
+  --epochs 8 `
+  --batch-size 4 `
+  --learning-rate 1e-3 `
+  --split-protocol random_chip_split `
+  --eval-split test `
+  --run-bwer-v2
+```
+
+For Colab, reuse the prepared 512 zip and produce one fused output archive:
+
+```powershell
+python scripts/run_unet_sen1floods11_colab.py `
+  --epochs 8 `
+  --batch-size 4 `
+  --learning-rate 1e-3 `
+  --force
+```
+
+The expected final archive is
+`/content/drive/MyDrive/rsfm_fairness_audit/outputs/unet_sen1floods11_full_512.zip`.
+It contains the original U-Net outputs plus `bwer_v2/`. See
+[unet_sen1floods11.md](D:/Codex/rsfm-fairness-audit/docs/reproduction/unet_sen1floods11.md).
+
 ## BWER Slice Fairness Audit
 
 The paper-grade audit layer adds BWER: Balanced Worst-slice Excess Risk. It

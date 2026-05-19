@@ -283,6 +283,14 @@ def _metadata(rows: Sequence[Mapping[str, Any]], input_dir: Path, model_debug: M
     dataset = _common(rows, "dataset", "sen1floods11")
     model = _common(rows, "model", "prithvi_tl_sen1floods11")
     task = _common(rows, "task", "segmentation")
+    model_family = _common(rows, "model_family", "")
+    if not model_family:
+        if str(model).startswith("unet"):
+            model_family = "unet"
+        elif "prithvi" in str(model).lower():
+            model_family = "Prithvi"
+        else:
+            model_family = "to_verify"
     adaptation = _common(rows, "adaptation_protocol", "")
     training_budget = _common(rows, "training_budget", "") or _common(rows, "training_setup", "")
     split_protocol = _common(rows, "split_protocol", "")
@@ -293,6 +301,7 @@ def _metadata(rows: Sequence[Mapping[str, Any]], input_dir: Path, model_debug: M
     return {
         "dataset": dataset,
         "model": model,
+        "model_family": model_family,
         "task": task,
         "input_mode": _common(rows, "input_mode", "S2"),
         "adaptation_protocol": adaptation,
@@ -345,6 +354,7 @@ def _summary_row(
     return {
         "dataset": meta["dataset"],
         "model": meta["model"],
+        "model_family": meta.get("model_family", ""),
         "task": meta["task"],
         "slice_variable": summary.get("slice_variable", EVENT_SLICE),
         "balance_variable": summary.get("balance_variable", ""),
@@ -853,19 +863,28 @@ def _write_metric_primitives_report(path: Path, summary: Mapping[str, Any], deri
 
 
 def _write_adaptation_protocol_report(path: Path, meta: Mapping[str, str], model_debug: Mapping[str, Any]) -> None:
-    source = model_debug.get("checkpoint_source", "official_huggingface")
+    source = model_debug.get("checkpoint_source", "trained_in_run" if meta.get("adaptation_protocol") == "supervised_baseline" else "official_huggingface")
     model_name = model_debug.get("model", model_debug.get("model_name", meta["model"]))
+    if meta.get("adaptation_protocol") == "supervised_baseline":
+        protocol_note = (
+            "This audit uses a supervised classical baseline trained in the current run. "
+            "It is not a foundation-model checkpoint and should be compared against Prithvi only with adaptation protocol clearly stratified."
+        )
+    elif "prithvi" in meta.get("model", "").lower():
+        protocol_note = "This audit uses the official Sen1Floods11 task-adapted decoder route. It is not the earlier frozen-threshold diagnostic route."
+    else:
+        protocol_note = "This audit uses the adaptation protocol recorded in the completed run outputs."
     lines = _report_header("Adaptation Protocol")
     lines.extend(
         [
-            "- model_family: Prithvi",
+            f"- model_family: {meta.get('model_family', 'to_verify')}",
             f"- model_variant: {meta['model']}",
             f"- checkpoint_source: {source}",
             f"- checkpoint/model: {model_name}",
             f"- adaptation_protocol: {meta['adaptation_protocol']}",
             f"- training_budget: {meta['training_budget']}",
             "",
-            "This audit uses the official Sen1Floods11 task-adapted decoder route. It is not the earlier frozen-threshold diagnostic route.",
+            protocol_note,
             "",
             "Future cross-model comparisons should be filtered or stratified by adaptation protocol family, because frozen probes, lightweight heads, task-adapted decoders, and full fine-tunes answer different methodological questions.",
         ]
@@ -881,14 +900,24 @@ def _write_adaptation_protocol_report(path: Path, meta: Mapping[str, str], model
 
 
 def _write_split_report(path: Path, meta: Mapping[str, str]) -> None:
+    if meta.get("adaptation_protocol") == "supervised_baseline":
+        model_context = [
+            "- This result comes from a supervised baseline trained inside this run.",
+            "- If `split_protocol=random_chip_split`, event leakage is possible and the result should not be interpreted as event-held-out generalization.",
+            "- Event-held-out or leave-one-event-out generalization requires `split_protocol=event_held_out` or a separate leave-one-event-out workflow.",
+        ]
+    else:
+        model_context = [
+            "- The official checkpoint may have been fine-tuned using Sen1Floods11.",
+            "- Therefore this result should be interpreted as an in-dataset / official adapted checkpoint audit unless official train/test split overlap is verified.",
+            "- Event-held-out or leave-one-event-out generalization is not yet performed by this post-hoc command.",
+        ]
     lines = _report_header("Split Diagnostics")
     lines.extend(
         [
             f"- split_protocol recorded in outputs: {meta['split_protocol']}",
             "- Current evaluation uses the available Sen1Floods11 hand-labeled set.",
-            "- The official checkpoint may have been fine-tuned using Sen1Floods11.",
-            "- Therefore this result should be interpreted as an in-dataset / official adapted checkpoint audit unless official train/test split overlap is verified.",
-            "- Event-held-out or leave-one-event-out generalization is not yet performed by this post-hoc command.",
+            *model_context,
             "- Future paper-grade generalization claims require event-held-out or leave-one-event-out sensitivity.",
             "- Standardisation over derived flood/no-data composition variables does not replace event-held-out evaluation.",
         ]

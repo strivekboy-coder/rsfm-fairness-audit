@@ -159,6 +159,7 @@ def test_run_bwer_v2_posthoc_writes_full_output_set() -> None:
     summary = read_csv_rows(out / "bwer_v2_summary.csv")[0]
     assert summary["dataset"] == "sen1floods11"
     assert summary["model"] == "prithvi_tl_sen1floods11"
+    assert summary["model_family"] == "Prithvi"
     assert summary["slice_variable"] == "event_id"
     assert summary["resolution"] == "512"
     assert "valid_pixel_count" in summary["support_definition"]
@@ -184,6 +185,9 @@ def test_run_bwer_v2_posthoc_writes_full_output_set() -> None:
     pakistan = next(row for row in failure if row["event_id"] == "Pakistan")
     assert pakistan["tail_flag"] == "True"
     assert pakistan["IoU_rank"] == "3"
+    adaptation_report = (out / "adaptation_protocol_report.md").read_text(encoding="utf-8")
+    assert "model_family: Prithvi" in adaptation_report
+    assert "official Sen1Floods11 task-adapted decoder route" in adaptation_report
 
 
 def test_run_bwer_v2_cli(monkeypatch) -> None:

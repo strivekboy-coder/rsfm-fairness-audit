@@ -15,6 +15,7 @@ from rsfm_fairness_audit.pipeline import (
 from rsfm_fairness_audit.preflight import checks_to_json, run_real_preflight
 from rsfm_fairness_audit.segmentation import run_segmentation_smoke
 from rsfm_fairness_audit.slice_support import evaluate_slice_support_from_files
+from rsfm_fairness_audit.unet_baseline import UnetConfig, run_unet_sen1floods11
 
 
 def _parse_wavelengths(value: str | None) -> list[float] | None:
@@ -105,6 +106,26 @@ def build_parser() -> argparse.ArgumentParser:
     seg.add_argument("--output-dir", type=Path, default=Path("outputs/prithvi_sen1floods11_seg64"))
     seg.add_argument("--model-config", "--config", dest="model_config", type=Path, required=True)
     seg.add_argument("--debug-samples", type=int, default=0, help="Save raw output/probability diagnostics and quick-look PNGs for the first N chips.")
+
+    unet = subparsers.add_parser("run-unet-sen1floods11", help="Train and evaluate the supervised U-Net Sen1Floods11 segmentation baseline.")
+    unet.add_argument("--data-root", "--dataset-root", dest="data_root", type=Path, required=True)
+    unet.add_argument("--output-dir", type=Path, default=Path("outputs/unet_sen1floods11_full_512"))
+    unet.add_argument("--epochs", type=int, default=8)
+    unet.add_argument("--batch-size", type=int, default=4)
+    unet.add_argument("--learning-rate", type=float, default=1e-3)
+    unet.add_argument("--weight-decay", type=float, default=1e-4)
+    unet.add_argument("--base-channels", type=int, default=16)
+    unet.add_argument("--split-protocol", choices=["random_chip_split", "event_held_out"], default="random_chip_split")
+    unet.add_argument("--val-fraction", type=float, default=0.15)
+    unet.add_argument("--test-fraction", type=float, default=0.20)
+    unet.add_argument("--held-out-event", dest="held_out_events", action="append", default=[])
+    unet.add_argument("--seed", type=int, default=42)
+    unet.add_argument("--device", default="auto")
+    unet.add_argument("--amp", default="true", help="true/false; enable CUDA AMP when a CUDA device is used.")
+    unet.add_argument("--max-samples", type=int, help="Limit chips for a smoke run. Use 0 or omit for all chips.")
+    unet.add_argument("--eval-split", choices=["train", "val", "test", "all"], default="test")
+    unet.add_argument("--run-bwer-v2", action="store_true", help="Run post-hoc BWER-Audit v2 after U-Net evaluation.")
+    unet.add_argument("--debug-samples", type=int, default=0, help="Reserved for future quick-look debug samples.")
 
     bwer = subparsers.add_parser("evaluate-bwer", help="Evaluate BWER slice fairness from a normalized audit table.")
     bwer.add_argument("--audit-table", type=Path, required=True)
@@ -264,6 +285,33 @@ def main() -> None:
         )
         artifacts = run_segmentation_smoke(dataset, model, args.output_dir, debug_samples=args.debug_samples)
         print(f"Real segmentation smoke complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "run-unet-sen1floods11":
+        max_samples = None if args.max_samples in (None, 0) else args.max_samples
+        artifacts = run_unet_sen1floods11(
+            UnetConfig(
+                data_root=args.data_root,
+                output_dir=args.output_dir,
+                epochs=args.epochs,
+                batch_size=args.batch_size,
+                learning_rate=args.learning_rate,
+                weight_decay=args.weight_decay,
+                base_channels=args.base_channels,
+                split_protocol=args.split_protocol,
+                val_fraction=args.val_fraction,
+                test_fraction=args.test_fraction,
+                held_out_events=tuple(args.held_out_events or ()),
+                seed=args.seed,
+                device=args.device,
+                amp=_parse_bool(args.amp),
+                max_samples=max_samples,
+                eval_split=args.eval_split,
+                run_bwer_v2=args.run_bwer_v2,
+                debug_samples=args.debug_samples,
+            )
+        )
+        print(f"U-Net Sen1Floods11 baseline complete: {args.output_dir}")
         for name, path in artifacts.items():
             print(f"{name}: {path}")
     elif args.command == "evaluate-bwer":

@@ -24,6 +24,13 @@ deployment-relevant remote sensing slices; in Sen1Floods11, `event_id` should be
 read as an operational disaster-event slice rather than a causal country
 fairness attribute.
 
+The current 512 native segmentation prepared zip can be reused by both the
+official Prithvi TL audit and the supervised U-Net baseline. For U-Net,
+`LabelHand` pixels are interpreted as `0=background`, `1=water/flood`, and
+`-1=ignore`; ignore pixels are excluded from loss and from TP/FP/FN/TN metrics.
+Chip-level macro IoU is auxiliary. Formal BWER inputs should be event-level
+rows aggregated from valid pixel counts and confusion counts.
+
 ## Open Items
 
 - Current official license or terms in the GCS bucket: to_verify.

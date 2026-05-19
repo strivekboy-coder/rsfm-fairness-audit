@@ -116,3 +116,70 @@ Quality notes:
 - Fifty-three chips have zero predicted positive pixels, while fifty-two chips have zero ground-truth positive pixels; this does not indicate a global all-background failure.
 - `event_id` is an operational disaster-event slice, not a causal country fairness attribute.
 - `support_diagnostics.csv` was empty in this run; the primary evidence tables are `segmentation_metrics.csv`, `event_segmentation_metrics.csv`, `bwer_summary.csv`, `warnings.json`, report, and figures.
+
+## BWER-Audit v2 Standardised Sen1Floods11 Analysis
+
+Recorded: 2026-05-19.
+
+The final fused result zip now includes a `bwer_v2/` post-hoc analysis folder
+with real derived balance variables, not only raw event-level BWER. The key
+tables are populated:
+- `derived_balance_variables.csv`: 446 chip rows.
+- `standardised_bwer.csv`: 12 rows.
+- `reference_weight_sensitivity.csv`: 4 rows.
+- `missing_policy_sensitivity.csv`: 6 rows.
+- `bwer_v2_summary.csv`: 3 rows.
+
+Raw result:
+- Raw-BWER(event_id) = 0.1175.
+- Mean risk = 0.2167.
+- Tail risk = 0.3342.
+- Worst slice = Pakistan.
+- Best slice = Mekong.
+- Tail slices = Pakistan; Bolivia.
+
+Primary standardised result:
+- Standardised-BWER(event_id | flood_extent_bin) = 0.1566.
+- Mean risk = 0.4502.
+- Tail risk = 0.6067.
+- Worst slice = Bolivia.
+- Tail slices = Bolivia; Pakistan.
+- Missing cell count = 0.
+- Valid balance bins = 3.
+
+Interpretation:
+After standardising over measured flood-extent composition, event-level tail
+risk persists and even increases. Bolivia and Pakistan remain the tail slices,
+although the worst event changes from Pakistan under raw BWER to Bolivia after
+flood-extent standardisation. This suggests that the high-risk tail is not
+fully explained by different flood-extent composition alone. The appropriate
+paper wording is: the tail-risk signal "persists after standardising over
+measured flood extent composition." Do not claim that it cannot be explained by
+any confounder.
+
+Secondary invalid/no-data composition result:
+- Standardised-BWER(event_id | invalid_pixel_ratio_bin) = 0.1545 under
+  renormalize/invalidate-style handling.
+- Worst slice = Bolivia.
+- Tail slices = Bolivia; Pakistan.
+- Missing cell count = 1.
+
+This supports a similar tail-risk interpretation, but it is secondary because
+the result is more missing-policy-sensitive. Under overlap policy, the
+invalid-ratio standardisation changes to BWER = 0.1082 with tail slices
+Pakistan; USA. Use invalid-pixel-ratio standardisation as robustness evidence,
+not the primary claim.
+
+Sensitivity notes:
+- `flood_extent_bin` is stable across reference weighting: uniform and empirical
+  both give BWER = 0.1566 with tail slices Bolivia; Pakistan.
+- `flood_extent_bin` is stable across overlap, renormalize, and invalidate
+  missing policies because missing_cell_count = 0.
+- `invalid_pixel_ratio_bin` is less stable because missing_cell_count = 1 and
+  overlap changes the tail slices.
+
+Reporting caution:
+The standardised mean risk over flood extent is much higher than raw mean risk
+(0.4502 vs 0.2167). This does not mean the model's aggregate IoU changed.
+Standardised-BWER is a composition-standardised tail-risk diagnostic under a
+reference composition, not a direct replacement for raw aggregate performance.

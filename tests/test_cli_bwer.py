@@ -7,6 +7,54 @@ from rsfm_fairness_audit.cli import main
 from rsfm_fairness_audit.io import read_csv_rows, write_csv
 
 
+def test_run_unet_cli_passes_protocol_and_training_args(monkeypatch) -> None:
+    captured = {}
+
+    def fake_run(config):
+        captured["config"] = config
+        return {"run_metadata": Path("outputs/test_unet_cli/run_metadata.json")}
+
+    monkeypatch.setattr("rsfm_fairness_audit.cli.run_unet_sen1floods11", fake_run)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "rsfm-audit",
+            "run-unet-sen1floods11",
+            "--data-root",
+            "data/sen1floods11_tl_official_full_512",
+            "--output-dir",
+            "outputs/unet_cli",
+            "--epochs",
+            "3",
+            "--batch-size",
+            "2",
+            "--learning-rate",
+            "0.0005",
+            "--split-protocol",
+            "event_held_out",
+            "--held-out-event",
+            "Pakistan",
+            "--held-out-event",
+            "Bolivia",
+            "--eval-split",
+            "test",
+            "--run-bwer-v2",
+            "--max-samples",
+            "0",
+        ],
+    )
+    main()
+    config = captured["config"]
+    assert config.epochs == 3
+    assert config.batch_size == 2
+    assert config.learning_rate == 0.0005
+    assert config.split_protocol == "event_held_out"
+    assert config.held_out_events == ("Pakistan", "Bolivia")
+    assert config.eval_split == "test"
+    assert config.run_bwer_v2 is True
+    assert config.max_samples is None
+
+
 def test_evaluate_bwer_cli_writes_outputs(monkeypatch) -> None:
     root = Path("outputs/test_cli_bwer")
     root.mkdir(parents=True, exist_ok=True)
