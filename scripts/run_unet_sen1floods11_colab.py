@@ -120,7 +120,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--early-stopping-min-delta", type=float, default=1e-4)
     parser.add_argument("--architecture", choices=["vanilla_unet", "s2_resnet34_unet"], default="vanilla_unet")
     parser.add_argument("--pretrained-encoder", action="store_true")
-    parser.add_argument("--split-protocol", choices=["random_chip_split", "event_held_out"], default="random_chip_split")
+    parser.add_argument("--split-protocol", choices=["random_chip_split", "event_held_out", "leave_one_event_out"], default="random_chip_split")
     parser.add_argument("--held-out-event", action="append", default=[])
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="auto")

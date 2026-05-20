@@ -218,3 +218,48 @@ official task-adapted checkpoint evaluated on the available full set, whereas
 U-Net is trained as a supervised baseline under random chip split and evaluated
 on its test split. Do not claim event-held-out generalization from the U-Net
 result.
+
+## Sen1Floods11 Closure Core Confirmed Facts
+
+Recorded: 2026-05-20.
+
+Sen1Floods11 Closure Core Package completed four native segmentation outputs:
+- Prithvi TL.
+- Vanilla U-Net.
+- MNDWI spectral diagnostic baseline.
+- S2 ResNet34-U-Net.
+
+Aggregate IoU ranking:
+- prithvi_tl > s2_resnet34_unet > vanilla_unet > spectral_mndwi.
+
+Raw-BWER ranking:
+- prithvi_tl < spectral_mndwi < s2_resnet34_unet < vanilla_unet.
+
+Standardised-BWER ranking:
+- spectral_mndwi < prithvi_tl < s2_resnet34_unet < vanilla_unet.
+
+Average-vs-BWER ranking reversal was observed in the protocol-aware closure
+comparison.
+
+Persistent tail events across all four runs were not established.
+
+Tail events by run:
+- Prithvi TL: Bolivia; Pakistan.
+- Vanilla U-Net: Bolivia; Pakistan.
+- MNDWI spectral: India; Paraguay.
+- S2 ResNet34-U-Net: Bolivia; Ghana.
+
+S2 ResNet34-U-Net summary:
+- aggregate_iou = 0.789684.
+- aggregate_dice = 0.882484.
+- raw_bwer_event_id = 0.177334.
+- standardised_bwer_event_id_flood_extent_bin = 0.209538.
+- worst_event = Ghana.
+- best_event = Mekong.
+- tail_events = Bolivia; Ghana.
+
+Important caveat:
+Prithvi TL and MNDWI use `standard_split/all`, while Vanilla U-Net and S2
+ResNet34-U-Net use `random_chip_split/test`. Therefore the closure result is
+protocol-aware and should not be described as pure architecture-only or
+same-split comparison.

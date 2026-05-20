@@ -4,7 +4,9 @@ import argparse
 from pathlib import Path
 
 from rsfm_fairness_audit.audit_pipeline import evaluate_bwer_from_file, run_audit_from_outputs
+from rsfm_fairness_audit.advanced_closure import run_protocol_matched_comparison, run_selective_risk_audit
 from rsfm_fairness_audit.bwer_v2 import run_bwer_v2_posthoc
+from rsfm_fairness_audit.loeo import aggregate_loeo_runs
 from rsfm_fairness_audit.pipeline import (
     build_real_adapters,
     compare_model_runs,
@@ -98,6 +100,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sensor_compare.add_argument("--output-dir", type=Path, default=Path("outputs/comparisons/croma_sensor_modes"))
 
+    protocol_matched = subparsers.add_parser("protocol-match-runs", help="Post-hoc chip-intersection comparison for completed Sen1Floods11 segmentation runs.")
+    protocol_matched.add_argument("--run", action="append", required=True, help="Run pair in the form run_name=path_to_output_dir.")
+    protocol_matched.add_argument("--output-dir", type=Path, default=Path("outputs/comparisons/sen1floods11_protocol_matched"))
+
+    selective = subparsers.add_parser("run-selective-risk", help="Post-hoc confidence-conditioned selective risk audit for completed segmentation runs.")
+    selective.add_argument("--run", action="append", required=True, help="Run pair in the form run_name=path_to_output_dir.")
+    selective.add_argument("--output-dir", type=Path, default=Path("outputs/comparisons/sen1floods11_selective_risk"))
+    selective.add_argument("--coverage", action="append", type=float, help="Coverage level to evaluate. Repeat as needed; default is 1.0,0.9,0.8,0.7,0.6,0.5.")
+
+    loeo = subparsers.add_parser("aggregate-loeo", help="Aggregate completed leave-one-event-out supervised baseline run directories.")
+    loeo.add_argument("--input-root", type=Path, required=True, help="Directory containing one completed run subdirectory per held-out event.")
+    loeo.add_argument("--output-dir", type=Path, required=True, help="Directory for LOEO aggregate outputs.")
+
     seg = subparsers.add_parser("run-segmentation-real", help="Run native Sen1Floods11 segmentation metrics, preflight, and BWER audit.")
     seg.add_argument("--dataset", choices=["sen1floods11"], required=True)
     seg.add_argument("--model", choices=["prithvi", "prithvi_tl_sen1floods11"], required=True)
@@ -121,7 +136,7 @@ def build_parser() -> argparse.ArgumentParser:
     unet.add_argument("--pretrained-encoder", action="store_true", help="Use torchvision ResNet34 ImageNet weights and adapt conv1 from 3 to 6 bands.")
     unet.add_argument("--early-stopping-patience", type=int, default=10)
     unet.add_argument("--early-stopping-min-delta", type=float, default=1e-4)
-    unet.add_argument("--split-protocol", choices=["random_chip_split", "event_held_out"], default="random_chip_split")
+    unet.add_argument("--split-protocol", choices=["random_chip_split", "event_held_out", "leave_one_event_out"], default="random_chip_split")
     unet.add_argument("--val-fraction", type=float, default=0.15)
     unet.add_argument("--test-fraction", type=float, default=0.20)
     unet.add_argument("--held-out-event", dest="held_out_events", action="append", default=[])
@@ -289,6 +304,34 @@ def main() -> None:
             runs[sensor_mode.strip()] = Path(run_dir.strip())
         artifacts = compare_sensor_mode_runs(runs, args.output_dir, dataset_name=args.dataset)
         print(f"Sensor-mode comparison complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "protocol-match-runs":
+        runs = {}
+        for item in args.run:
+            if "=" not in item:
+                raise SystemExit("--run must use the form run_name=path_to_output_dir")
+            run_name, run_dir = item.split("=", 1)
+            runs[run_name.strip()] = Path(run_dir.strip())
+        artifacts = run_protocol_matched_comparison(runs, args.output_dir)
+        print(f"Protocol-matched comparison complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "run-selective-risk":
+        runs = {}
+        for item in args.run:
+            if "=" not in item:
+                raise SystemExit("--run must use the form run_name=path_to_output_dir")
+            run_name, run_dir = item.split("=", 1)
+            runs[run_name.strip()] = Path(run_dir.strip())
+        coverages = tuple(args.coverage) if args.coverage else (1.0, 0.9, 0.8, 0.7, 0.6, 0.5)
+        artifacts = run_selective_risk_audit(runs, args.output_dir, coverages=coverages)
+        print(f"Selective Risk audit complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "aggregate-loeo":
+        artifacts = aggregate_loeo_runs(args.input_root, args.output_dir)
+        print(f"LOEO aggregate complete: {args.output_dir}")
         for name, path in artifacts.items():
             print(f"{name}: {path}")
     elif args.command == "run-segmentation-real":

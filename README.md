@@ -308,6 +308,24 @@ The closure package writes
 `closure_event_level_comparison.csv`, and `closure_tail_event_overlap.csv`.
 See [sen1floods11_closure.md](D:/Codex/rsfm-fairness-audit/docs/reproduction/sen1floods11_closure.md).
 
+Advanced closure post-hoc checks:
+
+```powershell
+python scripts/run_sen1floods11_advanced_closure_colab.py --force
+```
+
+This writes protocol-matched chip-intersection diagnostics and Selective Risk
+availability/results under `outputs/comparisons/`. LOEO supervised-baseline
+runs are separate because they train one model per held-out event:
+
+```powershell
+python scripts/run_unet_sen1floods11_loeo_colab.py `
+  --architecture vanilla_unet `
+  --epochs 50 `
+  --batch-size 4 `
+  --force
+```
+
 ## BWER Slice Fairness Audit
 
 The paper-grade audit layer adds BWER: Balanced Worst-slice Excess Risk. It

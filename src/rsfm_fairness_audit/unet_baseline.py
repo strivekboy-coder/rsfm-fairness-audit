@@ -169,20 +169,22 @@ def _collate(batch: Sequence[dict[str, Any]]) -> dict[str, Any]:
 def split_metadata(rows: Sequence[dict[str, Any]], config: UnetConfig) -> dict[str, list[dict[str, Any]]]:
     rng = random.Random(config.seed)
     rows = [dict(row) for row in rows]
-    if config.split_protocol == "event_held_out":
+    if config.split_protocol in {"event_held_out", "leave_one_event_out"}:
         events = sorted({str(row["event_id"]) for row in rows})
         held_out = set(config.held_out_events or tuple(events[-2:]))
+        if config.split_protocol == "leave_one_event_out" and len(held_out) != 1:
+            raise ValueError("leave_one_event_out requires exactly one --held-out-event.")
         train_val = [row for row in rows if str(row["event_id"]) not in held_out]
         test = [row for row in rows if str(row["event_id"]) in held_out]
         if not test:
-            raise ValueError(f"event_held_out selected no test chips. Available events: {events}; requested: {sorted(held_out)}")
+            raise ValueError(f"{config.split_protocol} selected no test chips. Available events: {events}; requested: {sorted(held_out)}")
         if not train_val:
-            raise ValueError("event_held_out selected all events for test; at least one training event is required.")
+            raise ValueError(f"{config.split_protocol} selected all events for test; at least one training event is required.")
         rng.shuffle(train_val)
         val_n = max(1, int(round(len(train_val) * config.val_fraction))) if len(train_val) > 1 else 0
         return {"train": train_val[val_n:], "val": train_val[:val_n], "test": test}
     if config.split_protocol != "random_chip_split":
-        raise ValueError("split_protocol must be random_chip_split or event_held_out")
+        raise ValueError("split_protocol must be random_chip_split, event_held_out, or leave_one_event_out")
     shuffled = list(rows)
     rng.shuffle(shuffled)
     test_n = max(1, int(round(len(shuffled) * config.test_fraction))) if len(shuffled) > 2 else 1

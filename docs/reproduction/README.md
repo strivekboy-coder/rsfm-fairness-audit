@@ -21,3 +21,6 @@ The Sen1Floods11 closure package is documented in
 `sen1floods11_closure.md`. It adds diagnostic NDWI/MNDWI/NIR spectral
 baselines, the S2 ResNet34-U-Net / AlbuNet-style supervised baseline, and a
 four-run closure comparison without expanding into a segmentation model zoo.
+The same guide now documents advanced closure checks: post-hoc protocol-matched
+chip-intersection comparison, Selective Risk availability/audit outputs, and
+resumable leave-one-event-out supervised-baseline evaluation.

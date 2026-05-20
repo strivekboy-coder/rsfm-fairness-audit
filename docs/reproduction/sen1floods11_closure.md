@@ -160,16 +160,103 @@ The report identifies aggregate ranking, BWER ranking, average-vs-BWER ranking
 reversal, persistent tail events, Bolivia/Pakistan persistence, spectral-rule
 tail profile, and whether the stronger U-Net-family run reduces BWER.
 
-## LOEO and Selective Risk Notes
+## Advanced Closure Checks
 
-LOEO is future work in this repo stage. The intended workflow is to hold out
-one disaster event, train on all other events, evaluate the held-out event, and
-write the same single-run segmentation and BWER v2 schema. Do not claim
-event-held-out generalization from `random_chip_split` runs.
+Protocol-matched post-hoc check:
 
-Selective Risk is also future work here. It requires saved probability, logit,
-or confidence outputs. Current U-Net runs save chip-level confidence summaries
-but not full probability maps; Prithvi TL confidence availability depends on the
-completed run; spectral rules are deterministic and uncalibrated. If a run lacks
-usable confidence fields, report Selective Risk as unavailable rather than
-fabricating fixed-coverage results.
+```bash
+python -m rsfm_fairness_audit.cli protocol-match-runs \
+  --run prithvi_tl=/content/outputs/prithvi_tl_sen1floods11_official_full_512 \
+  --run vanilla_unet=/content/outputs/unet_sen1floods11_full_512 \
+  --run spectral_mndwi=/content/outputs/spectral_mndwi_sen1floods11_full_512 \
+  --run s2_resnet34_unet=/content/outputs/s2_resnet34_unet_sen1floods11_full_512 \
+  --output-dir /content/outputs/comparisons/sen1floods11_protocol_matched
+```
+
+This recomputes event metrics, Raw-BWER, and BWER v2 on the exact common chip
+intersection when every run has chip-level `segmentation_metrics.csv` with
+stable `sample_id`/`chip_id` identifiers. If exact matching is impossible, it
+writes a limitation report rather than fabricating a same-split result.
+
+Selective Risk availability/post-hoc check:
+
+```bash
+python -m rsfm_fairness_audit.cli run-selective-risk \
+  --run prithvi_tl=/content/outputs/prithvi_tl_sen1floods11_official_full_512 \
+  --run vanilla_unet=/content/outputs/unet_sen1floods11_full_512 \
+  --run spectral_mndwi=/content/outputs/spectral_mndwi_sen1floods11_full_512 \
+  --run s2_resnet34_unet=/content/outputs/s2_resnet34_unet_sen1floods11_full_512 \
+  --output-dir /content/outputs/comparisons/sen1floods11_selective_risk
+```
+
+When only chip-level confidence summaries are available, this is a
+whole-chip-retention diagnostic, not pixel-level selective segmentation risk.
+If no confidence/logit/probability fields are available, it writes
+`selective_risk_availability.csv` and a limitation report without fake metrics.
+
+Colab helper for both post-hoc checks:
+
+```bash
+python scripts/run_sen1floods11_advanced_closure_colab.py --force
+```
+
+Expected outputs:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/comparisons/sen1floods11_protocol_matched.zip
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/comparisons/sen1floods11_selective_risk.zip
+```
+
+## LOEO Workflow
+
+LOEO is implemented for supervised baselines only. It holds out one disaster
+event, trains on all remaining events, evaluates only on the held-out event,
+and preserves `split_protocol=leave_one_event_out`.
+
+Smoke:
+
+```bash
+python scripts/run_unet_sen1floods11_loeo_colab.py \
+  --architecture vanilla_unet \
+  --held-out-event Pakistan \
+  --epochs 2 \
+  --batch-size 2 \
+  --force
+```
+
+Full vanilla U-Net LOEO:
+
+```bash
+python scripts/run_unet_sen1floods11_loeo_colab.py \
+  --architecture vanilla_unet \
+  --epochs 50 \
+  --batch-size 4 \
+  --learning-rate 1e-3 \
+  --early-stopping-patience 10 \
+  --force
+```
+
+Full S2 ResNet34-U-Net LOEO:
+
+```bash
+python scripts/run_unet_sen1floods11_loeo_colab.py \
+  --architecture s2_resnet34_unet \
+  --epochs 50 \
+  --batch-size 4 \
+  --learning-rate 1e-3 \
+  --early-stopping-patience 10 \
+  --aggregate-zip /content/drive/MyDrive/rsfm_fairness_audit/outputs/comparisons/sen1floods11_loeo_s2_resnet34_unet.zip \
+  --force
+```
+
+The script is resumable: completed held-out-event directories are reused unless
+`--force` is passed. Aggregation can be rerun with `--aggregate-only`.
+
+LOEO aggregate outputs:
+
+- `loeo_summary.csv` through BWER v2 summaries under `bwer_v2/`
+- `loeo_event_level_metrics.csv`
+- `loeo_bwer_summary.csv`
+- `loeo_report.md`
+
+Do not claim event-held-out generalization from `random_chip_split` runs.

@@ -169,6 +169,18 @@ def test_unet_split_metadata_records_random_and_event_held_out_protocols() -> No
     )
     assert {row["event_id"] for row in held["test"]} == {"Pakistan"}
     assert all(row["event_id"] != "Pakistan" for row in held["train"] + held["val"])
+    loeo = split_metadata(
+        rows,
+        UnetConfig(
+            data_root=root,
+            output_dir=root.parent / "run_loeo",
+            split_protocol="leave_one_event_out",
+            held_out_events=("Bolivia",),
+            seed=1,
+        ),
+    )
+    assert {row["event_id"] for row in loeo["test"]} == {"Bolivia"}
+    assert all(row["event_id"] != "Bolivia" for row in loeo["train"] + loeo["val"])
     shutil.rmtree(root.parent, ignore_errors=True)
 
 
