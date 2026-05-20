@@ -263,3 +263,40 @@ Prithvi TL and MNDWI use `standard_split/all`, while Vanilla U-Net and S2
 ResNet34-U-Net use `random_chip_split/test`. Therefore the closure result is
 protocol-aware and should not be described as pure architecture-only or
 same-split comparison.
+
+## Vanilla U-Net Leave-One-Event-Out Result
+
+Recorded: 2026-05-20.
+
+Vanilla U-Net leave-one-event-out evaluation was completed for all 11
+Sen1Floods11 held-out events:
+- Bolivia.
+- Ghana.
+- India.
+- Mekong.
+- Nigeria.
+- Pakistan.
+- Paraguay.
+- Somalia.
+- Spain.
+- Sri-Lanka.
+- USA.
+
+LOEO event-level IoU range:
+- Best event: Mekong, micro IoU = 0.9336, risk = 0.0664.
+- Worst event: Somalia, micro IoU = 0.6361, risk = 0.3639.
+
+LOEO Raw-BWER(event_id):
+- Raw-BWER = 0.1291.
+- tail_slices = Somalia; Ghana.
+- worst_slice = Somalia.
+- best_slice = Mekong.
+
+LOEO Standardised-BWER(event_id | flood_extent_bin):
+- Standardised-BWER = 0.1531.
+- tail_slices = Somalia; Pakistan.
+
+Confirmed factual conclusion:
+Event-level tail risk remains present under vanilla U-Net leave-one-event-out
+evaluation, while the tail-event identities differ from the random-chip-split
+vanilla U-Net result.

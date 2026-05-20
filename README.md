@@ -20,6 +20,41 @@ Generated artifacts include fairness matrices, raw-vs-balanced gap tables,
 sensor heatmaps, average-vs-worst scatter plots, representation shift plots,
 and a static Markdown report.
 
+## fMoW-Sentinel Global Geography Preflight
+
+This is the Step 2 foundation for a later fMoW-Sentinel global geography BWER
+audit. It inventories CSV metadata, derives safe timestamp/latitude fields,
+checks slice support, builds a deterministic subset manifest, optionally
+inspects a small raster sample, and writes the future audit-table schema. It
+does not train models or run inference.
+
+```powershell
+python -m rsfm_fairness_audit.cli preflight-fmow-sentinel `
+  --metadata-csv path/to/fmow_sentinel.csv `
+  --output-dir outputs/fmow_sentinel_preflight/run1 `
+  --metadata-only
+```
+
+With optional raster inspection:
+
+```powershell
+python -m rsfm_fairness_audit.cli preflight-fmow-sentinel `
+  --metadata-csv path/to/fmow_sentinel.csv `
+  --output-dir outputs/fmow_sentinel_preflight/run1 `
+  --split official_split `
+  --subset-max-per-split 5000 `
+  --inspect-rasters `
+  --raster-sample-size 256 `
+  --data-root path/to/fmow_sentinel_root `
+  --seed 42
+```
+
+Outputs include `fmow_metadata_inventory.csv`,
+`fmow_slice_support_recommendations.csv`, `subset_manifest.csv`,
+`band_statistics_sample.csv`, `raster_loading_report.md`, and
+`audit_table_schema_fmow_sentinel.md`. See
+[fmow_sentinel.md](D:/Codex/rsfm-fairness-audit/docs/datasets/fmow_sentinel.md).
+
 ## BigEarthNet + DOFA Runs
 
 ### A. Mocked Real Pipeline

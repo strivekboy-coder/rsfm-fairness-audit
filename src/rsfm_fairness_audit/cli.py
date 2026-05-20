@@ -6,6 +6,7 @@ from pathlib import Path
 from rsfm_fairness_audit.audit_pipeline import evaluate_bwer_from_file, run_audit_from_outputs
 from rsfm_fairness_audit.advanced_closure import run_protocol_matched_comparison, run_selective_risk_audit
 from rsfm_fairness_audit.bwer_v2 import run_bwer_v2_posthoc
+from rsfm_fairness_audit.fmow_sentinel_preflight import FmowPreflightConfig, run_fmow_sentinel_preflight
 from rsfm_fairness_audit.loeo import aggregate_loeo_runs
 from rsfm_fairness_audit.pipeline import (
     build_real_adapters,
@@ -112,6 +113,19 @@ def build_parser() -> argparse.ArgumentParser:
     loeo = subparsers.add_parser("aggregate-loeo", help="Aggregate completed leave-one-event-out supervised baseline run directories.")
     loeo.add_argument("--input-root", type=Path, required=True, help="Directory containing one completed run subdirectory per held-out event.")
     loeo.add_argument("--output-dir", type=Path, required=True, help="Directory for LOEO aggregate outputs.")
+
+    fmow = subparsers.add_parser("preflight-fmow-sentinel", help="Build fMoW-Sentinel metadata, subset, raster, and audit-table preflight outputs.")
+    fmow.add_argument("--metadata-csv", action="append", type=Path, required=True, help="Input fMoW-Sentinel metadata CSV. Repeat for train/val/test files.")
+    fmow.add_argument("--output-dir", type=Path, required=True)
+    fmow.add_argument("--data-root", type=Path, help="Optional root used to resolve relative image_path values during raster inspection.")
+    fmow.add_argument("--split", dest="split_protocol", default="official_split", choices=["official_split", "location_split", "region_split", "time_split", "custom_stratified_subset"])
+    fmow.add_argument("--filter-split", action="append", default=[], help="Optional official split value to include, e.g. train. Repeat as needed.")
+    fmow.add_argument("--subset-max-per-split", type=int, default=5000)
+    fmow.add_argument("--min-support", type=int, default=20)
+    fmow.add_argument("--inspect-rasters", action="store_true")
+    fmow.add_argument("--raster-sample-size", type=int, default=256)
+    fmow.add_argument("--metadata-only", action="store_true")
+    fmow.add_argument("--seed", type=int, default=42)
 
     seg = subparsers.add_parser("run-segmentation-real", help="Run native Sen1Floods11 segmentation metrics, preflight, and BWER audit.")
     seg.add_argument("--dataset", choices=["sen1floods11"], required=True)
@@ -332,6 +346,25 @@ def main() -> None:
     elif args.command == "aggregate-loeo":
         artifacts = aggregate_loeo_runs(args.input_root, args.output_dir)
         print(f"LOEO aggregate complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "preflight-fmow-sentinel":
+        artifacts = run_fmow_sentinel_preflight(
+            FmowPreflightConfig(
+                metadata_csvs=tuple(args.metadata_csv),
+                output_dir=args.output_dir,
+                data_root=args.data_root,
+                split_protocol=args.split_protocol,
+                filter_splits=tuple(args.filter_split or ()),
+                subset_max_per_split=args.subset_max_per_split,
+                seed=args.seed,
+                metadata_only=args.metadata_only,
+                inspect_rasters=args.inspect_rasters,
+                raster_sample_size=args.raster_sample_size,
+                min_support=args.min_support,
+            )
+        )
+        print(f"fMoW-Sentinel preflight complete: {args.output_dir}")
         for name, path in artifacts.items():
             print(f"{name}: {path}")
     elif args.command == "run-segmentation-real":

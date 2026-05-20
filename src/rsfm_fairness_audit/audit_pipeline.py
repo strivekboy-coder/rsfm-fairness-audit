@@ -122,7 +122,7 @@ def evaluate_bwer_table(
         seed=seed,
     )
     if any("confidence" in row for row in rows):
-        warnings.append("Confidence field detected; selective_risk/confidence_conditioned_slice_risk hooks are recorded but fixed-coverage selective risk is not yet implemented.")
+        warnings.append("Confidence field detected; formal BWER records selective_risk hooks. Use the post-hoc run-selective-risk command for confidence-conditioned retention diagnostics.")
     effective_cluster = cluster_key or taxonomy.get("bootstrap_cluster_key")
     if effective_cluster and effective_cluster not in columns:
         warnings.append(f"Skipping cluster bootstrap key {effective_cluster}: column missing.")

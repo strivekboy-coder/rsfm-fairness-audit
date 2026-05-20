@@ -28,6 +28,11 @@ ALLOWED_SPLIT_PROTOCOLS = {
     "event_held_out",
     "leave_one_event_out",
     "spatial_split",
+    "official_split",
+    "location_split",
+    "region_split",
+    "time_split",
+    "custom_stratified_subset",
 }
 
 

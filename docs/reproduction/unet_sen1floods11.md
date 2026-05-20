@@ -24,7 +24,7 @@ zip.
 - default `split_protocol = random_chip_split`
 - optional `split_protocol = event_held_out`
 - `resolution = 512`
-- `input_mode = S2`
+- `input_mode = s2_6band_image_only`
 - label mapping: `0=background;1=water_flood;-1=ignore`
 - loss: masked BCE-with-logits plus soft Dice loss
 - primary segmentation metrics: event-level micro IoU/Dice/F1, precision,
