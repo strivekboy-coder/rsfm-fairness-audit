@@ -28,9 +28,31 @@ checks slice support, builds a deterministic subset manifest, optionally
 inspects a small raster sample, and writes the future audit-table schema. It
 does not train models or run inference.
 
+If you are starting from the SatMAE fMoW-Sentinel `train.csv` / `val.csv`,
+run metadata enrichment first. SatMAE CSVs alone typically contain `category`,
+`location_id`, `timestamp`, and `image_id`; they do not by themselves provide
+country/region geography slices.
+
+```powershell
+python -m rsfm_fairness_audit.cli enrich-fmow-sentinel-metadata `
+  --satmae-csv path/to/train.csv `
+  --satmae-csv path/to/val.csv `
+  --external-metadata-csv path/to/original_fmow_or_gps_metadata.csv `
+  --country-region-map path/to/country_region_map.csv `
+  --output-dir outputs/fmow_sentinel_metadata_enrichment/run1
+```
+
+Omit `--external-metadata-csv` when no verified external geography table is
+available; the command will write a limitation report instead of fabricating
+country, region, or coordinates.
+If a verified country mapping is available, `--country-region-map` fills
+`continent`, `un_region`, and optional `region` from the supplied country
+field. Country slices with sparse small countries are reported as
+support-filtered formal candidates rather than blindly formal-ready.
+
 ```powershell
 python -m rsfm_fairness_audit.cli preflight-fmow-sentinel `
-  --metadata-csv path/to/fmow_sentinel.csv `
+  --metadata-csv outputs/fmow_sentinel_metadata_enrichment/run1/fmow_enriched_metadata.csv `
   --output-dir outputs/fmow_sentinel_preflight/run1 `
   --metadata-only
 ```

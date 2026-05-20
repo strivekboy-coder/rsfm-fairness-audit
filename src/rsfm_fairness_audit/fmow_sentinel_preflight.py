@@ -12,6 +12,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 
+from rsfm_fairness_audit.fmow_geography import apply_country_region_mapping, read_country_region_map
 from rsfm_fairness_audit.io import ensure_dir, write_csv
 
 
@@ -79,6 +80,7 @@ class FmowPreflightConfig:
     inspect_rasters: bool = False
     raster_sample_size: int = 256
     min_support: int = 20
+    country_region_map: Path | None = None
 
 
 def _norm(name: str) -> str:
@@ -281,6 +283,30 @@ def _inventory_rows(rows: Sequence[Mapping[str, str]], columns: Sequence[str], m
     return output
 
 
+def _update_inventory_for_country_region_map(inventory: Sequence[Mapping[str, Any]], enriched_rows: Sequence[Mapping[str, Any]], map_path: Path | None) -> list[dict[str, Any]]:
+    if map_path is None:
+        return [dict(row) for row in inventory]
+    output: list[dict[str, Any]] = []
+    total = len(enriched_rows)
+    for row in inventory:
+        item = dict(row)
+        field = str(item.get("canonical_field", ""))
+        if field in {"continent", "un_region", "region"}:
+            non_missing = sum(1 for enriched in enriched_rows if not _is_missing(enriched.get(field)))
+            if non_missing:
+                item.update(
+                    {
+                        "matched_column": "country_region_map",
+                        "status": "derived",
+                        "non_missing_count": non_missing,
+                        "missing_ratio": 1.0 - (non_missing / total) if total else 1.0,
+                        "notes": f"Derived from verified country mapping table: {map_path}",
+                    }
+                )
+        output.append(item)
+    return output
+
+
 def _field_note(field: str, present: bool) -> str:
     if present:
         return "Available from supplied CSV."
@@ -313,6 +339,7 @@ def _support_for_candidate(rows: Sequence[Mapping[str, Any]], candidate: str, mi
         if row.get("category"):
             class_sets[key_tuple].add(str(row.get("category")))
     supports = list(counts.values())
+    filtered_supports = [count for count in supports if count >= min_support]
     valid_slices = len(supports)
     missing_ratio = missing / total if total else 1.0
     min_count = min(supports) if supports else 0
@@ -332,6 +359,19 @@ def _support_for_candidate(rows: Sequence[Mapping[str, Any]], candidate: str, mi
         "max_class_coverage_per_slice": max(class_coverage) if class_coverage else "",
         "recommendation": recommendation,
         "reason": reason,
+        "support_filtered_valid_slice_count": len(filtered_supports),
+        "support_filtered_sample_count": sum(filtered_supports),
+        "support_filtered_min_support": min(filtered_supports) if filtered_supports else 0,
+        "support_filtered_recommendation": _support_filtered_recommendation(
+            candidate,
+            valid_slices,
+            len(filtered_supports),
+            missing_ratio,
+            median_count,
+            min_support,
+            bool(supports),
+        ),
+        "support_filtered_reason": _support_filtered_reason(candidate, len(filtered_supports), min_support, bool(supports)),
     }
 
 
@@ -347,6 +387,34 @@ def _recommend_candidate(candidate: str, valid_slices: int, missing_ratio: float
     if median_count >= min_support:
         return "diagnostic-only", "Some slices are sparse or missingness is non-trivial."
     return "not-recommended", "Support is too sparse for reliable slice risk."
+
+
+def _support_filtered_recommendation(
+    candidate: str,
+    valid_slices: int,
+    filtered_slices: int,
+    missing_ratio: float,
+    median_count: float,
+    min_support: int,
+    has_support: bool,
+) -> str:
+    if not has_support or missing_ratio > 0.05 or filtered_slices < 2:
+        return "not-recommended"
+    if filtered_slices == valid_slices:
+        return "same-as-primary"
+    if candidate in {"country", "country x category", "region x category", "season x category"} and median_count >= min_support:
+        return "support-filtered-formal-BWER-ready"
+    return "diagnostic-only"
+
+
+def _support_filtered_reason(candidate: str, filtered_slices: int, min_support: int, has_support: bool) -> str:
+    if not has_support:
+        return "No non-missing slices are available."
+    if filtered_slices < 2:
+        return f"Fewer than two slices meet min_support >= {min_support}."
+    if candidate in {"country", "country x category", "region x category", "season x category"}:
+        return f"{filtered_slices} slices meet min_support >= {min_support}; formal BWER is defensible only on this support-filtered subset."
+    return f"{filtered_slices} slices meet min_support >= {min_support}."
 
 
 def _support_rows(rows: Sequence[Mapping[str, Any]], min_support: int) -> list[dict[str, Any]]:
@@ -533,12 +601,12 @@ def _write_preflight_report(path: Path, support_rows: Sequence[Mapping[str, Any]
         "",
         "## Slice Recommendations",
         "",
-        "| candidate | valid slices | missing ratio | min | median | max | recommendation | reason |",
-        "|---|---:|---:|---:|---:|---:|---|---|",
+        "| candidate | valid slices | missing ratio | min | median | max | recommendation | support-filtered recommendation | reason |",
+        "|---|---:|---:|---:|---:|---:|---|---|---|",
     ]
     for row in support_rows:
         lines.append(
-            f"| {row['candidate_slice']} | {row['valid_slice_count']} | {float(row['missing_field_ratio']):.3f} | {row['min_support']} | {row['median_support']} | {row['max_support']} | {row['recommendation']} | {row['reason']} |"
+            f"| {row['candidate_slice']} | {row['valid_slice_count']} | {float(row['missing_field_ratio']):.3f} | {row['min_support']} | {row['median_support']} | {row['max_support']} | {row['recommendation']} | {row['support_filtered_recommendation']} | {row['reason']} |"
         )
     if warnings:
         lines.extend(["", "## Warnings", ""])
@@ -600,15 +668,24 @@ def run_fmow_sentinel_preflight(config: FmowPreflightConfig) -> dict[str, Path]:
     output = ensure_dir(config.output_dir)
     rows, columns, mapping = _read_rows(config.metadata_csvs)
     enriched = _enrich_rows(rows, mapping)
+    country_map, map_warnings = read_country_region_map(config.country_region_map)
+    mapping_stats: dict[str, int] = {}
+    mapping_apply_warnings: list[str] = []
+    if country_map:
+        enriched, mapping_apply_warnings, mapping_stats = apply_country_region_mapping(enriched, country_map)
     filtered = _split_filter(enriched, config.filter_splits)
     subset_rows, subset_strategy = _subset_manifest(filtered, config.subset_max_per_split, config.seed)
-    inventory = _inventory_rows(rows, columns, mapping)
+    inventory = _update_inventory_for_country_region_map(_inventory_rows(rows, columns, mapping), enriched, config.country_region_map)
     support_rows = _support_rows(enriched, config.min_support)
     warnings = []
+    warnings.extend(map_warnings)
+    warnings.extend(mapping_apply_warnings)
     if "country" not in mapping and "location_id" in mapping:
         warnings.append("location_id is available, but country is missing; do not interpret location_id as country.")
     if "latitude" in mapping and "longitude" in mapping and "country" not in mapping:
         warnings.append("Coordinates are available, but country/region derivation requires external boundary resources and is not performed here.")
+    if any(row.get("country") for row in enriched) and not any(row.get("continent") or row.get("un_region") for row in enriched):
+        warnings.append("Country is available, but continent/UN region are missing; pass --country-region-map with a verified mapping table to derive them.")
     artifacts = {
         "metadata_inventory": output / "fmow_metadata_inventory.csv",
         "missing_fields_report": output / "fmow_missing_fields_report.md",
@@ -652,6 +729,8 @@ def run_fmow_sentinel_preflight(config: FmowPreflightConfig) -> dict[str, Path]:
         "band_profile": "sentinel2_13band_fmow",
         "split_protocol": config.split_protocol,
         "metadata_csvs": [str(path) for path in config.metadata_csvs],
+        "country_region_map": str(config.country_region_map) if config.country_region_map else "",
+        "country_region_mapping_stats": mapping_stats,
         "row_count": len(rows),
         "subset_row_count": len(subset_rows),
         "subset_strategy": subset_strategy,

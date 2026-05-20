@@ -6,6 +6,10 @@ from pathlib import Path
 from rsfm_fairness_audit.audit_pipeline import evaluate_bwer_from_file, run_audit_from_outputs
 from rsfm_fairness_audit.advanced_closure import run_protocol_matched_comparison, run_selective_risk_audit
 from rsfm_fairness_audit.bwer_v2 import run_bwer_v2_posthoc
+from rsfm_fairness_audit.fmow_sentinel_enrichment import (
+    FmowMetadataEnrichmentConfig,
+    run_fmow_sentinel_metadata_enrichment,
+)
 from rsfm_fairness_audit.fmow_sentinel_preflight import FmowPreflightConfig, run_fmow_sentinel_preflight
 from rsfm_fairness_audit.loeo import aggregate_loeo_runs
 from rsfm_fairness_audit.pipeline import (
@@ -126,6 +130,15 @@ def build_parser() -> argparse.ArgumentParser:
     fmow.add_argument("--raster-sample-size", type=int, default=256)
     fmow.add_argument("--metadata-only", action="store_true")
     fmow.add_argument("--seed", type=int, default=42)
+    fmow.add_argument("--country-region-map", type=Path, help="Optional verified CSV mapping country to continent/UN region/region.")
+
+    fmow_enrich = subparsers.add_parser("enrich-fmow-sentinel-metadata", help="Join SatMAE fMoW-Sentinel CSVs with optional fMoW/GPS/geography metadata.")
+    fmow_enrich.add_argument("--satmae-csv", action="append", type=Path, required=True, help="SatMAE fMoW-Sentinel train/val/test CSV. Repeat as needed.")
+    fmow_enrich.add_argument("--external-metadata-csv", "--external-metadata", dest="external_metadata_csv", action="append", type=Path, default=[], help="Optional original fMoW/GPS/geography CSV to join. Repeat as needed.")
+    fmow_enrich.add_argument("--country-region-map", type=Path, help="Optional verified CSV mapping country to continent/UN region/region.")
+    fmow_enrich.add_argument("--output-dir", type=Path, required=True)
+    fmow_enrich.add_argument("--join-key", default="auto", help="auto or + separated key fields, e.g. category+location_id+image_id or location_id.")
+    fmow_enrich.add_argument("--no-infer-split-from-filename", action="store_true", help="Do not fill missing split from train/val/test CSV filenames.")
 
     seg = subparsers.add_parser("run-segmentation-real", help="Run native Sen1Floods11 segmentation metrics, preflight, and BWER audit.")
     seg.add_argument("--dataset", choices=["sen1floods11"], required=True)
@@ -362,9 +375,24 @@ def main() -> None:
                 inspect_rasters=args.inspect_rasters,
                 raster_sample_size=args.raster_sample_size,
                 min_support=args.min_support,
+                country_region_map=args.country_region_map,
             )
         )
         print(f"fMoW-Sentinel preflight complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "enrich-fmow-sentinel-metadata":
+        artifacts = run_fmow_sentinel_metadata_enrichment(
+            FmowMetadataEnrichmentConfig(
+                satmae_csvs=tuple(args.satmae_csv),
+                external_metadata_csvs=tuple(args.external_metadata_csv or ()),
+                output_dir=args.output_dir,
+                join_key=args.join_key,
+                infer_split_from_filename=not args.no_infer_split_from_filename,
+                country_region_map=args.country_region_map,
+            )
+        )
+        print(f"fMoW-Sentinel metadata enrichment complete: {args.output_dir}")
         for name, path in artifacts.items():
             print(f"{name}: {path}")
     elif args.command == "run-segmentation-real":

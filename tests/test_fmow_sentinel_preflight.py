@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import uuid
 from pathlib import Path
@@ -108,6 +109,55 @@ def test_fmow_preflight_metadata_only_outputs_schema_and_subset() -> None:
     assert "s2_13band_image_only" in schema
     report = (out / "fmow_preflight_report.md").read_text(encoding="utf-8")
     assert "Slice Recommendations" in report
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def test_fmow_preflight_country_mapping_and_support_filtered_country_recommendation() -> None:
+    root = Path("outputs") / f"test_fmow_country_mapping_{uuid.uuid4().hex}"
+    metadata = root / "metadata.csv"
+    country_map = root / "country_region_map.csv"
+    root.mkdir(parents=True)
+    write_csv(
+        metadata,
+        [
+            {"image_id": "a1", "category": "airport", "location_id": "loc1", "split": "train", "timestamp": "2020-01-01", "country": "United States"},
+            {"image_id": "a2", "category": "airport", "location_id": "loc2", "split": "train", "timestamp": "2020-01-02", "country": "United States"},
+            {"image_id": "a3", "category": "port", "location_id": "loc3", "split": "train", "timestamp": "2020-01-03", "country": "United States"},
+            {"image_id": "b1", "category": "airport", "location_id": "loc4", "split": "train", "timestamp": "2020-01-04", "country": "Bolivia"},
+            {"image_id": "c1", "category": "port", "location_id": "loc5", "split": "train", "timestamp": "2020-01-05", "country": "Ghana"},
+            {"image_id": "c2", "category": "port", "location_id": "loc6", "split": "train", "timestamp": "2020-01-06", "country": "Ghana"},
+        ],
+    )
+    write_csv(
+        country_map,
+        [
+            {"country": "United States", "continent": "North America", "un_region": "Americas", "region": "Northern America"},
+            {"country": "Bolivia", "continent": "South America", "un_region": "Americas", "region": "South America"},
+            {"country": "Ghana", "continent": "Africa", "un_region": "Africa", "region": "Western Africa"},
+        ],
+    )
+    out = root / "preflight"
+    run_fmow_sentinel_preflight(
+        FmowPreflightConfig(
+            metadata_csvs=(metadata,),
+            output_dir=out,
+            metadata_only=True,
+            min_support=2,
+            country_region_map=country_map,
+        )
+    )
+    support = read_csv_rows(out / "fmow_slice_support_recommendations.csv")
+    country = next(row for row in support if row["candidate_slice"] == "country")
+    assert country["recommendation"] == "diagnostic-only"
+    assert country["support_filtered_recommendation"] == "support-filtered-formal-BWER-ready"
+    assert country["support_filtered_valid_slice_count"] == "2"
+    continent = next(row for row in support if row["candidate_slice"] == "continent")
+    assert continent["valid_slice_count"] == "3"
+    assert continent["missing_field_ratio"] == "0.0"
+    inventory = read_csv_rows(out / "fmow_metadata_inventory.csv")
+    assert next(row for row in inventory if row["canonical_field"] == "continent")["status"] == "derived"
+    run_metadata = json.loads((out / "run_metadata.json").read_text(encoding="utf-8"))
+    assert run_metadata["country_region_mapping_stats"]["filled_continent"] == 6
     shutil.rmtree(root, ignore_errors=True)
 
 
