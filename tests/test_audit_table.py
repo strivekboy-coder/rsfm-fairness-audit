@@ -65,6 +65,24 @@ def test_random_chip_split_is_valid_split_protocol() -> None:
     )
 
 
+def test_diagnostic_spectral_rule_is_valid_adaptation_protocol() -> None:
+    validate_audit_table(
+        [
+            {
+                "dataset": "sen1floods11",
+                "model": "spectral_mndwi_fixed_ge_0p0",
+                "task": "segmentation",
+                "split": "all",
+                "unit_id": "Bolivia",
+                "score": 0.5,
+                "risk": 0.5,
+                "adaptation_protocol": "diagnostic_spectral_rule",
+                "split_protocol": "standard_split",
+            }
+        ]
+    )
+
+
 def test_segmentation_metrics_convert_to_audit_table() -> None:
     root = __import__("pathlib").Path("outputs/test_audit_table_segmentation")
     root.mkdir(parents=True, exist_ok=True)

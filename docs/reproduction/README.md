@@ -16,3 +16,8 @@ supervised_baseline`) and produces the same BWER-compatible event-level outputs
 as the Prithvi TL segmentation run. The same guide documents the standalone
 Prithvi-vs-U-Net comparison workflow; comparison outputs live under
 `outputs/comparisons/` rather than inside either single-model run directory.
+
+The Sen1Floods11 closure package is documented in
+`sen1floods11_closure.md`. It adds diagnostic NDWI/MNDWI/NIR spectral
+baselines, the S2 ResNet34-U-Net / AlbuNet-style supervised baseline, and a
+four-run closure comparison without expanding into a segmentation model zoo.

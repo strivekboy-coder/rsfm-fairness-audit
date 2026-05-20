@@ -12,6 +12,7 @@ from rsfm_fairness_audit.io import read_csv_rows, write_csv
 from rsfm_fairness_audit.bwer_v2 import run_bwer_v2_posthoc
 from rsfm_fairness_audit.unet_baseline import (
     Sen1Floods11TorchDataset,
+    S2ResNet34UNet,
     UNetSmall,
     UnetConfig,
     _prepare_image,
@@ -252,6 +253,14 @@ def test_unet_forward_and_ignore_loss_are_finite() -> None:
     zero_loss = masked_bce_dice_loss(logits[:1], ignored)
     assert torch.isfinite(zero_loss)
     assert float(zero_loss.detach()) == pytest.approx(0.0)
+
+
+def test_s2_resnet34_unet_forward_smoke_when_torchvision_available() -> None:
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("torchvision")
+    model = S2ResNet34UNet(in_channels=6, pretrained_encoder=False)
+    logits = model(torch.randn(1, 6, 64, 64))
+    assert tuple(logits.shape) == (1, 64, 64)
 
 
 def test_unet_smoke_run_writes_bwer_compatible_outputs() -> None:

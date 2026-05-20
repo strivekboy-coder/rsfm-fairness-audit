@@ -262,6 +262,29 @@ The expected final archive is
 It contains the original U-Net outputs plus `bwer_v2/`. See
 [unet_sen1floods11.md](D:/Codex/rsfm-fairness-audit/docs/reproduction/unet_sen1floods11.md).
 
+For the stronger U-Net-family closure baseline:
+
+```powershell
+python scripts/run_unet_sen1floods11_colab.py `
+  --architecture s2_resnet34_unet `
+  --epochs 50 `
+  --batch-size 4 `
+  --learning-rate 1e-3 `
+  --output-dir /content/outputs/s2_resnet34_unet_sen1floods11_full_512 `
+  --output-zip /content/drive/MyDrive/rsfm_fairness_audit/outputs/s2_resnet34_unet_sen1floods11_full_512.zip `
+  --force
+```
+
+For the diagnostic spectral baseline:
+
+```powershell
+python scripts/run_spectral_sen1floods11_colab.py `
+  --index mndwi `
+  --threshold 0.0 `
+  --threshold-policy fixed `
+  --force
+```
+
 Standalone Sen1Floods11 Prithvi-vs-U-Net comparison:
 
 ```powershell
@@ -271,6 +294,19 @@ python -m rsfm_fairness_audit.cli compare-runs `
   --run unet=outputs/unet_sen1floods11_full_512 `
   --output-dir outputs/comparisons/sen1floods11_prithvi_vs_unet_512
 ```
+
+Four-run closure comparison, after Prithvi TL, vanilla U-Net, spectral MNDWI,
+and S2 ResNet34-U-Net output zips exist:
+
+```powershell
+python scripts/run_sen1floods11_closure_colab.py --force
+```
+
+The closure package writes
+`outputs/comparisons/sen1floods11_closure/` with `closure_report.md`,
+`closure_comparison_summary.csv`, `closure_average_vs_bwer.csv`,
+`closure_event_level_comparison.csv`, and `closure_tail_event_overlap.csv`.
+See [sen1floods11_closure.md](D:/Codex/rsfm-fairness-audit/docs/reproduction/sen1floods11_closure.md).
 
 ## BWER Slice Fairness Audit
 

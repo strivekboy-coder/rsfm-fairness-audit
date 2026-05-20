@@ -18,6 +18,7 @@ ALLOWED_ADAPTATION_PROTOCOLS = {
     "task_adapted_decoder",
     "full_finetune",
     "supervised_baseline",
+    "diagnostic_spectral_rule",
 }
 
 ALLOWED_SPLIT_PROTOCOLS = {

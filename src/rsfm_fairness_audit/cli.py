@@ -14,6 +14,7 @@ from rsfm_fairness_audit.pipeline import (
 )
 from rsfm_fairness_audit.preflight import checks_to_json, run_real_preflight
 from rsfm_fairness_audit.segmentation import run_segmentation_smoke
+from rsfm_fairness_audit.spectral_baseline import SpectralBaselineConfig, run_spectral_sen1floods11
 from rsfm_fairness_audit.slice_support import evaluate_slice_support_from_files
 from rsfm_fairness_audit.unet_baseline import UnetConfig, run_unet_sen1floods11
 
@@ -85,6 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Model/run pair in the form model_name=path_to_output_dir. Repeat for DOFA and CROMA.",
     )
     compare.add_argument("--output-dir", type=Path, default=Path("outputs/model_comparison"))
+    compare.add_argument("--closure", action="store_true", help="Also emit Sen1Floods11 closure_* comparison outputs.")
 
     sensor_compare = subparsers.add_parser("compare-sensor-modes", help="Compare CROMA SAR/optical/both completed runs.")
     sensor_compare.add_argument("--dataset", default="ben_ge")
@@ -115,6 +117,8 @@ def build_parser() -> argparse.ArgumentParser:
     unet.add_argument("--learning-rate", type=float, default=1e-3)
     unet.add_argument("--weight-decay", type=float, default=1e-4)
     unet.add_argument("--base-channels", type=int, default=16)
+    unet.add_argument("--architecture", choices=["vanilla_unet", "s2_resnet34_unet"], default="vanilla_unet")
+    unet.add_argument("--pretrained-encoder", action="store_true", help="Use torchvision ResNet34 ImageNet weights and adapt conv1 from 3 to 6 bands.")
     unet.add_argument("--early-stopping-patience", type=int, default=10)
     unet.add_argument("--early-stopping-min-delta", type=float, default=1e-4)
     unet.add_argument("--split-protocol", choices=["random_chip_split", "event_held_out"], default="random_chip_split")
@@ -128,6 +132,20 @@ def build_parser() -> argparse.ArgumentParser:
     unet.add_argument("--eval-split", choices=["train", "val", "test", "all"], default="test")
     unet.add_argument("--run-bwer-v2", action="store_true", help="Run post-hoc BWER-Audit v2 after U-Net evaluation.")
     unet.add_argument("--debug-samples", type=int, default=0, help="Reserved for future quick-look debug samples.")
+
+    spectral = subparsers.add_parser("run-spectral-sen1floods11", help="Evaluate diagnostic NDWI/MNDWI/NIR Sen1Floods11 spectral segmentation baselines.")
+    spectral.add_argument("--data-root", "--dataset-root", dest="data_root", type=Path, required=True)
+    spectral.add_argument("--output-dir", type=Path, default=Path("outputs/spectral_mndwi_sen1floods11_full_512"))
+    spectral.add_argument("--index", choices=["ndwi", "mndwi", "nir_darkness"], default="mndwi")
+    spectral.add_argument("--threshold", type=float, default=0.0)
+    spectral.add_argument("--threshold-policy", choices=["fixed", "validation", "oracle_diagnostic"], default="fixed")
+    spectral.add_argument("--split-protocol", choices=["standard_split", "random_chip_split"], default="standard_split")
+    spectral.add_argument("--val-fraction", type=float, default=0.15)
+    spectral.add_argument("--test-fraction", type=float, default=0.20)
+    spectral.add_argument("--eval-split", choices=["val", "test", "all"], default="all")
+    spectral.add_argument("--seed", type=int, default=42)
+    spectral.add_argument("--max-samples", type=int, help="Limit chips for a smoke run. Use 0 or omit for all chips.")
+    spectral.add_argument("--run-bwer-v2", action="store_true", help="Run post-hoc BWER-Audit v2 after spectral evaluation.")
 
     bwer = subparsers.add_parser("evaluate-bwer", help="Evaluate BWER slice fairness from a normalized audit table.")
     bwer.add_argument("--audit-table", type=Path, required=True)
@@ -258,7 +276,7 @@ def main() -> None:
                 raise SystemExit("--run must use the form model_name=path_to_output_dir")
             model_name, run_dir = item.split("=", 1)
             runs[model_name.strip()] = Path(run_dir.strip())
-        artifacts = compare_model_runs(runs, args.output_dir, dataset_name=args.dataset)
+        artifacts = compare_model_runs(runs, args.output_dir, dataset_name=args.dataset, closure=args.closure)
         print(f"Model comparison complete: {args.output_dir}")
         for name, path in artifacts.items():
             print(f"{name}: {path}")
@@ -300,6 +318,8 @@ def main() -> None:
                 learning_rate=args.learning_rate,
                 weight_decay=args.weight_decay,
                 base_channels=args.base_channels,
+                architecture=args.architecture,
+                pretrained_encoder=args.pretrained_encoder,
                 early_stopping_patience=args.early_stopping_patience,
                 early_stopping_min_delta=args.early_stopping_min_delta,
                 split_protocol=args.split_protocol,
@@ -316,6 +336,27 @@ def main() -> None:
             )
         )
         print(f"U-Net Sen1Floods11 baseline complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "run-spectral-sen1floods11":
+        max_samples = None if args.max_samples in (None, 0) else args.max_samples
+        artifacts = run_spectral_sen1floods11(
+            SpectralBaselineConfig(
+                data_root=args.data_root,
+                output_dir=args.output_dir,
+                index=args.index,
+                threshold=args.threshold,
+                threshold_policy=args.threshold_policy,
+                split_protocol=args.split_protocol,
+                val_fraction=args.val_fraction,
+                test_fraction=args.test_fraction,
+                eval_split=args.eval_split,
+                seed=args.seed,
+                max_samples=max_samples,
+                run_bwer_v2=args.run_bwer_v2,
+            )
+        )
+        print(f"Spectral Sen1Floods11 baseline complete: {args.output_dir}")
         for name, path in artifacts.items():
             print(f"{name}: {path}")
     elif args.command == "evaluate-bwer":

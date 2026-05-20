@@ -183,3 +183,38 @@ The standardised mean risk over flood extent is much higher than raw mean risk
 (0.4502 vs 0.2167). This does not mean the model's aggregate IoU changed.
 Standardised-BWER is a composition-standardised tail-risk diagnostic under a
 reference composition, not a direct replacement for raw aggregate performance.
+
+## U-Net Supervised Baseline and Prithvi Comparison
+
+Recorded: 2026-05-20.
+
+The first completed U-Net supervised baseline establishes a useful Protocol C
+comparison point for Step 3. It uses `adaptation_protocol=supervised_baseline`
+and `split_protocol=random_chip_split`, so it is a deployment-practice
+baseline and not event-held-out generalization.
+
+Comparison against the official Prithvi TL run:
+- Prithvi TL aggregate IoU/Dice: 0.8052 / 0.8921.
+- U-Net aggregate IoU/Dice: 0.7511 / 0.8579.
+- Prithvi Raw-BWER(event_id): 0.1175.
+- U-Net Raw-BWER(event_id): 0.3189.
+- Prithvi Standardised-BWER(event_id | flood_extent_bin): 0.1566.
+- U-Net Standardised-BWER(event_id | flood_extent_bin): 0.2295.
+- Both models identify Pakistan as the worst event and Bolivia; Pakistan as
+  tail events.
+
+Interpretation:
+The U-Net baseline is competitive enough in aggregate segmentation quality to
+be a meaningful comparator, but its event-level Raw-BWER is substantially worse
+than Prithvi TL. This strengthens the central average-vs-tail-risk story:
+aggregate IoU/Dice and deployment-relevant event-tail risk can rank models
+differently in practical importance. The shared Bolivia/Pakistan tail also
+suggests these events are robust stress cases across both the official
+task-adapted Prithvi decoder and a classical supervised U-Net baseline.
+
+Protocol caution:
+This comparison is protocol-aware, not architecture-only. Prithvi TL is an
+official task-adapted checkpoint evaluated on the available full set, whereas
+U-Net is trained as a supervised baseline under random chip split and evaluated
+on its test split. Do not claim event-held-out generalization from the U-Net
+result.

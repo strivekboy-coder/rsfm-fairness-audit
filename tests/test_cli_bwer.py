@@ -30,6 +30,9 @@ def test_run_unet_cli_passes_protocol_and_training_args(monkeypatch) -> None:
             "2",
             "--learning-rate",
             "0.0005",
+            "--architecture",
+            "s2_resnet34_unet",
+            "--pretrained-encoder",
             "--early-stopping-patience",
             "7",
             "--split-protocol",
@@ -50,10 +53,52 @@ def test_run_unet_cli_passes_protocol_and_training_args(monkeypatch) -> None:
     assert config.epochs == 3
     assert config.batch_size == 2
     assert config.learning_rate == 0.0005
+    assert config.architecture == "s2_resnet34_unet"
+    assert config.pretrained_encoder is True
     assert config.early_stopping_patience == 7
     assert config.split_protocol == "event_held_out"
     assert config.held_out_events == ("Pakistan", "Bolivia")
     assert config.eval_split == "test"
+    assert config.run_bwer_v2 is True
+    assert config.max_samples is None
+
+
+def test_run_spectral_cli_passes_threshold_args(monkeypatch) -> None:
+    captured = {}
+
+    def fake_run(config):
+        captured["config"] = config
+        return {"run_metadata": Path("outputs/test_spectral_cli/run_metadata.json")}
+
+    monkeypatch.setattr("rsfm_fairness_audit.cli.run_spectral_sen1floods11", fake_run)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "rsfm-audit",
+            "run-spectral-sen1floods11",
+            "--data-root",
+            "data/sen1floods11_tl_official_full_512",
+            "--output-dir",
+            "outputs/spectral_cli",
+            "--index",
+            "ndwi",
+            "--threshold",
+            "0.1",
+            "--threshold-policy",
+            "fixed",
+            "--eval-split",
+            "all",
+            "--run-bwer-v2",
+            "--max-samples",
+            "0",
+        ],
+    )
+    main()
+    config = captured["config"]
+    assert config.index == "ndwi"
+    assert config.threshold == 0.1
+    assert config.threshold_policy == "fixed"
+    assert config.eval_split == "all"
     assert config.run_bwer_v2 is True
     assert config.max_samples is None
 

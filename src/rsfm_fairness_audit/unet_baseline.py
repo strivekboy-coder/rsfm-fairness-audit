@@ -40,6 +40,8 @@ class UnetConfig:
     learning_rate: float = 1e-3
     weight_decay: float = 1e-4
     base_channels: int = 16
+    architecture: str = "vanilla_unet"
+    pretrained_encoder: bool = False
     early_stopping_patience: int = 10
     early_stopping_min_delta: float = 1e-4
     split_protocol: str = "random_chip_split"
@@ -53,6 +55,18 @@ class UnetConfig:
     eval_split: str = "test"
     run_bwer_v2: bool = False
     debug_samples: int = 0
+
+
+def _model_variant(config: UnetConfig) -> str:
+    if config.architecture == "s2_resnet34_unet":
+        return "s2_resnet34_unet"
+    return "unet_sen1floods11_s2_512"
+
+
+def _display_name(config: UnetConfig) -> str:
+    if config.architecture == "s2_resnet34_unet":
+        return "S2 ResNet34-U-Net / AlbuNet-style baseline"
+    return "Vanilla U-Net Sen1Floods11 S2 512 baseline"
 
 
 def _read_metadata(data_root: Path, max_samples: int | None = None) -> list[dict[str, Any]]:
@@ -237,6 +251,97 @@ class UNetSmall:
         return _UNetSmall(*args, **kwargs)
 
 
+def _adapt_resnet_conv1(conv1: Any, in_channels: int, pretrained: bool) -> Any:
+    torch = _require_torch()
+    nn = torch.nn
+    new_conv = nn.Conv2d(
+        in_channels,
+        conv1.out_channels,
+        kernel_size=conv1.kernel_size,
+        stride=conv1.stride,
+        padding=conv1.padding,
+        bias=conv1.bias is not None,
+    )
+    if pretrained:
+        with torch.no_grad():
+            old_weight = conv1.weight.data
+            new_conv.weight[:, :3] = old_weight
+            mean_weight = old_weight.mean(dim=1, keepdim=True)
+            for channel in range(3, in_channels):
+                new_conv.weight[:, channel : channel + 1] = mean_weight
+            if conv1.bias is not None and new_conv.bias is not None:
+                new_conv.bias.copy_(conv1.bias.data)
+    return new_conv
+
+
+class S2ResNet34UNet:
+    def __new__(cls, *args: Any, **kwargs: Any) -> Any:
+        torch = _require_torch()
+        nn = torch.nn
+        try:
+            from torchvision.models import ResNet34_Weights, resnet34
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("S2 ResNet34-U-Net requires torchvision in the training runtime.") from exc
+
+        class _UpBlock(nn.Module):
+            def __init__(self, in_channels: int, skip_channels: int, out_channels: int) -> None:
+                super().__init__()
+                self.conv = _conv_block(in_channels + skip_channels, out_channels)
+
+            def forward(self, x: Any, skip: Any) -> Any:
+                x = torch.nn.functional.interpolate(x, size=skip.shape[-2:], mode="bilinear", align_corners=False)
+                return self.conv(torch.cat([x, skip], dim=1))
+
+        class _S2ResNet34UNet(nn.Module):
+            def __init__(self, in_channels: int = 6, pretrained_encoder: bool = False) -> None:
+                super().__init__()
+                weights = ResNet34_Weights.DEFAULT if pretrained_encoder else None
+                encoder = resnet34(weights=weights)
+                encoder.conv1 = _adapt_resnet_conv1(encoder.conv1, in_channels, pretrained_encoder)
+                self.encoder_pretrained = pretrained_encoder
+                self.input_channels = in_channels
+                self.stem = nn.Sequential(encoder.conv1, encoder.bn1, encoder.relu)
+                self.pool = encoder.maxpool
+                self.layer1 = encoder.layer1
+                self.layer2 = encoder.layer2
+                self.layer3 = encoder.layer3
+                self.layer4 = encoder.layer4
+                self.up3 = _UpBlock(512, 256, 256)
+                self.up2 = _UpBlock(256, 128, 128)
+                self.up1 = _UpBlock(128, 64, 64)
+                self.up0 = _UpBlock(64, 64, 32)
+                self.head = nn.Sequential(
+                    nn.Conv2d(32, 32, kernel_size=3, padding=1, bias=False),
+                    nn.BatchNorm2d(32),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(32, 1, kernel_size=1),
+                )
+
+            def forward(self, x: Any) -> Any:
+                input_size = x.shape[-2:]
+                s0 = self.stem(x)
+                s1 = self.layer1(self.pool(s0))
+                s2 = self.layer2(s1)
+                s3 = self.layer3(s2)
+                x4 = self.layer4(s3)
+                x = self.up3(x4, s3)
+                x = self.up2(x, s2)
+                x = self.up1(x, s1)
+                x = self.up0(x, s0)
+                x = torch.nn.functional.interpolate(x, size=input_size, mode="bilinear", align_corners=False)
+                return self.head(x)[:, 0]
+
+        return _S2ResNet34UNet(*args, **kwargs)
+
+
+def build_unet_model(config: UnetConfig) -> Any:
+    if config.architecture == "s2_resnet34_unet":
+        return S2ResNet34UNet(in_channels=6, pretrained_encoder=config.pretrained_encoder)
+    if config.architecture == "vanilla_unet":
+        return UNetSmall(in_channels=6, base_channels=config.base_channels)
+    raise ValueError("architecture must be vanilla_unet or s2_resnet34_unet")
+
+
 def masked_bce_dice_loss(logits: Any, masks: Any) -> Any:
     torch = _require_torch()
     valid = masks >= 0
@@ -269,7 +374,7 @@ def _loader(rows: Sequence[dict[str, Any]], data_root: Path, batch_size: int, sh
     )
 
 
-def _evaluate_loader(model: Any, loader: Any, device: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _evaluate_loader(model: Any, loader: Any, device: Any, run_metadata: Mapping[str, Any] | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     torch = _require_torch()
     model.eval()
     total = {"valid_pixel_count": 0, "positive_pixel_count": 0, "predicted_positive_pixel_count": 0, "TP": 0, "FP": 0, "FN": 0, "TN": 0}
@@ -284,6 +389,8 @@ def _evaluate_loader(model: Any, loader: Any, device: Any) -> tuple[dict[str, An
             mask_np = masks.cpu().numpy().astype(np.int16)
             prob_np = probs.cpu().numpy().astype(np.float32)
             for index, meta in enumerate(batch["metadata"]):
+                run_meta = run_metadata or {}
+                model_variant = str(run_meta.get("model_variant", "unet_sen1floods11_s2_512"))
                 counts = segmentation_confusion_counts(mask_np[index], preds[index])
                 for key in total:
                     total[key] += int(counts[key])
@@ -292,10 +399,12 @@ def _evaluate_loader(model: Any, loader: Any, device: Any) -> tuple[dict[str, An
                 row.update(
                     {
                         "dataset": "sen1floods11",
-                        "model": "unet_sen1floods11_s2_512",
+                        "model": model_variant,
                         "model_family": "unet",
+                        "model_variant": model_variant,
+                        "display_name": run_meta.get("display_name", "Vanilla U-Net Sen1Floods11 S2 512 baseline"),
                         "task": "segmentation",
-                        "input_mode": "S2",
+                        "input_mode": run_meta.get("input_mode", "s2_6band_image_only"),
                         "adaptation_protocol": "supervised_baseline",
                         "checkpoint_source": "trained_in_run",
                         "aggregation_level": "chip",
@@ -386,16 +495,21 @@ def _write_combined_warnings(path: Path, extra_warnings: Sequence[str]) -> None:
 
 def _metadata_for_run(rows: Sequence[dict[str, Any]], config: UnetConfig, splits: dict[str, list[dict[str, Any]]], device: Any, best_epoch: int, best_val_iou: float, data_info: Mapping[str, Any]) -> dict[str, Any]:
     first = rows[0]
+    model_variant = _model_variant(config)
     return {
         "model_family": "unet",
-        "model_variant": "unet_sen1floods11_s2_512",
+        "model_variant": model_variant,
+        "display_name": _display_name(config),
         "adaptation_protocol": "supervised_baseline",
-        "training_budget": f"epochs={config.epochs};batch_size={config.batch_size};learning_rate={config.learning_rate};optimizer=adamw;loss=bce_plus_dice;image_size={data_info['resolution']};early_stopping_patience={config.early_stopping_patience};seed={config.seed}",
+        "training_budget": f"epochs={config.epochs};batch_size={config.batch_size};learning_rate={config.learning_rate};optimizer=adamw;loss=bce_plus_dice;image_size={data_info['resolution']};architecture={config.architecture};pretrained_encoder={config.pretrained_encoder};early_stopping_patience={config.early_stopping_patience};seed={config.seed}",
         "split_protocol": config.split_protocol,
         "eval_split": config.eval_split,
         "resolution": data_info["resolution"],
         "input_channels": data_info["input_channels"],
-        "input_mode": "S2",
+        "input_mode": "s2_6band_image_only",
+        "architecture": config.architecture,
+        "pretrained_encoder": config.pretrained_encoder,
+        "first_conv_adaptation": "3_channel_resnet34_weights_repeated_mean_to_channels_4_to_6" if config.pretrained_encoder and config.architecture == "s2_resnet34_unet" else "not_applicable",
         "band_profile": first.get("band_profile", ""),
         "band_indices": first.get("band_indices", ""),
         "band_names": first.get("band_names", ""),
@@ -446,8 +560,11 @@ def run_unet_sen1floods11(config: UnetConfig) -> dict[str, Path]:
         flush=True,
     )
     device = _device(config.device)
-    print(f"[stage] Training U-Net on device={device} epochs={config.epochs} batch_size={config.batch_size}", flush=True)
-    model = UNetSmall(in_channels=6, base_channels=config.base_channels).to(device)
+    print(
+        f"[stage] Training U-Net on device={device} epochs={config.epochs} batch_size={config.batch_size} architecture={config.architecture}",
+        flush=True,
+    )
+    model = build_unet_model(config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     scaler = torch.amp.GradScaler("cuda", enabled=bool(config.amp and device.type == "cuda"))
     train_loader = _loader(splits["train"], config.data_root, config.batch_size, shuffle=True)
@@ -507,8 +624,8 @@ def run_unet_sen1floods11(config: UnetConfig) -> dict[str, Path]:
         raise ValueError(f"Evaluation split {config.eval_split!r} is empty; adjust split settings.")
     print(f"[stage] Evaluating U-Net on split={config.eval_split} chips={len(eval_rows_source)}", flush=True)
     eval_loader = _loader(eval_rows_source, config.data_root, config.batch_size, shuffle=False)
-    _, metric_rows = _evaluate_loader(model, eval_loader, device)
     run_metadata = _metadata_for_run(rows, config, splits, device, best_epoch, best_val_iou, data_info)
+    _, metric_rows = _evaluate_loader(model, eval_loader, device, run_metadata=run_metadata)
     for row in metric_rows:
         row["split"] = config.eval_split
         row["split_protocol"] = config.split_protocol
@@ -536,7 +653,7 @@ def run_unet_sen1floods11(config: UnetConfig) -> dict[str, Path]:
         "training_history": output / "training_history.csv",
         "run_metadata": output / "run_metadata.json",
         "model_debug": output / "model_debug.json",
-        "checkpoint": output / "checkpoints" / "best_unet.pt",
+        "checkpoint": output / "checkpoints" / f"best_{run_metadata['model_variant']}.pt",
         "segmentation_fairness_matrix_event": output / "segmentation_fairness_matrix_event.csv",
         "tables_segmentation_metrics": tables / "segmentation_metrics.csv",
         "tables_event": tables / "segmentation_fairness_matrix_event.csv",
@@ -561,7 +678,7 @@ def run_unet_sen1floods11(config: UnetConfig) -> dict[str, Path]:
     preflight = evaluate_slice_support(
         audit_rows,
         dataset="sen1floods11",
-        model="unet_sen1floods11_s2_512",
+        model=run_metadata["model_variant"],
         task="segmentation",
         output_dir=output,
         candidates=["event_id", "event_id|event", "country|country"],
@@ -574,7 +691,7 @@ def run_unet_sen1floods11(config: UnetConfig) -> dict[str, Path]:
         bwer = evaluate_bwer_table(
             audit_rows,
             dataset="sen1floods11",
-            model="unet_sen1floods11_s2_512",
+            model=run_metadata["model_variant"],
             task="segmentation",
             output_dir=output,
             slice_variable="event_id",

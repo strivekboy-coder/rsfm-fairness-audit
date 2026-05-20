@@ -118,6 +118,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--early-stopping-patience", type=int, default=10)
     parser.add_argument("--early-stopping-min-delta", type=float, default=1e-4)
+    parser.add_argument("--architecture", choices=["vanilla_unet", "s2_resnet34_unet"], default="vanilla_unet")
+    parser.add_argument("--pretrained-encoder", action="store_true")
     parser.add_argument("--split-protocol", choices=["random_chip_split", "event_held_out"], default="random_chip_split")
     parser.add_argument("--held-out-event", action="append", default=[])
     parser.add_argument("--seed", type=int, default=42)
@@ -153,6 +155,8 @@ def main() -> None:
         str(args.batch_size),
         "--learning-rate",
         str(args.learning_rate),
+        "--architecture",
+        args.architecture,
         "--early-stopping-patience",
         str(args.early_stopping_patience),
         "--early-stopping-min-delta",
@@ -167,6 +171,8 @@ def main() -> None:
         args.eval_split,
         "--run-bwer-v2",
     ]
+    if args.pretrained_encoder:
+        cmd.append("--pretrained-encoder")
     for event in args.held_out_event:
         cmd.extend(["--held-out-event", event])
     if args.max_samples:

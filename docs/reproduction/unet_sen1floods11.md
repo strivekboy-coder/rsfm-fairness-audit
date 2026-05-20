@@ -30,6 +30,10 @@ zip.
 - primary segmentation metrics: event-level micro IoU/Dice/F1, precision,
   recall, TP/FP/FN/TN, valid-pixel support, and positive-pixel support
 
+The same training/evaluation entry point also supports
+`--architecture s2_resnet34_unet`, an S2 ResNet34-U-Net / AlbuNet-style
+baseline with a U-Net decoder and a ResNet34 encoder adapted to 6 S2 bands.
+
 Random chip split is useful as the first reproducible supervised baseline, but
 it is not event-held-out generalization. Use `event_held_out` before making
 generalization claims about unseen disaster events.
@@ -71,6 +75,30 @@ python -m rsfm_fairness_audit.cli run-unet-sen1floods11 \
   --eval-split test \
   --run-bwer-v2
 ```
+
+## Stronger U-Net-Family Baseline
+
+Use this for the S2 ResNet34-U-Net / AlbuNet-style closure baseline:
+
+```bash
+python -m rsfm_fairness_audit.cli run-unet-sen1floods11 \
+  --data-root /content/data/sen1floods11_tl_official_full_512 \
+  --output-dir /content/outputs/s2_resnet34_unet_sen1floods11_full_512 \
+  --architecture s2_resnet34_unet \
+  --epochs 50 \
+  --batch-size 4 \
+  --learning-rate 1e-3 \
+  --early-stopping-patience 10 \
+  --split-protocol random_chip_split \
+  --eval-split test \
+  --run-bwer-v2
+```
+
+If `--pretrained-encoder` is supplied, torchvision ResNet34 ImageNet weights
+are loaded and the first convolution is adapted from 3 input channels to 6 S2
+bands by copying RGB weights into the first three channels and using the mean
+RGB filter for the additional channels. Record this metadata when interpreting
+protocol differences.
 
 For an event-held-out diagnostic:
 

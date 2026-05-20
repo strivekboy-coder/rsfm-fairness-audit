@@ -863,12 +863,22 @@ def _write_metric_primitives_report(path: Path, summary: Mapping[str, Any], deri
 
 
 def _write_adaptation_protocol_report(path: Path, meta: Mapping[str, str], model_debug: Mapping[str, Any]) -> None:
-    source = model_debug.get("checkpoint_source", "trained_in_run" if meta.get("adaptation_protocol") == "supervised_baseline" else "official_huggingface")
+    if meta.get("adaptation_protocol") == "diagnostic_spectral_rule":
+        default_source = "not_applicable_spectral_rule"
+    elif meta.get("adaptation_protocol") == "supervised_baseline":
+        default_source = "trained_in_run"
+    else:
+        default_source = "official_huggingface"
+    source = model_debug.get("checkpoint_source", default_source)
     model_name = model_debug.get("model", model_debug.get("model_name", meta["model"]))
     if meta.get("adaptation_protocol") == "supervised_baseline":
         protocol_note = (
             "This audit uses a supervised classical baseline trained in the current run. "
             "It is not a foundation-model checkpoint and should be compared against Prithvi only with adaptation protocol clearly stratified."
+        )
+    elif meta.get("adaptation_protocol") == "diagnostic_spectral_rule":
+        protocol_note = (
+            "This audit uses a diagnostic spectral water-index rule. It has no learned checkpoint and should be used to test whether simple S2 composition explains part of the segmentation behavior."
         )
     elif "prithvi" in meta.get("model", "").lower():
         protocol_note = "This audit uses the official Sen1Floods11 task-adapted decoder route. It is not the earlier frozen-threshold diagnostic route."
@@ -905,6 +915,12 @@ def _write_split_report(path: Path, meta: Mapping[str, str]) -> None:
             "- This result comes from a supervised baseline trained inside this run.",
             "- If `split_protocol=random_chip_split`, event leakage is possible and the result should not be interpreted as event-held-out generalization.",
             "- Event-held-out or leave-one-event-out generalization requires `split_protocol=event_held_out` or a separate leave-one-event-out workflow.",
+        ]
+    elif meta.get("adaptation_protocol") == "diagnostic_spectral_rule":
+        model_context = [
+            "- This result comes from a deterministic spectral rule with no learned training split.",
+            "- Fixed-threshold full-set evaluation is diagnostic evidence, not a held-out learned-model experiment.",
+            "- Oracle or label-selected thresholds must be reported as diagnostic and excluded from primary claims.",
         ]
     else:
         model_context = [

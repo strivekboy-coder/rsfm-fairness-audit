@@ -318,11 +318,12 @@ def compare_model_runs(
     runs: Mapping[str, str | Path],
     output_dir: str | Path,
     dataset_name: str = "bigearthnet",
+    closure: bool = False,
 ) -> dict[str, Path]:
     if any((Path(run_dir_value) / "event_segmentation_metrics.csv").exists() for run_dir_value in runs.values()):
         from rsfm_fairness_audit.segmentation_comparison import compare_segmentation_runs
 
-        return compare_segmentation_runs(runs, output_dir, dataset_name=dataset_name)
+        return compare_segmentation_runs(runs, output_dir, dataset_name=dataset_name, closure=closure)
     output = ensure_dir(output_dir)
     tables_dir = ensure_dir(output / "tables")
     figures_dir = ensure_dir(output / "figures")

@@ -107,6 +107,32 @@ def test_compare_segmentation_runs_writes_standalone_outputs() -> None:
     shutil.rmtree(root, ignore_errors=True)
 
 
+def test_compare_segmentation_runs_writes_closure_outputs() -> None:
+    root = Path("outputs") / f"test_segmentation_closure_{uuid.uuid4().hex}"
+    runs = {
+        "prithvi_tl": root / "prithvi",
+        "vanilla_unet": root / "unet",
+        "spectral_mndwi": root / "spectral",
+        "s2_resnet34_unet": root / "resnet34",
+    }
+    _write_completed_run(runs["prithvi_tl"], "prithvi_tl_sen1floods11", "Prithvi", "task_adapted_decoder", "standard_split")
+    _write_completed_run(runs["vanilla_unet"], "unet_sen1floods11_s2_512", "unet", "supervised_baseline", "random_chip_split", offset=-80)
+    _write_completed_run(runs["spectral_mndwi"], "spectral_mndwi_fixed_ge_0p0", "spectral_rule", "diagnostic_spectral_rule", "standard_split", offset=-160)
+    _write_completed_run(runs["s2_resnet34_unet"], "s2_resnet34_unet", "unet", "supervised_baseline", "random_chip_split", offset=40)
+    out = root / "closure"
+    artifacts = compare_segmentation_runs(runs, out, closure=True)
+    for key in ["closure_comparison_summary", "closure_average_vs_bwer", "closure_event_level_comparison", "closure_tail_event_overlap", "closure_report"]:
+        assert artifacts[key].exists(), key
+    summary = read_csv_rows(out / "closure_comparison_summary.csv")
+    assert len(summary) == 4
+    overlap = read_csv_rows(out / "closure_tail_event_overlap.csv")
+    assert any(row["event_id"] == "Pakistan" for row in overlap)
+    report = (out / "closure_report.md").read_text(encoding="utf-8")
+    assert "Future LOEO and Selective Risk Notes" in report
+    assert "Spectral Baseline Check" in report
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def test_compare_runs_cli_detects_segmentation_outputs(monkeypatch) -> None:
     root = Path("outputs") / f"test_segmentation_comparison_cli_{uuid.uuid4().hex}"
     prithvi = root / "prithvi"

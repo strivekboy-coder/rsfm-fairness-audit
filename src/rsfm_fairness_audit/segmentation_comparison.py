@@ -147,6 +147,8 @@ def _protocol_notes(model: str, adaptation: str, split_protocol: str) -> str:
         notes.append("Prithvi official task-adapted checkpoint; evaluate as adapted foundation-model route.")
     if adaptation == "supervised_baseline" or model.startswith("unet"):
         notes.append("U-Net supervised_baseline; deployment-practice baseline, not a foundation model.")
+    if adaptation == "diagnostic_spectral_rule" or "spectral" in model.lower():
+        notes.append("Spectral-rule diagnostic baseline; no learned weights and no SOTA claim.")
     if split_protocol == "random_chip_split":
         notes.append("random_chip_split is not event-held-out and may include event leakage.")
     return " ".join(notes)
@@ -176,6 +178,7 @@ def compare_segmentation_runs(
     runs: Mapping[str, str | Path],
     output_dir: str | Path,
     dataset_name: str = "sen1floods11",
+    closure: bool = False,
 ) -> dict[str, Path]:
     output = ensure_dir(output_dir)
     figures = ensure_dir(output / "figures")
@@ -211,12 +214,50 @@ def compare_segmentation_runs(
         "raw_vs_standardised_bwer": figures / "raw_vs_standardised_bwer.png",
         "comparison_report": output / "comparison_report.md",
     }
+    if closure:
+        artifacts.update(
+            {
+                "closure_comparison_summary": output / "closure_comparison_summary.csv",
+                "closure_average_vs_bwer": output / "closure_average_vs_bwer.csv",
+                "closure_event_level_comparison": output / "closure_event_level_comparison.csv",
+                "closure_tail_event_overlap": output / "closure_tail_event_overlap.csv",
+                "closure_report": output / "closure_report.md",
+            }
+        )
     write_csv(artifacts["comparison_summary"], summaries)
     write_csv(artifacts["average_vs_bwer"], average_rows)
     write_csv(artifacts["event_level_comparison"], event_rows)
+    if closure:
+        write_csv(artifacts["closure_comparison_summary"], summaries)
+        write_csv(artifacts["closure_average_vs_bwer"], average_rows)
+        write_csv(artifacts["closure_event_level_comparison"], event_rows)
+        write_csv(artifacts["closure_tail_event_overlap"], _tail_overlap_rows(summaries))
     _write_figures(summaries, event_rows, artifacts)
     _write_report(artifacts["comparison_report"], summaries)
+    if closure:
+        _write_closure_report(artifacts["closure_report"], summaries)
     return artifacts
+
+
+def _tail_overlap_rows(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    tail_sets = {
+        str(row["run_name"]): {item for item in str(row.get("tail_events", "")).split(";") if item}
+        for row in summaries
+    }
+    all_tail_events = sorted(set().union(*tail_sets.values())) if tail_sets else []
+    rows = []
+    for event in all_tail_events:
+        present = [run for run, tails in tail_sets.items() if event in tails]
+        rows.append(
+            {
+                "event_id": event,
+                "tail_in_runs": ";".join(present),
+                "tail_run_count": len(present),
+                "all_runs_count": len(tail_sets),
+                "persistent_tail_all_runs": len(present) == len(tail_sets),
+            }
+        )
+    return rows
 
 
 def _write_figures(summaries: list[dict[str, Any]], event_rows: list[dict[str, Any]], artifacts: Mapping[str, Path]) -> None:
@@ -295,5 +336,53 @@ def _write_report(path: Path, summaries: list[dict[str, Any]]) -> None:
         "Prithvi is an official task-adapted checkpoint evaluated on its completed output directory. U-Net is a supervised_baseline under the split protocol recorded in its output, commonly random_chip_split test evaluation. This is a protocol-aware deployment-practice comparison, not a pure architecture-only comparison.",
         "",
         "Do not overclaim event-held-out generalization unless each compared run records an event-held-out or leave-one-event-out split protocol.",
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_closure_report(path: Path, summaries: list[dict[str, Any]]) -> None:
+    ordered_avg = sorted(summaries, key=lambda row: row["aggregate_iou"], reverse=True)
+    ordered_raw = sorted(summaries, key=lambda row: row["raw_bwer_event_id"])
+    ordered_std = sorted(summaries, key=lambda row: row["standardised_bwer_event_id_flood_extent_bin"])
+    reversal_raw = [row["run_name"] for row in ordered_avg] != [row["run_name"] for row in ordered_raw]
+    tail_sets = {
+        str(row["run_name"]): {item for item in str(row.get("tail_events", "")).split(";") if item}
+        for row in summaries
+    }
+    persistent = sorted(set.intersection(*tail_sets.values())) if tail_sets and all(tail_sets.values()) else []
+    spectral = [row for row in summaries if row.get("adaptation_protocol") == "diagnostic_spectral_rule" or "spectral" in str(row.get("model", "")).lower()]
+    strong_unet = [row for row in summaries if "resnet34" in str(row.get("model", "")).lower()]
+    lines = [
+        "# Sen1Floods11 Closure Comparison",
+        "",
+        "This closure package compares completed native segmentation outputs only. It does not rerun model inference, training, or data preparation.",
+        "",
+        f"- Aggregate IoU ranking: {' > '.join(row['run_name'] for row in ordered_avg)}",
+        f"- Raw-BWER ranking, lower is better: {' < '.join(row['run_name'] for row in ordered_raw)}",
+        f"- Standardised-BWER ranking, lower is better: {' < '.join(row['run_name'] for row in ordered_std)}",
+        f"- Average-vs-BWER ranking reversal: {reversal_raw}",
+        f"- Persistent tail events across all runs with tail labels: {';'.join(persistent) if persistent else 'not established from current run set'}",
+        "",
+        "## Protocol-Aware Interpretation",
+        "",
+        "Prithvi TL is an official task-adapted foundation-model checkpoint. Vanilla U-Net and S2 ResNet34-U-Net are supervised baselines under their recorded split protocols. Spectral baselines are diagnostic fixed-rule baselines and should not be reported as learned model SOTA.",
+        "",
+        "The comparison is useful for deployment-practice average-vs-tail-risk analysis, but it is not a pure architecture-only comparison and does not establish event-held-out generalization unless each run records such a split.",
+        "",
+        "## Spectral Baseline Check",
+        "",
+        "Spectral runs should be interpreted as an answer to whether simple S2 water-index rules explain part of the behavior. If their tail events differ from learned models, report that as diagnostic evidence about model-specific failure modes.",
+        f"- Spectral runs present: {';'.join(row['run_name'] for row in spectral) if spectral else 'none in this comparison'}",
+        "",
+        "## Strong U-Net-Family Check",
+        "",
+        "The S2 ResNet34-U-Net / AlbuNet-style run tests whether the vanilla U-Net was too weak. Compare its aggregate IoU and BWER against the vanilla U-Net, not only against Prithvi.",
+        f"- S2 ResNet34-U-Net runs present: {';'.join(row['run_name'] for row in strong_unet) if strong_unet else 'none in this comparison'}",
+        "",
+        "## Future LOEO and Selective Risk Notes",
+        "",
+        "LOEO should hold out one disaster event at a time, train only on the remaining events, evaluate on the held-out event, and then write the same segmentation_metrics.csv, event_segmentation_metrics.csv, BWER v2, and comparison tables. This task intentionally does not implement that workflow.",
+        "",
+        "Selective Risk requires saved probability, logit, or confidence fields. Current U-Net outputs include sigmoid confidence summaries but not full saved probability maps; Prithvi TL may include confidence diagnostics depending on run settings; spectral rules have deterministic scores but no calibrated confidence. Treat selective risk as unavailable unless the completed run saves enough per-pixel or per-chip confidence outputs for fixed-coverage retention analysis.",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
