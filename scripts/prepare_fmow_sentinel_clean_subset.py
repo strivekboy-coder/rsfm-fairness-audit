@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import heapq
 import json
 import tarfile
 from collections import Counter, defaultdict
@@ -233,12 +234,22 @@ def select_augmentation_rows(
     target_by_split: Mapping[str, int],
     seed: int,
     support_fields: Sequence[str] = SUPPORT_AUGMENT_FIELDS,
+    batch_size: int = 1000,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Select additional samples by prioritizing weak slice support."""
+    """Select additional samples by prioritizing weak slice support.
+
+    The first implementation used one-sample-at-a-time greedy selection. That is
+    methodologically clean but too slow for 20k+ fMoW augmentation because it
+    rescans hundreds of thousands of candidates after every chosen sample. This
+    batched version keeps the same support-aware scoring objective while
+    updating supports after small batches, which is deterministic and practical
+    for Colab-scale subset preparation.
+    """
     existing_ids = {_row_identity(row) for row in existing_rows if _row_identity(row)}
     selected: list[dict[str, Any]] = []
     current_rows = [dict(row) for row in existing_rows]
     rng = np.random.default_rng(seed)
+    batch_size = max(1, int(batch_size))
     for split in sorted(target_by_split):
         current_split = [row for row in current_rows if str(row.get("split", "")) == split]
         needed = max(0, int(target_by_split[split]) - len(current_split))
@@ -254,7 +265,12 @@ def select_augmentation_rows(
         for row in candidates:
             # Stable seeded jitter only affects exact ties.
             row["_jitter"] = float(rng.random() * 1e-9)
-        for _ in range(needed):
+        print(
+            f"[selection] split={split} existing={len(current_split)} "
+            f"target={target_by_split[split]} need={needed} candidates={len(candidates)}"
+        )
+        selected_for_split = 0
+        while needed > 0 and candidates:
             if not candidates:
                 break
             counts = _support_counts(current_rows, support_fields)
@@ -268,19 +284,29 @@ def select_augmentation_rows(
                 value += float(row.get("_jitter", 0.0))
                 return value, str(row.get("archive_path", ""))
 
-            best_index, best = max(enumerate(candidates), key=lambda item: score(item[1]))
-            chosen = dict(best)
-            chosen.pop("_jitter", None)
-            selected.append(chosen)
-            current_rows.append(chosen)
-            existing_ids.add(_row_identity(chosen))
-            candidates.pop(best_index)
+            take = min(needed, batch_size, len(candidates))
+            top = heapq.nlargest(take, enumerate(candidates), key=lambda item: score(item[1]))
+            top_indices = {index for index, _row in top}
+            for _index, best in top:
+                chosen = dict(best)
+                chosen.pop("_jitter", None)
+                selected.append(chosen)
+                current_rows.append(chosen)
+                existing_ids.add(_row_identity(chosen))
+            candidates = [row for index, row in enumerate(candidates) if index not in top_indices]
+            needed -= take
+            selected_for_split += take
+            print(
+                f"[selection] split={split} selected={selected_for_split} "
+                f"remaining_need={needed} remaining_candidates={len(candidates)}"
+            )
     summary = {
         "target_by_split": dict(target_by_split),
         "existing_by_split": dict(Counter(str(row.get("split", "")) for row in existing_rows)),
         "selected_by_split": dict(Counter(str(row.get("split", "")) for row in selected)),
         "final_by_split": dict(Counter(str(row.get("split", "")) for row in current_rows)),
         "support_priority_fields": list(support_fields),
+        "selection_batch_size": batch_size,
     }
     return selected, summary
 
@@ -457,16 +483,26 @@ def _extract_selected_rows(
     output: Path,
     validation_report: Path,
     warnings_path: Path,
+    progress_every_members: int = 10000,
+    progress_every_extracted: int = 500,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], int, int]:
     warnings: list[str] = []
     validation_rows: list[dict[str, Any]] = []
     clean_rows: list[dict[str, Any]] = []
     selected_by_path = {str(row["archive_path"]): row for row in selected}
     found_paths: set[str] = set()
+    scanned_members = 0
+    print(f"[extract] target_count={len(selected_by_path)} archive={archive_path}")
     with tarfile.open(archive_path, "r:gz") as tar:
         for member in tar:
+            scanned_members += 1
             member_name = member.name[2:] if member.name.startswith("./") else member.name
             if not member.isfile() or member_name not in selected_by_path:
+                if progress_every_members and scanned_members % progress_every_members == 0:
+                    print(
+                        f"[extract] scanned_members={scanned_members} "
+                        f"found={len(found_paths)}/{len(selected_by_path)} valid={len(clean_rows)}"
+                    )
                 continue
             found_paths.add(member_name)
             destination = _safe_member_path(member_name, output)
@@ -487,6 +523,11 @@ def _extract_selected_rows(
                 clean_rows.append(row)
             else:
                 warnings.append(f"Invalid raster excluded: {member_name}: {validation['reason']}")
+            if progress_every_extracted and len(found_paths) % progress_every_extracted == 0:
+                print(
+                    f"[extract] extracted_targets={len(found_paths)}/{len(selected_by_path)} "
+                    f"valid={len(clean_rows)} latest={member_name}"
+                )
     missing = sorted(set(selected_by_path) - found_paths)
     warnings.extend(f"Selected archive path not found: {path}" for path in missing[:500])
     write_csv(validation_report, validation_rows)
@@ -507,7 +548,13 @@ def augment_subset(args: argparse.Namespace) -> dict[str, Path]:
     target_by_split = _split_targets(args)
     if not target_by_split:
         raise ValueError("Augmentation requires --target-total or --target-train/--target-val.")
-    selected, selection_summary = select_augmentation_rows(existing_rows, metadata_rows, target_by_split, args.seed)
+    selected, selection_summary = select_augmentation_rows(
+        existing_rows,
+        metadata_rows,
+        target_by_split,
+        args.seed,
+        batch_size=args.augmentation_batch_size,
+    )
     for row in selected:
         row["target_path"] = row["archive_path"]
         row["extracted_image_path"] = row["archive_path"]
@@ -529,6 +576,8 @@ def augment_subset(args: argparse.Namespace) -> dict[str, Path]:
         output,
         artifacts["raster_validation_report_augmented"],
         artifacts["warnings_augmented"],
+        progress_every_members=args.progress_every_members,
+        progress_every_extracted=args.progress_every_extracted,
     )
     combined = [dict(row) for row in existing_rows] + clean_added
     combined.sort(key=lambda row: (str(row.get("split", "")), str(row.get("archive_path", row.get("image_path", "")))))
@@ -572,6 +621,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target-total", type=int, help="Final target size for augmentation mode, e.g. 30000.")
     parser.add_argument("--target-train", type=int, help="Final train target for augmentation mode.")
     parser.add_argument("--target-val", type=int, help="Final val target for augmentation mode.")
+    parser.add_argument("--augmentation-batch-size", type=int, default=1000, help="Support-aware augmentation selection batch size.")
+    parser.add_argument("--progress-every-members", type=int, default=10000, help="Print tar scan progress every N archive members during augmentation extraction.")
+    parser.add_argument("--progress-every-extracted", type=int, default=500, help="Print extraction progress every N matched targets during augmentation extraction.")
     parser.add_argument("--stratify-field", action="append", default=[], help="Additional stratification field. Defaults to category and country.")
     parser.add_argument("--seed", type=int, default=42)
     return parser
