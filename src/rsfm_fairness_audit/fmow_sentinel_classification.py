@@ -43,6 +43,7 @@ class FmowClassificationConfig:
     train_split: str = "train"
     eval_split: str = "val"
     max_samples: int | None = None
+    max_samples_per_split: int | None = None
     image_size: int = 96
     batch_size: int = 32
     seed: int = 42
@@ -216,17 +217,21 @@ class _NearestCentroidClassifier:
         return [self.classes[int(index)] for index in np.argmin(distances, axis=1)]
 
 
-def _load_metadata(path: Path, max_samples: int | None, seed: int) -> list[dict[str, Any]]:
+def _limit_rows(rows: Sequence[dict[str, Any]], limit: int | None, seed: int) -> list[dict[str, Any]]:
+    if limit and limit > 0 and len(rows) > limit:
+        rng = np.random.default_rng(seed)
+        indices = sorted(rng.choice(len(rows), size=limit, replace=False).tolist())
+        return [dict(rows[index]) for index in indices]
+    return list(rows)
+
+
+def _load_metadata(path: Path) -> list[dict[str, Any]]:
     rows = [dict(row) for row in read_csv_rows(path)]
     for index, row in enumerate(rows):
         row["sample_id"] = _sample_id(row, index)
         row["category"] = row.get("category") or row.get("label") or row.get("class_label") or ""
         row["split"] = row.get("split") or "all"
         _derive_date_fields(row)
-    if max_samples and max_samples > 0 and len(rows) > max_samples:
-        rng = np.random.default_rng(seed)
-        indices = sorted(rng.choice(len(rows), size=max_samples, replace=False).tolist())
-        rows = [rows[index] for index in indices]
     return rows
 
 
@@ -387,9 +392,10 @@ def _write_report(output_dir: Path, predictions: Sequence[Mapping[str, Any]], wa
 
 def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[str, Path]:
     output = ensure_dir(config.output_dir)
-    rows = _load_metadata(config.metadata_csv, config.max_samples, config.seed)
-    train_rows = _split_rows(rows, config.train_split)
-    eval_rows = _split_rows(rows, config.eval_split)
+    rows = _load_metadata(config.metadata_csv)
+    split_limit = config.max_samples_per_split if config.max_samples_per_split is not None else config.max_samples
+    train_rows = _limit_rows(_split_rows(rows, config.train_split), split_limit, config.seed)
+    eval_rows = _limit_rows(_split_rows(rows, config.eval_split), split_limit, config.seed + 1)
     if not train_rows:
         raise ValueError(f"No training rows found for split={config.train_split!r}.")
     if not eval_rows:

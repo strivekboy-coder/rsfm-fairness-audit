@@ -219,6 +219,74 @@ Do not use the older loose copies under
 intermediate convenience copies; `cache/fmow_sentinel/metadata/final/` is the
 reproducible metadata source of record.
 
+## Clean Subset Extraction From Official Archive
+
+Step 3 model prototypes should not fully extract the official archive. The
+official archive is large and contains roughly 882k Sentinel-2 TIFF files.
+Download or place the archive on local Colab storage, for example:
+
+```text
+/content/fmow-sentinel.tar.gz
+```
+
+The official member path convention is:
+
+```text
+fmow-sentinel/<split>/<category>/<category>_<location_id>/<category>_<location_id>_<image_id>.tif
+```
+
+Use the clean subset preparation script to select target paths from metadata
+first, extract only those archive members, and validate every extracted TIFF:
+
+```bash
+python scripts/prepare_fmow_sentinel_clean_subset.py \
+  --archive /content/fmow-sentinel.tar.gz \
+  --metadata-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_sample_manifest_final_v1.csv \
+  --output-dir /content/data/fmow_sentinel_clean_subset_v1 \
+  --split train \
+  --split val \
+  --max-samples-per-split 5000 \
+  --stratify-field category \
+  --stratify-field country \
+  --stratify-field region \
+  --stratify-field latitude_band \
+  --seed 42
+```
+
+If the canonical sample-level manifest is missing, the same script can rebuild
+it from SatMAE train/val CSVs plus the final location-level geography metadata:
+
+```bash
+python scripts/prepare_fmow_sentinel_clean_subset.py \
+  --archive /content/fmow-sentinel.tar.gz \
+  --satmae-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/train.csv \
+  --satmae-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/val.csv \
+  --location-geography-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_geography_final_v1.csv \
+  --output-dir /content/data/fmow_sentinel_clean_subset_v1 \
+  --split train \
+  --split val \
+  --max-samples-per-split 5000 \
+  --seed 42
+```
+
+This fallback still uses location-level geography enrichment. It must not be
+described as an image-level exact geography join.
+
+The script writes:
+
+- `target_paths.csv`
+- `include_list.txt`
+- `clean_subset_manifest.csv`
+- `support_summary.csv`
+- `extraction_summary.csv`
+- `raster_validation_report.csv`
+- `warnings.json`
+
+Only rasters that are readable, non-empty, and contain 13 Sentinel-2 bands are
+included in `clean_subset_manifest.csv`. Missing members, corrupt files, and
+band-count mismatches are recorded in `warnings.json` and
+`raster_validation_report.csv`.
+
 ## Slice Support
 
 Candidate slices:
@@ -367,3 +435,100 @@ The comparison reports aggregate accuracy, Raw-BWER(country), and
 class-standardised country BWER where the completed run outputs support it.
 Use these together: high average accuracy does not by itself imply low
 geography tail risk.
+
+## Step 3 Result Contract And Handoff
+
+Recommended result layout:
+
+```text
+outputs/fmow_sentinel_step3/<run_name>/
+  data/
+    clean_subset_manifest.csv
+    subset_support_summary.csv
+    raster_validation_report.csv
+    warnings.json
+  supervised_baseline/
+    predictions.csv
+    metrics_summary.csv
+    run_metadata.json
+  dofa_frozen_probe/
+    predictions.csv
+    metrics_summary.csv
+    run_metadata.json
+  bwer/
+    bwer_summary.csv
+    bwer_by_slice.csv
+    alpha_sensitivity.csv
+    support_sensitivity.csv
+    warnings.json
+  comparison/
+    comparison_summary.csv
+    average_vs_bwer.csv
+    report.md
+  archive_manifest.json
+  handoff_checklist.md
+```
+
+For single-model prototype runs, the existing run-level layout
+`<run_dir>/predictions.csv`, `<run_dir>/audit_table.csv`, and
+`<run_dir>/bwer/` is also accepted by the validators.
+
+Validate a completed run directory:
+
+```bash
+python -m rsfm_fairness_audit.cli validate-fmow-step3-results \
+  --run-dir /content/outputs/fmow_sentinel_supervised_stats_val \
+  --full-archive-downloaded-locally true \
+  --full-extraction-avoided true \
+  --streaming-partial-extraction-excluded true
+```
+
+This writes:
+
+- `prediction_table_validation.json`
+- `prediction_table_validation.md`
+- `bwer_output_validation.json`
+- `bwer_output_validation.md`
+- `archive_manifest.json`
+- `provenance_report.md`
+- `handoff_checklist.md`
+
+Package the handoff zip without raster imagery:
+
+```bash
+python -m rsfm_fairness_audit.cli package-fmow-step3-handoff \
+  --run-dir /content/outputs/fmow_sentinel_supervised_stats_val \
+  --output-zip /content/drive/MyDrive/rsfm_fairness_audit/outputs/fmow_step3_supervised_stats_handoff.zip
+```
+
+The handoff package includes reports, manifests, prediction tables, BWER
+outputs, metadata summaries, warnings, and checksums. It excludes `.tif`,
+`.npy`, `.npz`, HDF5, and other raster/array payloads by default. Use
+`--include-rasters` only for a deliberately small artifact where packaging
+images is intended.
+
+Current download and data handling protocol:
+
+- Download the full official archive to Colab local storage such as
+  `/content/data` or `/content`.
+- Use `aria2c` with multi-connection resume when downloading in Colab.
+- Do not fully extract the archive. Full extraction creates many small TIFF
+  files and increases disk, inode, and I/O failure risk.
+- Extract the clean subset from the local tarball using metadata-derived target
+  paths and validate every raster.
+- Save clean subset manifests, validation reports, prediction tables, BWER
+  outputs, provenance, and handoff zips back to Drive.
+- Do not use earlier streaming partial-extraction experiments as formal data.
+
+Files to preserve for reproducibility:
+
+- final enriched metadata
+- country-region map
+- `target_paths.csv`
+- `include_list.txt`
+- `clean_subset_manifest.csv`
+- `raster_validation_report.csv`
+- prediction tables
+- BWER outputs
+- `archive_manifest.json`
+- handoff zip

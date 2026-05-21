@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from rsfm_fairness_audit.cli import main
+from rsfm_fairness_audit.adapters.dofa import DOFAAdapter
 from rsfm_fairness_audit.fmow_sentinel_classification import (
     FmowClassificationConfig,
     compare_fmow_runs,
@@ -82,6 +83,16 @@ def test_fmow_13band_loader_accepts_channels_first_npy() -> None:
     _cleanup(root)
 
 
+def test_dofa_fmow_config_is_13band_and_download_is_explicit() -> None:
+    adapter = DOFAAdapter.from_config_file("configs/models/dofa_fmow_sentinel.yaml")
+    assert adapter.band_profile == "sentinel2_13band_fmow"
+    assert adapter.expected_bands == 13
+    assert adapter.wavelengths is not None
+    assert len(adapter.wavelengths) == 13
+    assert adapter.image_size == 224
+    assert adapter.allow_torch_hub_download is False
+
+
 def test_fmow_supervised_stats_run_writes_bwer_compatible_outputs() -> None:
     root = Path("outputs") / f"test_fmow_cls_{uuid.uuid4().hex}"
     root.mkdir(parents=True)
@@ -139,4 +150,24 @@ def test_fmow_geography_bwer_cli_and_compare_two_runs(monkeypatch) -> None:
     summary = read_csv_rows(root / "comparison" / "comparison_summary.csv")
     assert len(summary) == 2
     assert "raw_bwer_country" in summary[0]
+    _cleanup(root)
+
+
+def test_fmow_max_samples_is_applied_after_train_eval_split() -> None:
+    root = Path("outputs") / f"test_fmow_max_samples_{uuid.uuid4().hex}"
+    root.mkdir(parents=True)
+    metadata = _write_fmow_fixture(root, n_train_per_class=4, n_val_per_class_country=4)
+    out = root / "run"
+    run_fmow_sentinel_classification(
+        FmowClassificationConfig(
+            metadata_csv=metadata,
+            data_root=root,
+            output_dir=out,
+            image_size=8,
+            max_samples=2,
+        )
+    )
+    run_metadata = (out / "run_metadata.json").read_text(encoding="utf-8")
+    assert '"train_rows_readable": 2' in run_metadata
+    assert '"eval_rows_readable": 2' in run_metadata
     _cleanup(root)

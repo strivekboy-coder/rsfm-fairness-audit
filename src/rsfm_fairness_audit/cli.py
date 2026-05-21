@@ -18,6 +18,12 @@ from rsfm_fairness_audit.fmow_sentinel_classification import (
     run_fmow_sentinel_classification,
 )
 from rsfm_fairness_audit.fmow_sentinel_preflight import FmowPreflightConfig, run_fmow_sentinel_preflight
+from rsfm_fairness_audit.fmow_step3_contract import (
+    FmowStep3PackageConfig,
+    FmowStep3ValidationConfig,
+    package_fmow_step3_handoff,
+    validate_fmow_step3_results,
+)
 from rsfm_fairness_audit.loeo import aggregate_loeo_runs
 from rsfm_fairness_audit.pipeline import (
     build_real_adapters,
@@ -155,7 +161,8 @@ def build_parser() -> argparse.ArgumentParser:
     fmow_cls.add_argument("--model-config", type=Path, default=Path("configs/models/dofa_fmow_sentinel.yaml"))
     fmow_cls.add_argument("--train-split", default="train")
     fmow_cls.add_argument("--eval-split", default="val")
-    fmow_cls.add_argument("--max-samples", type=int, help="Optional metadata subset cap for prototype runs. Omit or pass 0 for all rows.")
+    fmow_cls.add_argument("--max-samples", type=int, help="Backward-compatible per-split prototype cap. Omit or pass 0 for all rows.")
+    fmow_cls.add_argument("--max-samples-per-split", type=int, help="Explicit per-split cap applied after train/eval split filtering.")
     fmow_cls.add_argument("--image-size", type=int, default=96)
     fmow_cls.add_argument("--batch-size", type=int, default=32)
     fmow_cls.add_argument("--seed", type=int, default=42)
@@ -176,6 +183,20 @@ def build_parser() -> argparse.ArgumentParser:
     fmow_compare = subparsers.add_parser("compare-fmow-runs", help="Compare completed fMoW-Sentinel classification+BWER runs.")
     fmow_compare.add_argument("--run", action="append", required=True, help="Run pair in the form run_name=path_to_output_dir.")
     fmow_compare.add_argument("--output-dir", type=Path, required=True)
+
+    fmow_validate = subparsers.add_parser("validate-fmow-step3-results", help="Validate fMoW-Sentinel Step 3 result contract and write handoff readiness files.")
+    fmow_validate.add_argument("--run-dir", type=Path, required=True)
+    fmow_validate.add_argument("--output-dir", type=Path, help="Directory for validation outputs; defaults to --run-dir.")
+    fmow_validate.add_argument("--run-name")
+    fmow_validate.add_argument("--archive-source-url", default="https://stacks.stanford.edu/file/druid:vg497cb6002/fmow-sentinel.tar.gz")
+    fmow_validate.add_argument("--full-archive-downloaded-locally", choices=["true", "false", "unknown"], default="unknown")
+    fmow_validate.add_argument("--full-extraction-avoided", default="true")
+    fmow_validate.add_argument("--streaming-partial-extraction-excluded", default="true")
+
+    fmow_package = subparsers.add_parser("package-fmow-step3-handoff", help="Package a completed fMoW-Sentinel Step 3 result directory into a small handoff zip.")
+    fmow_package.add_argument("--run-dir", type=Path, required=True)
+    fmow_package.add_argument("--output-zip", type=Path)
+    fmow_package.add_argument("--include-rasters", action="store_true", help="Include raster/image files. Off by default.")
 
     seg = subparsers.add_parser("run-segmentation-real", help="Run native Sen1Floods11 segmentation metrics, preflight, and BWER audit.")
     seg.add_argument("--dataset", choices=["sen1floods11"], required=True)
@@ -444,6 +465,7 @@ def main() -> None:
                 train_split=args.train_split,
                 eval_split=args.eval_split,
                 max_samples=max_samples,
+                max_samples_per_split=None if args.max_samples_per_split in (None, 0) else args.max_samples_per_split,
                 image_size=args.image_size,
                 batch_size=args.batch_size,
                 seed=args.seed,
@@ -480,6 +502,35 @@ def main() -> None:
             runs[run_name.strip()] = Path(run_dir.strip())
         artifacts = compare_fmow_runs(runs, args.output_dir)
         print(f"fMoW-Sentinel run comparison complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "validate-fmow-step3-results":
+        local_archive = None
+        if args.full_archive_downloaded_locally != "unknown":
+            local_archive = args.full_archive_downloaded_locally == "true"
+        artifacts = validate_fmow_step3_results(
+            FmowStep3ValidationConfig(
+                run_dir=args.run_dir,
+                output_dir=args.output_dir,
+                run_name=args.run_name,
+                archive_source_url=args.archive_source_url,
+                full_archive_downloaded_locally=local_archive,
+                full_extraction_avoided=_parse_bool(args.full_extraction_avoided),
+                streaming_partial_extraction_excluded=_parse_bool(args.streaming_partial_extraction_excluded),
+            )
+        )
+        print(f"fMoW-Sentinel Step 3 validation complete: {args.output_dir or args.run_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "package-fmow-step3-handoff":
+        artifacts = package_fmow_step3_handoff(
+            FmowStep3PackageConfig(
+                run_dir=args.run_dir,
+                output_zip=args.output_zip,
+                include_rasters=args.include_rasters,
+            )
+        )
+        print("fMoW-Sentinel Step 3 handoff package complete.")
         for name, path in artifacts.items():
             print(f"{name}: {path}")
     elif args.command == "run-segmentation-real":

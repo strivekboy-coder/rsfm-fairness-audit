@@ -99,17 +99,35 @@ does not redo metadata enrichment and does not feed geography metadata into the
 model. Geography fields are carried only into prediction tables, support
 diagnostics, and BWER reporting.
 
+Prepare a clean subset from the official local archive without extracting all
+TIFF files:
+
+```powershell
+python scripts/prepare_fmow_sentinel_clean_subset.py `
+  --archive /content/fmow-sentinel.tar.gz `
+  --metadata-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_sample_manifest_final_v1.csv `
+  --output-dir /content/data/fmow_sentinel_clean_subset_v1 `
+  --split train `
+  --split val `
+  --max-samples-per-split 5000 `
+  --stratify-field category `
+  --stratify-field country `
+  --stratify-field region `
+  --stratify-field latitude_band `
+  --seed 42
+```
+
 Lightweight supervised image-only baseline:
 
 ```powershell
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
-  --metadata-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_geography_final_v1.csv `
-  --data-root /content/data/fmow_sentinel `
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_v1/clean_subset_manifest.csv `
+  --data-root /content/data/fmow_sentinel_clean_subset_v1 `
   --output-dir /content/outputs/fmow_sentinel_supervised_stats_val `
   --model supervised_stats `
   --train-split train `
   --eval-split val `
-  --max-samples 5000 `
+  --max-samples-per-split 5000 `
   --image-size 96 `
   --run-bwer
 ```
@@ -118,14 +136,14 @@ Minimal DOFA frozen-encoder candidate:
 
 ```powershell
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
-  --metadata-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_geography_final_v1.csv `
-  --data-root /content/data/fmow_sentinel `
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_v1/clean_subset_manifest.csv `
+  --data-root /content/data/fmow_sentinel_clean_subset_v1 `
   --output-dir /content/outputs/fmow_sentinel_dofa_frozen_probe_val `
   --model dofa `
   --model-config configs/models/dofa_fmow_sentinel.yaml `
   --train-split train `
   --eval-split val `
-  --max-samples 5000 `
+  --max-samples-per-split 5000 `
   --image-size 224 `
   --batch-size 16 `
   --allow-torch-hub-download `
@@ -147,6 +165,20 @@ python -m rsfm_fairness_audit.cli compare-fmow-runs `
   --run supervised=/content/outputs/fmow_sentinel_supervised_stats_val `
   --run dofa=/content/outputs/fmow_sentinel_dofa_frozen_probe_val `
   --output-dir /content/outputs/comparisons/fmow_sentinel_supervised_vs_dofa
+```
+
+Validate and package a completed Step 3 run without including raster imagery:
+
+```powershell
+python -m rsfm_fairness_audit.cli validate-fmow-step3-results `
+  --run-dir /content/outputs/fmow_sentinel_supervised_stats_val `
+  --full-archive-downloaded-locally true `
+  --full-extraction-avoided true `
+  --streaming-partial-extraction-excluded true
+
+python -m rsfm_fairness_audit.cli package-fmow-step3-handoff `
+  --run-dir /content/outputs/fmow_sentinel_supervised_stats_val `
+  --output-zip /content/drive/MyDrive/rsfm_fairness_audit/outputs/fmow_step3_supervised_stats_handoff.zip
 ```
 
 ## BigEarthNet + DOFA Runs
