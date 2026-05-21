@@ -117,6 +117,23 @@ python scripts/prepare_fmow_sentinel_clean_subset.py `
   --seed 42
 ```
 
+If the first valid subset needs stronger audit-slice support, augment it
+without discarding existing valid samples:
+
+```powershell
+python scripts/prepare_fmow_sentinel_clean_subset.py `
+  --archive /content/fmow-sentinel.tar.gz `
+  --metadata-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_sample_manifest_final_v1.csv `
+  --augment-existing-manifest /content/data/fmow_sentinel_clean_subset_v1/clean_subset_manifest.csv `
+  --output-dir /content/data/fmow_sentinel_clean_subset_v1 `
+  --split train `
+  --split val `
+  --target-total 30000 `
+  --target-train 15000 `
+  --target-val 15000 `
+  --seed 42
+```
+
 Lightweight supervised image-only baseline:
 
 ```powershell

@@ -24,9 +24,32 @@ SUPPORTED_STRATIFY_FIELDS = {
     "location_id",
 }
 
+SUPPORT_AUGMENT_FIELDS = (
+    "season",
+    "latitude_band",
+    "un_region",
+    "region",
+    "country",
+    "category__region",
+    "country__category",
+)
+
 
 def _is_missing(value: Any) -> bool:
     return value is None or str(value).strip() == "" or str(value).lower() in {"nan", "none", "null"}
+
+
+def _write_csv_union(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
+    if not rows:
+        write_csv(path, [])
+        return
+    fieldnames: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in fieldnames:
+                fieldnames.append(key)
+    normalized = [{key: row.get(key, "") for key in fieldnames} for row in rows]
+    write_csv(path, normalized)
 
 
 def archive_path_for_row(row: Mapping[str, Any]) -> str:
@@ -118,6 +141,27 @@ def _group_key(row: Mapping[str, Any], fields: Sequence[str]) -> tuple[str, ...]
     return tuple(str(row.get(field, "missing") or "missing") for field in fields)
 
 
+def _support_value(row: Mapping[str, Any], field: str) -> str:
+    if "__" not in field:
+        return str(row.get(field, "missing") or "missing")
+    parts = field.split("__")
+    return "__".join(str(row.get(part, "missing") or "missing") for part in parts)
+
+
+def _support_counts(rows: Sequence[Mapping[str, Any]], fields: Sequence[str]) -> dict[str, Counter[str]]:
+    return {field: Counter(_support_value(row, field) for row in rows) for field in fields}
+
+
+def _write_support_by_value(rows: Sequence[Mapping[str, Any]], output_path: Path, fields: Sequence[str]) -> Path:
+    records: list[dict[str, Any]] = []
+    counts = _support_counts(rows, fields)
+    for field in fields:
+        for value, support in sorted(counts[field].items()):
+            records.append({"field": field, "slice_value": value, "support": support})
+    write_csv(output_path, records)
+    return output_path
+
+
 def select_rows(
     rows: Sequence[dict[str, Any]],
     stratify_fields: Sequence[str],
@@ -157,6 +201,88 @@ def select_rows(
         indices = sorted(rng.choice(len(selected), size=max_total, replace=False).tolist())
         selected = [selected[index] for index in indices]
     return selected
+
+
+def _split_targets(args: argparse.Namespace) -> dict[str, int]:
+    targets: dict[str, int] = {}
+    if args.target_train is not None:
+        targets["train"] = int(args.target_train)
+    if args.target_val is not None:
+        targets["val"] = int(args.target_val)
+    if targets:
+        return targets
+    splits = tuple(args.split or ("train", "val"))
+    if args.target_total and splits:
+        base = int(args.target_total) // len(splits)
+        remainder = int(args.target_total) % len(splits)
+        for index, split in enumerate(splits):
+            targets[str(split)] = base + (1 if index < remainder else 0)
+    return targets
+
+
+def _row_identity(row: Mapping[str, Any]) -> str:
+    for key in ("archive_path", "sample_id", "image_id"):
+        if key in row and not _is_missing(row.get(key)):
+            return str(row[key])
+    return ""
+
+
+def select_augmentation_rows(
+    existing_rows: Sequence[dict[str, Any]],
+    metadata_rows: Sequence[dict[str, Any]],
+    target_by_split: Mapping[str, int],
+    seed: int,
+    support_fields: Sequence[str] = SUPPORT_AUGMENT_FIELDS,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Select additional samples by prioritizing weak slice support."""
+    existing_ids = {_row_identity(row) for row in existing_rows if _row_identity(row)}
+    selected: list[dict[str, Any]] = []
+    current_rows = [dict(row) for row in existing_rows]
+    rng = np.random.default_rng(seed)
+    for split in sorted(target_by_split):
+        current_split = [row for row in current_rows if str(row.get("split", "")) == split]
+        needed = max(0, int(target_by_split[split]) - len(current_split))
+        if needed <= 0:
+            continue
+        candidates = [
+            dict(row)
+            for row in metadata_rows
+            if str(row.get("split", "")) == split
+            and not row.get("archive_path_error")
+            and _row_identity(row) not in existing_ids
+        ]
+        for row in candidates:
+            # Stable seeded jitter only affects exact ties.
+            row["_jitter"] = float(rng.random() * 1e-9)
+        for _ in range(needed):
+            if not candidates:
+                break
+            counts = _support_counts(current_rows, support_fields)
+
+            def score(row: Mapping[str, Any]) -> tuple[float, str]:
+                value = 0.0
+                for field in support_fields:
+                    support = counts[field].get(_support_value(row, field), 0)
+                    weight = 2.0 if field in {"season", "latitude_band", "country"} else 1.0
+                    value += weight / (support + 1.0)
+                value += float(row.get("_jitter", 0.0))
+                return value, str(row.get("archive_path", ""))
+
+            best_index, best = max(enumerate(candidates), key=lambda item: score(item[1]))
+            chosen = dict(best)
+            chosen.pop("_jitter", None)
+            selected.append(chosen)
+            current_rows.append(chosen)
+            existing_ids.add(_row_identity(chosen))
+            candidates.pop(best_index)
+    summary = {
+        "target_by_split": dict(target_by_split),
+        "existing_by_split": dict(Counter(str(row.get("split", "")) for row in existing_rows)),
+        "selected_by_split": dict(Counter(str(row.get("split", "")) for row in selected)),
+        "final_by_split": dict(Counter(str(row.get("split", "")) for row in current_rows)),
+        "support_priority_fields": list(support_fields),
+    }
+    return selected, summary
 
 
 def _safe_member_path(member_name: str, output_root: Path) -> Path:
@@ -325,23 +451,135 @@ def prepare_subset(args: argparse.Namespace) -> dict[str, Path]:
     return artifacts
 
 
+def _extract_selected_rows(
+    archive_path: Path,
+    selected: Sequence[dict[str, Any]],
+    output: Path,
+    validation_report: Path,
+    warnings_path: Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], int, int]:
+    warnings: list[str] = []
+    validation_rows: list[dict[str, Any]] = []
+    clean_rows: list[dict[str, Any]] = []
+    selected_by_path = {str(row["archive_path"]): row for row in selected}
+    found_paths: set[str] = set()
+    with tarfile.open(archive_path, "r:gz") as tar:
+        for member in tar:
+            member_name = member.name[2:] if member.name.startswith("./") else member.name
+            if not member.isfile() or member_name not in selected_by_path:
+                continue
+            found_paths.add(member_name)
+            destination = _safe_member_path(member_name, output)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source = tar.extractfile(member)
+            if source is None:
+                warnings.append(f"Could not extract member: {member_name}")
+                continue
+            with source, destination.open("wb") as handle:
+                handle.write(source.read())
+            validation = validate_raster(destination)
+            validation["archive_path"] = member_name
+            validation_rows.append(validation)
+            if validation["valid"]:
+                row = dict(selected_by_path[member_name])
+                row["image_path"] = str(Path(member_name))
+                row["extracted_path"] = str(destination)
+                clean_rows.append(row)
+            else:
+                warnings.append(f"Invalid raster excluded: {member_name}: {validation['reason']}")
+    missing = sorted(set(selected_by_path) - found_paths)
+    warnings.extend(f"Selected archive path not found: {path}" for path in missing[:500])
+    write_csv(validation_report, validation_rows)
+    warnings_path.write_text(json.dumps({"warnings": warnings}, indent=2), encoding="utf-8")
+    return clean_rows, validation_rows, warnings, len(found_paths), len(missing)
+
+
+def augment_subset(args: argparse.Namespace) -> dict[str, Path]:
+    output = ensure_dir(args.output_dir)
+    splits = set(args.split or ()) or None
+    metadata_csv = args.metadata_csv
+    if metadata_csv is None:
+        if not args.satmae_csv or args.location_geography_csv is None:
+            raise ValueError("Provide --metadata-csv, or provide --satmae-csv plus --location-geography-csv to build the sample manifest.")
+        metadata_csv = _build_manifest_from_sources(tuple(args.satmae_csv), args.location_geography_csv, output, splits)
+    existing_rows = _load_rows(args.augment_existing_manifest, splits)
+    metadata_rows = _load_rows(metadata_csv, splits)
+    target_by_split = _split_targets(args)
+    if not target_by_split:
+        raise ValueError("Augmentation requires --target-total or --target-train/--target-val.")
+    selected, selection_summary = select_augmentation_rows(existing_rows, metadata_rows, target_by_split, args.seed)
+    for row in selected:
+        row["target_path"] = row["archive_path"]
+        row["extracted_image_path"] = row["archive_path"]
+
+    artifacts = {
+        "augmented_clean_subset_manifest": output / "augmented_clean_subset_manifest.csv",
+        "augmentation_target_paths": output / "augmentation_target_paths.csv",
+        "augmentation_support_before": output / "augmentation_support_before.csv",
+        "augmentation_support_after": output / "augmentation_support_after.csv",
+        "augmentation_summary": output / "augmentation_summary.json",
+        "raster_validation_report_augmented": output / "raster_validation_report_augmented.csv",
+        "warnings_augmented": output / "warnings_augmented.json",
+    }
+    _write_support_by_value(existing_rows, artifacts["augmentation_support_before"], SUPPORT_AUGMENT_FIELDS)
+    write_csv(artifacts["augmentation_target_paths"], selected)
+    clean_added, _validation_rows, warnings, found_count, missing_count = _extract_selected_rows(
+        args.archive,
+        selected,
+        output,
+        artifacts["raster_validation_report_augmented"],
+        artifacts["warnings_augmented"],
+    )
+    combined = [dict(row) for row in existing_rows] + clean_added
+    combined.sort(key=lambda row: (str(row.get("split", "")), str(row.get("archive_path", row.get("image_path", "")))))
+    _write_csv_union(artifacts["augmented_clean_subset_manifest"], combined)
+    _write_support_by_value(combined, artifacts["augmentation_support_after"], SUPPORT_AUGMENT_FIELDS)
+    final_by_split = Counter(str(row.get("split", "")) for row in combined)
+    summary = {
+        "mode": "augment_existing_clean_subset",
+        "archive": str(args.archive),
+        "metadata_csv": str(metadata_csv),
+        "existing_manifest": str(args.augment_existing_manifest),
+        "output_dir": str(output),
+        "seed": args.seed,
+        "target_total": args.target_total or "",
+        "target_by_split": target_by_split,
+        "existing_total": len(existing_rows),
+        "selected_additional_targets": len(selected),
+        "extracted_additional_members": found_count,
+        "valid_added_samples": len(clean_added),
+        "final_total": len(combined),
+        "final_by_split": dict(final_by_split),
+        "missing_members": missing_count,
+        "warnings_count": len(warnings),
+        **selection_summary,
+    }
+    artifacts["augmentation_summary"].write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    return artifacts
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Prepare a clean fMoW-Sentinel subset from the official tar.gz without full extraction.")
     parser.add_argument("--archive", type=Path, required=True, help="Local fmow-sentinel.tar.gz archive.")
     parser.add_argument("--metadata-csv", type=Path, help="Final enriched sample manifest CSV.")
+    parser.add_argument("--augment-existing-manifest", type=Path, help="Existing clean_subset_manifest.csv to preserve and augment.")
     parser.add_argument("--satmae-csv", action="append", type=Path, default=[], help="SatMAE train/val/test CSV used only when --metadata-csv is missing.")
     parser.add_argument("--location-geography-csv", type=Path, help="Final location-level geography metadata used only when --metadata-csv is missing.")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--split", action="append", default=[], help="Split to include, e.g. train or val. Repeat as needed.")
     parser.add_argument("--max-samples-per-split", type=int, default=500, help="Quota cap after split filtering.")
     parser.add_argument("--max-total", type=int, help="Optional cap across all selected splits.")
+    parser.add_argument("--target-total", type=int, help="Final target size for augmentation mode, e.g. 30000.")
+    parser.add_argument("--target-train", type=int, help="Final train target for augmentation mode.")
+    parser.add_argument("--target-val", type=int, help="Final val target for augmentation mode.")
     parser.add_argument("--stratify-field", action="append", default=[], help="Additional stratification field. Defaults to category and country.")
     parser.add_argument("--seed", type=int, default=42)
     return parser
 
 
 def main() -> None:
-    artifacts = prepare_subset(build_parser().parse_args())
+    args = build_parser().parse_args()
+    artifacts = augment_subset(args) if args.augment_existing_manifest else prepare_subset(args)
     print("fMoW-Sentinel clean subset prepared.")
     for name, path in artifacts.items():
         print(f"{name}: {path}")

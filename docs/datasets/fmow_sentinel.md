@@ -287,6 +287,55 @@ included in `clean_subset_manifest.csv`. Missing members, corrupt files, and
 band-count mismatches are recorded in `warnings.json` and
 `raster_validation_report.csv`.
 
+### Support-Aware Augmentation
+
+If an initial clean subset is valid but too weak for some planned audit slices,
+augment it instead of discarding it. This preserves all existing valid samples
+and selects additional target paths from the full metadata while excluding
+already selected samples.
+
+Example: grow a valid 10k subset to a 30k final Step 3 audit subset with a
+15k/15k train/val target:
+
+```bash
+python scripts/prepare_fmow_sentinel_clean_subset.py \
+  --archive /content/fmow-sentinel.tar.gz \
+  --metadata-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_sample_manifest_final_v1.csv \
+  --augment-existing-manifest /content/data/fmow_sentinel_clean_subset_v1/clean_subset_manifest.csv \
+  --output-dir /content/data/fmow_sentinel_clean_subset_v1 \
+  --split train \
+  --split val \
+  --target-total 30000 \
+  --target-train 15000 \
+  --target-val 15000 \
+  --seed 42
+```
+
+The augmentation scorer prioritizes weak support in:
+
+- `season`
+- `latitude_band`
+- `un_region`
+- `region`
+- `country`
+- `category x region`
+- `country x category`
+
+Augmentation outputs:
+
+- `augmented_clean_subset_manifest.csv`
+- `augmentation_target_paths.csv`
+- `augmentation_support_before.csv`
+- `augmentation_support_after.csv`
+- `augmentation_summary.json`
+- `raster_validation_report_augmented.csv`
+- `warnings_augmented.json`
+
+Use `augmented_clean_subset_manifest.csv` for the final 30k Step 3 model
+prototype runs. Remaining low-support slices are recorded in the before/after
+support tables and should be reported as support limitations, not silently
+treated as balanced.
+
 ## Slice Support
 
 Candidate slices:
