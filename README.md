@@ -28,17 +28,30 @@ checks slice support, builds a deterministic subset manifest, optionally
 inspects a small raster sample, and writes the future audit-table schema. It
 does not train models or run inference.
 
-If you are starting from the SatMAE fMoW-Sentinel `train.csv` / `val.csv`,
+If you are rebuilding from the SatMAE fMoW-Sentinel `train.csv` / `val.csv`,
 run metadata enrichment first. SatMAE CSVs alone typically contain `category`,
 `location_id`, `timestamp`, and `image_id`; they do not by themselves provide
 country/region geography slices.
+
+The current final reproducible fMoW-Sentinel metadata package is expected under
+Google Drive as:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/
+```
+
+The final preflight evidence archive is:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/fmow_sentinel_preflight/enriched_geography_final_v1.zip
+```
 
 ```powershell
 python -m rsfm_fairness_audit.cli enrich-fmow-sentinel-metadata `
   --satmae-csv path/to/train.csv `
   --satmae-csv path/to/val.csv `
   --external-metadata-csv path/to/original_fmow_or_gps_metadata.csv `
-  --country-region-map path/to/country_region_map.csv `
+  --country-region-map /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_country_region_map_full_v1.csv `
   --output-dir outputs/fmow_sentinel_metadata_enrichment/run1
 ```
 
@@ -52,8 +65,9 @@ support-filtered formal candidates rather than blindly formal-ready.
 
 ```powershell
 python -m rsfm_fairness_audit.cli preflight-fmow-sentinel `
-  --metadata-csv outputs/fmow_sentinel_metadata_enrichment/run1/fmow_enriched_metadata.csv `
-  --output-dir outputs/fmow_sentinel_preflight/run1 `
+  --metadata-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_geography_final_v1.csv `
+  --country-region-map /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_country_region_map_full_v1.csv `
+  --output-dir outputs/fmow_sentinel_preflight/enriched_geography_final_v1 `
   --metadata-only
 ```
 
@@ -61,8 +75,9 @@ With optional raster inspection:
 
 ```powershell
 python -m rsfm_fairness_audit.cli preflight-fmow-sentinel `
-  --metadata-csv path/to/fmow_sentinel.csv `
-  --output-dir outputs/fmow_sentinel_preflight/run1 `
+  --metadata-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_geography_final_v1.csv `
+  --country-region-map /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_country_region_map_full_v1.csv `
+  --output-dir outputs/fmow_sentinel_preflight/enriched_geography_final_v1_raster_sample `
   --split official_split `
   --subset-max-per-split 5000 `
   --inspect-rasters `
@@ -76,6 +91,63 @@ Outputs include `fmow_metadata_inventory.csv`,
 `band_statistics_sample.csv`, `raster_loading_report.md`, and
 `audit_table_schema_fmow_sentinel.md`. See
 [fmow_sentinel.md](D:/Codex/rsfm-fairness-audit/docs/datasets/fmow_sentinel.md).
+
+## fMoW-Sentinel Step 3 Image-Only Geography BWER Prototype
+
+Step 3 starts from the final enriched metadata package produced in Step 2. It
+does not redo metadata enrichment and does not feed geography metadata into the
+model. Geography fields are carried only into prediction tables, support
+diagnostics, and BWER reporting.
+
+Lightweight supervised image-only baseline:
+
+```powershell
+python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
+  --metadata-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_geography_final_v1.csv `
+  --data-root /content/data/fmow_sentinel `
+  --output-dir /content/outputs/fmow_sentinel_supervised_stats_val `
+  --model supervised_stats `
+  --train-split train `
+  --eval-split val `
+  --max-samples 5000 `
+  --image-size 96 `
+  --run-bwer
+```
+
+Minimal DOFA frozen-encoder candidate:
+
+```powershell
+python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
+  --metadata-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_geography_final_v1.csv `
+  --data-root /content/data/fmow_sentinel `
+  --output-dir /content/outputs/fmow_sentinel_dofa_frozen_probe_val `
+  --model dofa `
+  --model-config configs/models/dofa_fmow_sentinel.yaml `
+  --train-split train `
+  --eval-split val `
+  --max-samples 5000 `
+  --image-size 224 `
+  --batch-size 16 `
+  --allow-torch-hub-download `
+  --run-bwer
+```
+
+Post-hoc geography BWER can be rerun without model inference:
+
+```powershell
+python -m rsfm_fairness_audit.cli run-fmow-geography-bwer `
+  --input-dir /content/outputs/fmow_sentinel_supervised_stats_val `
+  --output-dir /content/outputs/fmow_sentinel_supervised_stats_val/bwer
+```
+
+Compare completed fMoW-Sentinel runs:
+
+```powershell
+python -m rsfm_fairness_audit.cli compare-fmow-runs `
+  --run supervised=/content/outputs/fmow_sentinel_supervised_stats_val `
+  --run dofa=/content/outputs/fmow_sentinel_dofa_frozen_probe_val `
+  --output-dir /content/outputs/comparisons/fmow_sentinel_supervised_vs_dofa
+```
 
 ## BigEarthNet + DOFA Runs
 

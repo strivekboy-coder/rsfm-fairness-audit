@@ -1,0 +1,11 @@
+model_variant: vit_base_dofa
+device: auto
+batch_size: 16
+torch_hub_repo: zhu-xlab/DOFA
+checkpoint_path:
+repo_path:
+input_modality: S2
+band_profile: sentinel2_13band_fmow
+image_size: 224
+embedding_layer: forward_features
+allow_torch_hub_download: false

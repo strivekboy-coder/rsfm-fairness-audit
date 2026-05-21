@@ -178,6 +178,12 @@ intersection when every run has chip-level `segmentation_metrics.csv` with
 stable `sample_id`/`chip_id` identifiers. If exact matching is impossible, it
 writes a limitation report rather than fabricating a same-split result.
 
+Confirmed interpretation for the completed closure run: the exact chip-level
+match succeeded with 89 matched chips, and the average-vs-BWER ranking reversal
+remained. This rules out evaluation-subset mismatch as the sole explanation for
+the reversal, but it does not remove adaptation-protocol, model-capacity,
+thresholding, or training-protocol differences.
+
 Selective Risk availability/post-hoc check:
 
 ```bash
@@ -193,6 +199,9 @@ When only chip-level confidence summaries are available, this is a
 whole-chip-retention diagnostic, not pixel-level selective segmentation risk.
 If no confidence/logit/probability fields are available, it writes
 `selective_risk_availability.csv` and a limitation report without fake metrics.
+
+MNDWI and other deterministic spectral baselines should be marked selective-risk
+unavailable unless a defensible confidence or score field is explicitly saved.
 
 Colab helper for both post-hoc checks:
 
@@ -259,4 +268,9 @@ LOEO aggregate outputs:
 - `loeo_bwer_summary.csv`
 - `loeo_report.md`
 
+Completed vanilla U-Net LOEO confirms that event-level tail risk persists under
+unseen-event evaluation, while tail identities differ from the random-chip-split
+vanilla U-Net result. Do not describe the current result as LOEO amplifying
+tail risk or random-chip-split necessarily underestimating BWER; the completed
+vanilla LOEO Raw-BWER is lower than the random-chip-split vanilla Raw-BWER.
 Do not claim event-held-out generalization from `random_chip_split` runs.

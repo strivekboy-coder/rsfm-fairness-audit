@@ -264,6 +264,55 @@ ResNet34-U-Net use `random_chip_split/test`. Therefore the closure result is
 protocol-aware and should not be described as pure architecture-only or
 same-split comparison.
 
+## Sen1Floods11 Closure Interpretation Guardrails
+
+Recorded: 2026-05-21.
+
+Protocol-matched check:
+- The protocol-matched post-hoc check reached `exact_chip_level_match=True`
+  with `matched_chip_count=89`.
+- The observed average-vs-BWER ranking reversal persisted under exact
+  evaluation-chip matching.
+- Interpretation: evaluation-subset mismatch is not the sole explanation for
+  the reversal. This does not rule out adaptation protocol, model capacity,
+  thresholding, or training-protocol differences.
+
+MNDWI diagnostic baseline:
+- MNDWI has the lowest average segmentation performance in the closure set but
+  the lowest Standardised-BWER.
+- This should not be interpreted as MNDWI being the best segmentation model.
+  It shows that BWER measures event-risk dispersion and tail concentration,
+  not absolute segmentation quality.
+- MNDWI should be reported as a low-capacity physics baseline and
+  interpretability reference. Aggregate score and BWER must be reported
+  together.
+
+S2 ResNet34-U-Net / AlbuNet-style baseline:
+- Relative to vanilla U-Net, S2 ResNet34-U-Net improves aggregate IoU and
+  reduces Raw-BWER.
+- Its event-level tail risk does not disappear.
+- S2 ResNet34-U-Net reduces raw tail disparity relative to vanilla U-Net, but
+  its Standardised-BWER remains higher than Prithvi TL and MNDWI.
+- This helps address the concern that event-tail findings only occur for a weak
+  vanilla U-Net baseline.
+
+Tail-event identity:
+- Persistent tail events across all four runs were not established.
+- Some events recur across learned models, but no universal tail set appears
+  across all protocols.
+- Bolivia appears in Prithvi TL, vanilla U-Net, and S2 ResNet34-U-Net tails;
+  Pakistan appears in Prithvi TL and vanilla U-Net tails; MNDWI has a different
+  India/Paraguay spectral-rule failure profile.
+- Interpretation: Sen1Floods11 contains both shared learned-model stress cases
+  and model/protocol-specific event failure modes.
+
+Selective Risk:
+- Current outputs support only chip-level confidence-retention diagnostics when
+  confidence summaries are available.
+- These diagnostics are not pixel-level selective segmentation risk.
+- Runs without confidence, logit, probability, or usable score fields should be
+  marked selective-risk unavailable rather than assigned fabricated values.
+
 ## Vanilla U-Net Leave-One-Event-Out Result
 
 Recorded: 2026-05-20.
@@ -300,3 +349,54 @@ Confirmed factual conclusion:
 Event-level tail risk remains present under vanilla U-Net leave-one-event-out
 evaluation, while the tail-event identities differ from the random-chip-split
 vanilla U-Net result.
+
+## fMoW-Sentinel Enriched Geography Preflight
+
+Recorded: 2026-05-21.
+
+The fMoW-Sentinel metadata enrichment and geography preflight foundation
+completed for the location-level majority enriched metadata. SatMAE
+fMoW-Sentinel train/val CSVs alone contain `category`, `location_id`,
+`image_id`, and `timestamp`, but do not contain country, latitude, longitude,
+region, continent, or UN-region fields.
+
+Confirmed enrichment protocol:
+- External fMoW metadata was parsed and joined back to the SatMAE metadata.
+- Image-level join on `category + location_id + image_id` was incomplete.
+- Location-level join on `category + location_id` reached 100%.
+- `country` is resolved by majority mode per `category + location_id`.
+- `latitude` and `longitude` are resolved by median polygon centroid per
+  `category + location_id`.
+- `continent`, `un_region`, and `region` are resolved from
+  `country_region_map_full.csv`.
+
+Confirmed metadata coverage:
+- `country` missing ratio = 0.
+- `latitude` and `longitude` are present.
+- `continent`, `un_region`, and `region` missing ratio = 0.0186.
+- `country`, `latitude_band`, `continent`, `un_region`, `region`, `category`,
+  and `season` are usable geography/audit fields according to the generated
+  support recommendations.
+
+Known remaining unmapped / dirty geography codes:
+- `ambiguous_country`: 14,304 rows.
+- `ANT`: 293 rows.
+- `CA-` / `KO-`: 256 rows.
+
+Interpretation:
+These remaining cases are treated as known dirty or legacy geography metadata
+cases and are not silently mapped. The Step 2 fMoW-Sentinel geography audit
+foundation is ready for future prediction-table generation and formal BWER
+evaluation over supported geography slices. Geography metadata remains an audit
+slicing/reporting field and is not a model input.
+
+Final artifacts:
+- final reproducible metadata directory:
+  `cache/fmow_sentinel/metadata/final/`.
+- output directory: `outputs/fmow_sentinel_preflight/enriched_geography_final_v1`.
+- archive:
+  `/content/drive/MyDrive/rsfm_fairness_audit/outputs/fmow_sentinel_preflight/enriched_geography_final_v1.zip`.
+- temporary safety backup:
+  `cache/fmow_sentinel/metadata/final_backup_20260520_233834/`; keep until
+  the Step 3 fMoW-Sentinel prototype runs successfully from
+  `cache/fmow_sentinel/metadata/final/`.

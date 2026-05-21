@@ -38,6 +38,19 @@ datasets:
     bootstrap_cluster_key: null
     notes: Lightweight paired S1/S2 CROMA sensor-mode audit taxonomy.
 
+  fmow_sentinel:
+    task_type: classification
+    primary_slices: [country, continent, un_region, region, latitude_band, season, category, class_label]
+    secondary_slices: [country__class_label, region__class_label, season__class_label, latitude_band__class_label, country__category, region__category, season__category, latitude_band__category]
+    balance_variables: [class_label, category, season]
+    default_tail_fraction: 0.10
+    min_samples_per_slice: 20
+    min_positive_support: null
+    min_slices_required: 2
+    min_units_required: 20
+    bootstrap_cluster_key: location_id
+    notes: fMoW-Sentinel Step 3 image-only scene-classification geography audit. Geography metadata is audit-only; do not feed country, region, coordinates, location_id, or timestamp into models.
+
   sen1floods11:
     task_type: segmentation
     primary_slices: [event_id, event, country, region, month, season, class_label]

@@ -21,6 +21,16 @@ BAND_PROFILES: dict[str, dict[str, Any]] = {
         "normalization_mean": [0.0] * 10,
         "normalization_std": [1.0] * 10,
     },
+    "sentinel2_13band_fmow": {
+        "expected_bands": 13,
+        "band_names": ["B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B09", "B10", "B11", "B12"],
+        "wavelength_list": [0.443, 0.49, 0.56, 0.665, 0.705, 0.74, 0.783, 0.842, 0.865, 0.945, 1.373, 1.61, 2.19],
+        # fMoW-Sentinel Step 3 starts with robust image-only prototype runs.
+        # Use identity normalization until a run-specific empirical 13-band
+        # normalization is computed and documented.
+        "normalization_mean": [0.0] * 13,
+        "normalization_std": [1.0] * 13,
+    },
     "sentinel2_9_legacy": {
         "expected_bands": 9,
         "band_names": ["B04", "B03", "B02", "B05", "B06", "B07", "B08", "B11", "B12"],

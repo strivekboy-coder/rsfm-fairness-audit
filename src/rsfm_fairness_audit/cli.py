@@ -10,6 +10,13 @@ from rsfm_fairness_audit.fmow_sentinel_enrichment import (
     FmowMetadataEnrichmentConfig,
     run_fmow_sentinel_metadata_enrichment,
 )
+from rsfm_fairness_audit.fmow_sentinel_classification import (
+    FmowBwerConfig,
+    FmowClassificationConfig,
+    compare_fmow_runs,
+    run_fmow_geography_bwer,
+    run_fmow_sentinel_classification,
+)
 from rsfm_fairness_audit.fmow_sentinel_preflight import FmowPreflightConfig, run_fmow_sentinel_preflight
 from rsfm_fairness_audit.loeo import aggregate_loeo_runs
 from rsfm_fairness_audit.pipeline import (
@@ -139,6 +146,36 @@ def build_parser() -> argparse.ArgumentParser:
     fmow_enrich.add_argument("--output-dir", type=Path, required=True)
     fmow_enrich.add_argument("--join-key", default="auto", help="auto or + separated key fields, e.g. category+location_id+image_id or location_id.")
     fmow_enrich.add_argument("--no-infer-split-from-filename", action="store_true", help="Do not fill missing split from train/val/test CSV filenames.")
+
+    fmow_cls = subparsers.add_parser("run-fmow-sentinel-classification", help="Run Step 3 fMoW-Sentinel image-only classification prototype.")
+    fmow_cls.add_argument("--metadata-csv", type=Path, required=True, help="Final enriched fMoW-Sentinel metadata or subset manifest CSV.")
+    fmow_cls.add_argument("--data-root", type=Path, help="Root used to resolve relative image_path values.")
+    fmow_cls.add_argument("--output-dir", type=Path, required=True)
+    fmow_cls.add_argument("--model", choices=["supervised_stats", "dofa"], default="supervised_stats")
+    fmow_cls.add_argument("--model-config", type=Path, default=Path("configs/models/dofa_fmow_sentinel.yaml"))
+    fmow_cls.add_argument("--train-split", default="train")
+    fmow_cls.add_argument("--eval-split", default="val")
+    fmow_cls.add_argument("--max-samples", type=int, help="Optional metadata subset cap for prototype runs. Omit or pass 0 for all rows.")
+    fmow_cls.add_argument("--image-size", type=int, default=96)
+    fmow_cls.add_argument("--batch-size", type=int, default=32)
+    fmow_cls.add_argument("--seed", type=int, default=42)
+    fmow_cls.add_argument("--split-protocol", choices=["official_split", "location_split", "region_split", "time_split", "custom_stratified_subset"], default="official_split")
+    fmow_cls.add_argument("--eval-scope", default="val")
+    fmow_cls.add_argument("--band-profile", default="sentinel2_13band_fmow")
+    fmow_cls.add_argument("--allow-torch-hub-download", action="store_true", help="Explicitly allow DOFA torch.hub download for Colab runs.")
+    fmow_cls.add_argument("--run-bwer", action="store_true", help="Run geography BWER immediately after writing predictions.")
+    fmow_cls.add_argument("--bwer-bootstrap", type=int, default=0)
+
+    fmow_bwer = subparsers.add_parser("run-fmow-geography-bwer", help="Run post-hoc geography BWER on completed fMoW-Sentinel predictions.")
+    fmow_bwer.add_argument("--input-dir", type=Path, required=True, help="Completed fMoW-Sentinel run directory containing audit_table.csv or predictions.csv.")
+    fmow_bwer.add_argument("--output-dir", type=Path, required=True)
+    fmow_bwer.add_argument("--audit-table", type=Path)
+    fmow_bwer.add_argument("--bootstrap", type=int, default=0)
+    fmow_bwer.add_argument("--seed", type=int, default=42)
+
+    fmow_compare = subparsers.add_parser("compare-fmow-runs", help="Compare completed fMoW-Sentinel classification+BWER runs.")
+    fmow_compare.add_argument("--run", action="append", required=True, help="Run pair in the form run_name=path_to_output_dir.")
+    fmow_compare.add_argument("--output-dir", type=Path, required=True)
 
     seg = subparsers.add_parser("run-segmentation-real", help="Run native Sen1Floods11 segmentation metrics, preflight, and BWER audit.")
     seg.add_argument("--dataset", choices=["sen1floods11"], required=True)
@@ -393,6 +430,56 @@ def main() -> None:
             )
         )
         print(f"fMoW-Sentinel metadata enrichment complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "run-fmow-sentinel-classification":
+        max_samples = None if args.max_samples in (None, 0) else args.max_samples
+        artifacts = run_fmow_sentinel_classification(
+            FmowClassificationConfig(
+                metadata_csv=args.metadata_csv,
+                data_root=args.data_root,
+                output_dir=args.output_dir,
+                model=args.model,
+                model_config=args.model_config,
+                train_split=args.train_split,
+                eval_split=args.eval_split,
+                max_samples=max_samples,
+                image_size=args.image_size,
+                batch_size=args.batch_size,
+                seed=args.seed,
+                split_protocol=args.split_protocol,
+                eval_scope=args.eval_scope,
+                band_profile=args.band_profile,
+                allow_torch_hub_download=args.allow_torch_hub_download,
+                run_bwer=args.run_bwer,
+                bwer_bootstrap=args.bwer_bootstrap,
+            )
+        )
+        print(f"fMoW-Sentinel classification prototype complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "run-fmow-geography-bwer":
+        artifacts = run_fmow_geography_bwer(
+            FmowBwerConfig(
+                input_dir=args.input_dir,
+                output_dir=args.output_dir,
+                audit_table=args.audit_table,
+                bootstrap=args.bootstrap,
+                seed=args.seed,
+            )
+        )
+        print(f"fMoW-Sentinel geography BWER complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "compare-fmow-runs":
+        runs = {}
+        for item in args.run:
+            if "=" not in item:
+                raise SystemExit("--run must use the form run_name=path_to_output_dir")
+            run_name, run_dir = item.split("=", 1)
+            runs[run_name.strip()] = Path(run_dir.strip())
+        artifacts = compare_fmow_runs(runs, args.output_dir)
+        print(f"fMoW-Sentinel run comparison complete: {args.output_dir}")
         for name, path in artifacts.items():
             print(f"{name}: {path}")
     elif args.command == "run-segmentation-real":
