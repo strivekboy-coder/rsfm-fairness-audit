@@ -11,11 +11,47 @@ scientific conclusions.
 - Input: Sentinel-2 13-band image-only raster input
 - Input mode: `s2_13band_image_only`
 - Band profile: `sentinel2_13band_fmow`
+- Formal Step 3 subset:
+  `fmow_sentinel_clean_subset_30k_location_disjoint_v2`
+- Manifest:
+  `/content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv`
+- Drive archive:
+  `/content/drive/MyDrive/rsfm_fairness_audit/fmow_sentinel_clean_subset_30k_location_disjoint_v2.zip`
 
 Geography metadata is used only for audit slicing, support diagnostics, BWER
 reporting, and comparison reports. Country, region, latitude, longitude,
 timestamp, and location identifiers are not model inputs unless a separate
 metadata-aware protocol is explicitly implemented and labeled.
+
+## Dataset Protocol
+
+The final Step 3 subset is a support-aware clean subset extracted from the
+official Stanford PURL `fmow-sentinel.tar.gz`. The full tarball is downloaded
+to Colab local `/content` storage and is not fully extracted. Earlier streaming
+partial-extraction experiments are excluded from formal data.
+
+The split protocol is `location_disjoint`: final `split` values are
+`train` / `val`, `split_original` preserves the source split, and the group key
+is `category + location_id`. Train/val location overlap is zero. `sample_id`
+was regenerated to be unique in the final manifest.
+
+Recorded dataset facts:
+
+- total rows: 30000
+- train rows: 21046
+- val rows: 8954
+- categories: 62
+- validation category coverage: all 62 categories
+- minimum validation category support: 33
+- country coverage: 195 countries
+- country missing ratio: 0
+- continent / un_region / region missing ratio: 0.024
+- season missing ratio: 0
+- latitude_band missing ratio: 0
+- validation countries with >=20 samples: 145
+- validation countries with >=30 samples: 105
+- dirty country codes retained for provenance:
+  `ambiguous_country`, `ANT`, `KO-`, `CA-`
 
 ## Primary Metrics
 
@@ -36,6 +72,14 @@ metadata-aware protocol is explicitly implemented and labeled.
 - `category`
 - `region x category`
 - `country x category`, if support allows
+
+For the finalized 30k location-disjoint subset, primary formal slices are
+`continent`, `un_region`, `region`, `latitude_band`, `season`, and `category`.
+Country-level BWER should use support thresholds such as validation support
+`>=20` or `>=30`. `country x category` is diagnostic-only unless
+support-threshold filtered. `region x category`, `season x category`, and
+`latitude_band x category` may be used for standardisation where preflight
+support allows; otherwise report them as diagnostics or sensitivity checks.
 
 ## Ranking Mismatch
 

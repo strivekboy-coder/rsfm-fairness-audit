@@ -135,7 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
     fmow.add_argument("--metadata-csv", action="append", type=Path, required=True, help="Input fMoW-Sentinel metadata CSV. Repeat for train/val/test files.")
     fmow.add_argument("--output-dir", type=Path, required=True)
     fmow.add_argument("--data-root", type=Path, help="Optional root used to resolve relative image_path values during raster inspection.")
-    fmow.add_argument("--split", dest="split_protocol", default="official_split", choices=["official_split", "location_split", "region_split", "time_split", "custom_stratified_subset"])
+    fmow.add_argument("--split", dest="split_protocol", default="official_split", choices=["official_split", "location_split", "location_disjoint", "region_split", "time_split", "custom_stratified_subset"])
     fmow.add_argument("--filter-split", action="append", default=[], help="Optional official split value to include, e.g. train. Repeat as needed.")
     fmow.add_argument("--subset-max-per-split", type=int, default=5000)
     fmow.add_argument("--min-support", type=int, default=20)

@@ -349,6 +349,17 @@ Drive archive:
 /content/drive/MyDrive/rsfm_fairness_audit/fmow_sentinel_clean_subset_30k_location_disjoint_v2.zip
 ```
 
+The full official fMoW-Sentinel tarball is also cached in Drive for future
+reprocessing:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/fmow-sentinel.tar.gz
+```
+
+This cache copy is for reproducibility and future clean-subset extraction. Do
+not fully extract it into Drive, package it into run handoff zips, or commit it
+to the repository.
+
 Use this final manifest for ResNet-50 and DOFA Step 3 runs. Do not use the
 earlier 10k subset or any non-location-disjoint manifest for the main Step 3
 experiments. Do not package the raw full archive or a fully extracted fMoW tree
@@ -485,23 +496,27 @@ metadata enrichment, and it does not feed geography metadata into the model.
 The model sees only 13-band Sentinel-2 imagery; geography fields are carried
 forward for support diagnostics and BWER reporting.
 
-Expected final metadata input:
+Expected final Step 3 dataset input:
 
 ```text
-/content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_geography_final_v1.csv
+/content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv
 ```
+
+This manifest already includes final `train` / `val` split labels,
+`split_original`, unique `sample_id` values, raster paths, and the final
+location-level geography enrichment fields.
 
 Raster inspection before model work:
 
 ```bash
 python -m rsfm_fairness_audit.cli preflight-fmow-sentinel \
-  --metadata-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_geography_final_v1.csv \
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv \
   --country-region-map /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_country_region_map_full_v1.csv \
   --output-dir /content/outputs/fmow_sentinel_preflight/step3_raster_sample \
-  --data-root /content/data/fmow_sentinel \
+  --data-root /content/data/fmow_sentinel_clean_subset_30k_v2 \
   --inspect-rasters \
   --raster-sample-size 256 \
-  --subset-max-per-split 5000 \
+  --split location_disjoint \
   --seed 42
 ```
 
@@ -509,13 +524,13 @@ Lightweight supervised image-only prototype:
 
 ```bash
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification \
-  --metadata-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_geography_final_v1.csv \
-  --data-root /content/data/fmow_sentinel \
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv \
+  --data-root /content/data/fmow_sentinel_clean_subset_30k_v2 \
   --output-dir /content/outputs/fmow_sentinel_supervised_stats_val \
   --model supervised_stats \
   --train-split train \
   --eval-split val \
-  --max-samples 5000 \
+  --split-protocol location_disjoint \
   --image-size 96 \
   --run-bwer
 ```
@@ -558,14 +573,14 @@ Minimal DOFA frozen-encoder candidate:
 
 ```bash
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification \
-  --metadata-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_geography_final_v1.csv \
-  --data-root /content/data/fmow_sentinel \
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv \
+  --data-root /content/data/fmow_sentinel_clean_subset_30k_v2 \
   --output-dir /content/outputs/fmow_sentinel_dofa_frozen_probe_val \
   --model dofa \
   --model-config configs/models/dofa_fmow_sentinel.yaml \
   --train-split train \
   --eval-split val \
-  --max-samples 5000 \
+  --split-protocol location_disjoint \
   --image-size 224 \
   --batch-size 16 \
   --allow-torch-hub-download \
@@ -606,7 +621,7 @@ Recommended result layout:
 ```text
 outputs/fmow_sentinel_step3/<run_name>/
   data/
-    clean_subset_manifest.csv
+    final_clean_subset_manifest_30k_location_disjoint_v2.csv
     subset_support_summary.csv
     raster_validation_report.csv
     warnings.json
@@ -635,6 +650,12 @@ outputs/fmow_sentinel_step3/<run_name>/
 For single-model prototype runs, the existing run-level layout
 `<run_dir>/predictions.csv`, `<run_dir>/audit_table.csv`, and
 `<run_dir>/bwer/` is also accepted by the validators.
+
+The data contract for Step 3 formal runs is
+`fmow_sentinel_clean_subset_30k_location_disjoint_v2`: 30,000 rows,
+`split_protocol=location_disjoint`, final `split=train/val`,
+`split_original` preserved, unique `sample_id`, and zero train/val overlap for
+the `category + location_id` grouping key.
 
 Validate a completed run directory:
 
@@ -674,6 +695,8 @@ Current download and data handling protocol:
 
 - Download the full official archive to Colab local storage such as
   `/content/data` or `/content`.
+- The archived source tarball may be cached for future reprocessing at
+  `/content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/fmow-sentinel.tar.gz`.
 - Use `aria2c` with multi-connection resume when downloading in Colab.
 - Do not fully extract the archive. Full extraction creates many small TIFF
   files and increases disk, inode, and I/O failure risk.
@@ -685,6 +708,10 @@ Current download and data handling protocol:
 
 Files to preserve for reproducibility:
 
+- final dataset archive:
+  `/content/drive/MyDrive/rsfm_fairness_audit/fmow_sentinel_clean_subset_30k_location_disjoint_v2.zip`
+- final manifest:
+  `final_clean_subset_manifest_30k_location_disjoint_v2.csv`
 - final enriched metadata
 - country-region map
 - `target_paths.csv`

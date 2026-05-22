@@ -648,7 +648,7 @@ def _write_schema_report(path: Path) -> None:
         "- task: `scene_classification`",
         "- input_mode: `s2_13band_image_only`",
         "- band_profile: `sentinel2_13band_fmow`",
-        "- split_protocol examples: `official_split`, `location_split`, `region_split`, `time_split`, `custom_stratified_subset`",
+        "- split_protocol examples: `official_split`, `location_split`, `location_disjoint`, `region_split`, `time_split`, `custom_stratified_subset`",
         "- risk: sample-level 0/1 error for classification",
         "",
         "## Columns",

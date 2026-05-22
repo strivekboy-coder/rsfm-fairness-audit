@@ -115,8 +115,16 @@ Canonical Colab paths:
 The final manifest has 30,000 rows, a location-disjoint 70/30 split
 (`group = category + location_id`), `split_original` preserving the source
 split, and final `split` values of `train` / `val`. Location overlap between
-train and val is zero. Do not use the earlier 10k subset or a non-location-
+train and val is zero. It contains 21,046 train rows and 8,954 validation rows,
+all 62 categories in validation with minimum validation category support of 33,
+195 countries with country missing ratio 0, and continent / UN region / region
+missing ratio 0.024. Do not use the earlier 10k subset or a non-location-
 disjoint manifest for main Step 3 experiments.
+
+Primary formal slices for this dataset are `continent`, `un_region`, `region`,
+`latitude_band`, `season`, and `category`. Country-level BWER should use
+validation support thresholds such as `>=20` or `>=30`; `country x category`
+is diagnostic unless support-threshold filtered.
 
 Prepare a clean subset from the official local archive without extracting all
 TIFF files when rebuilding from source:
