@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import math
 import shutil
+import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -46,11 +48,18 @@ class FmowClassificationConfig:
     max_samples_per_split: int | None = None
     image_size: int = 96
     batch_size: int = 32
+    epochs: int = 20
+    learning_rate: float = 1e-3
+    weight_decay: float = 1e-4
+    num_workers: int = 2
+    device: str = "auto"
+    norm_stats: Path | None = None
     seed: int = 42
     split_protocol: str = "official_split"
     eval_scope: str = "val"
     band_profile: str = "sentinel2_13band_fmow"
     allow_torch_hub_download: bool = False
+    amp: bool = True
     run_bwer: bool = False
     bwer_bootstrap: int = 0
 
@@ -109,13 +118,21 @@ def _sample_id(row: Mapping[str, Any], index: int) -> str:
 
 
 def _resolve_image_path(row: Mapping[str, Any], data_root: Path | None) -> Path:
-    value = row.get("image_path") or row.get("raster_path") or row.get("path")
-    if _is_missing(value):
-        raise FileNotFoundError("row is missing image_path/raster_path/path")
-    path = Path(str(value))
-    if path.is_absolute():
-        return path
-    return (data_root / path) if data_root else path
+    values = [row.get("extracted_path"), row.get("extracted_image_path"), row.get("image_path"), row.get("raster_path"), row.get("path")]
+    candidates: list[Path] = []
+    for value in values:
+        if _is_missing(value):
+            continue
+        path = Path(str(value))
+        candidates.append(path)
+        if not path.is_absolute() and data_root is not None:
+            candidates.append(data_root / path)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    if candidates:
+        return candidates[0]
+    raise FileNotFoundError("row is missing extracted_path/image_path/raster_path/path")
 
 
 def _read_array(path: Path) -> np.ndarray:
@@ -295,7 +312,317 @@ def _dofa_embeddings(
     return np.concatenate(embeddings, axis=0).astype(np.float32), labels, ok_rows, warnings
 
 
+def _require_torch() -> tuple[Any, Any, Any]:
+    try:
+        import torch
+        import torch.nn as nn
+        import torch.nn.functional as F
+    except ImportError as exc:
+        raise RuntimeError("--model resnet50 requires torch and torchvision in the runtime environment.") from exc
+    return torch, nn, F
+
+
+def build_resnet50_13band(num_classes: int) -> Any:
+    """Build a torchvision ResNet-50 with a 13-channel first convolution."""
+    torch, nn, _F = _require_torch()
+    try:
+        from torchvision.models import resnet50
+    except ImportError as exc:
+        raise RuntimeError("--model resnet50 requires torchvision in the runtime environment.") from exc
+    model = resnet50(weights=None)
+    model.conv1 = nn.Conv2d(13, 64, kernel_size=7, stride=2, padding=3, bias=False)
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
+    return model
+
+
+def _device_from_config(config: FmowClassificationConfig) -> Any:
+    torch, _nn, _F = _require_torch()
+    if config.device == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return torch.device(config.device)
+
+
+def _class_mapping(train_rows: Sequence[Mapping[str, Any]]) -> tuple[list[str], dict[str, int]]:
+    classes = sorted({str(row.get("category", "")) for row in train_rows if not _is_missing(row.get("category"))})
+    if not classes:
+        raise ValueError("No training classes found for ResNet-50 training.")
+    return classes, {label: index for index, label in enumerate(classes)}
+
+
+def _compute_or_load_norm_stats(
+    train_rows: Sequence[dict[str, Any]],
+    config: FmowClassificationConfig,
+    output_dir: Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[str], Path]:
+    if config.norm_stats is not None and config.norm_stats.exists():
+        stats = json.loads(config.norm_stats.read_text(encoding="utf-8"))
+        return stats, list(train_rows), [], config.norm_stats
+
+    profile = get_band_profile(config.band_profile)
+    expected_bands = int(profile["expected_bands"])
+    sums = np.zeros(expected_bands, dtype=np.float64)
+    squares = np.zeros(expected_bands, dtype=np.float64)
+    pixel_count = 0
+    ok_rows: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    print(f"[norm] computing train-only per-band stats over {len(train_rows)} rows")
+    for index, row in enumerate(train_rows, start=1):
+        try:
+            chip = load_fmow_sentinel_image(row, config.data_root, config.image_size, config.band_profile)
+        except Exception as exc:
+            warnings.append(f"Skipping train sample_id={row.get('sample_id')} for norm stats: {exc}")
+            continue
+        flat = chip.reshape(chip.shape[0], -1).astype(np.float64)
+        sums += flat.sum(axis=1)
+        squares += np.square(flat).sum(axis=1)
+        pixel_count += flat.shape[1]
+        ok_rows.append(row)
+        if index % 1000 == 0:
+            print(f"[norm] processed={index}/{len(train_rows)} readable={len(ok_rows)}")
+    if pixel_count <= 0 or not ok_rows:
+        raise ValueError("No readable training rasters found for ResNet-50 normalization.")
+    mean = sums / pixel_count
+    variance = np.maximum((squares / pixel_count) - np.square(mean), 1e-12)
+    std = np.sqrt(variance)
+    stats = {
+        "band_profile": config.band_profile,
+        "image_size": config.image_size,
+        "source": "train_split_only",
+        "train_split": config.train_split,
+        "train_rows_requested": len(train_rows),
+        "train_rows_readable": len(ok_rows),
+        "pixel_count_per_band": int(pixel_count),
+        "mean": [float(value) for value in mean],
+        "std": [float(value) for value in std],
+    }
+    path = output_dir / "norm_stats.json"
+    path.write_text(json.dumps(stats, indent=2), encoding="utf-8")
+    return stats, ok_rows, warnings, path
+
+
+class _FmowTorchDataset:
+    def __init__(
+        self,
+        rows: Sequence[dict[str, Any]],
+        config: FmowClassificationConfig,
+        class_to_index: Mapping[str, int],
+        norm_stats: Mapping[str, Any],
+    ) -> None:
+        torch, _nn, _F = _require_torch()
+        self.torch = torch
+        self.rows = list(rows)
+        self.config = config
+        self.class_to_index = dict(class_to_index)
+        self.mean = np.asarray(norm_stats["mean"], dtype=np.float32)[:, None, None]
+        self.std = np.asarray(norm_stats["std"], dtype=np.float32)[:, None, None]
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    def __getitem__(self, index: int) -> tuple[Any, Any, int]:
+        row = self.rows[index]
+        chip = load_fmow_sentinel_image(row, self.config.data_root, self.config.image_size, self.config.band_profile)
+        chip = (chip - self.mean) / np.maximum(self.std, 1e-6)
+        label = self.class_to_index.get(str(row.get("category", "")), -1)
+        return self.torch.from_numpy(chip.astype(np.float32, copy=False)), self.torch.tensor(label, dtype=self.torch.long), index
+
+
+def _macro_f1_from_counts(tp: Mapping[str, int], fp: Mapping[str, int], fn: Mapping[str, int], labels: Sequence[str]) -> float:
+    values: list[float] = []
+    for label in labels:
+        precision = tp.get(label, 0) / max(tp.get(label, 0) + fp.get(label, 0), 1)
+        recall = tp.get(label, 0) / max(tp.get(label, 0) + fn.get(label, 0), 1)
+        values.append(0.0 if precision + recall == 0 else 2.0 * precision * recall / (precision + recall))
+    return float(np.mean(values)) if values else float("nan")
+
+
+def _evaluate_resnet50(model: Any, loader: Any, rows: Sequence[dict[str, Any]], classes: Sequence[str], device: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    torch, _nn, F = _require_torch()
+    model.eval()
+    predictions: list[dict[str, Any]] = []
+    top5_correct = 0
+    true_counts: Counter[str] = Counter()
+    correct_counts: Counter[str] = Counter()
+    tp: Counter[str] = Counter()
+    fp: Counter[str] = Counter()
+    fn: Counter[str] = Counter()
+    with torch.no_grad():
+        for images, _targets, indices in loader:
+            images = images.to(device, non_blocking=True)
+            logits = model(images)
+            probabilities = F.softmax(logits, dim=1)
+            confidence, pred_idx = torch.max(probabilities, dim=1)
+            k = min(5, len(classes))
+            topk = torch.topk(probabilities, k=k, dim=1).indices.cpu().numpy()
+            pred_idx_np = pred_idx.cpu().numpy()
+            confidence_np = confidence.cpu().numpy()
+            for batch_pos, row_index in enumerate(indices.cpu().numpy().tolist()):
+                row = rows[int(row_index)]
+                label = str(row.get("category", ""))
+                prediction = classes[int(pred_idx_np[batch_pos])]
+                top_labels = [classes[int(idx)] for idx in topk[batch_pos]]
+                is_correct = prediction == label
+                is_top5 = label in top_labels
+                top5_correct += int(is_top5)
+                true_counts[label] += 1
+                if is_correct:
+                    correct_counts[label] += 1
+                    tp[label] += 1
+                else:
+                    fp[prediction] += 1
+                    fn[label] += 1
+                predictions.append(
+                    {
+                        "row": row,
+                        "prediction": prediction,
+                        "confidence": float(confidence_np[batch_pos]),
+                        "top5_correct": float(is_top5),
+                    }
+                )
+    total = len(predictions)
+    accuracy = sum(correct_counts.values()) / total if total else float("nan")
+    recalls = [correct_counts[label] / count for label, count in true_counts.items() if count > 0]
+    balanced_accuracy = float(np.mean(recalls)) if recalls else float("nan")
+    macro_f1 = _macro_f1_from_counts(tp, fp, fn, sorted(set(true_counts) | set(fp) | set(tp)))
+    metrics = {
+        "accuracy": float(accuracy),
+        "balanced_accuracy": balanced_accuracy,
+        "macro_f1": macro_f1,
+        "top5_accuracy": float(top5_correct / total) if total else float("nan"),
+        "eval_rows": total,
+    }
+    return predictions, metrics
+
+
+def _train_resnet50(
+    train_rows: Sequence[dict[str, Any]],
+    eval_rows: Sequence[dict[str, Any]],
+    config: FmowClassificationConfig,
+    output_dir: Path,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[str], dict[str, Any]]:
+    torch, nn, _F = _require_torch()
+    from torch.utils.data import DataLoader
+
+    torch.manual_seed(config.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(config.seed)
+    classes, class_to_index = _class_mapping(train_rows)
+    norm_stats, train_ok, norm_warnings, norm_path = _compute_or_load_norm_stats(train_rows, config, output_dir)
+    device = _device_from_config(config)
+    train_dataset = _FmowTorchDataset(train_ok, config, class_to_index, norm_stats)
+    eval_dataset = _FmowTorchDataset(eval_rows, config, class_to_index, norm_stats)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=config.batch_size,
+        shuffle=True,
+        num_workers=config.num_workers,
+        pin_memory=device.type == "cuda",
+    )
+    eval_loader = DataLoader(
+        eval_dataset,
+        batch_size=config.batch_size,
+        shuffle=False,
+        num_workers=config.num_workers,
+        pin_memory=device.type == "cuda",
+    )
+    model = build_resnet50_13band(len(classes)).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+    criterion = nn.CrossEntropyLoss()
+    use_amp = bool(config.amp and device.type == "cuda")
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    best_score = -float("inf")
+    best_epoch = 0
+    checkpoint_path = output_dir / "best_resnet50_checkpoint.pt"
+    history: list[dict[str, Any]] = []
+    print(
+        f"[train] model=resnet50_13band_from_scratch train={len(train_ok)} "
+        f"eval={len(eval_rows)} classes={len(classes)} device={device}"
+    )
+    for epoch in range(1, config.epochs + 1):
+        model.train()
+        total_loss = 0.0
+        total_seen = 0
+        for images, targets, _indices in train_loader:
+            images = images.to(device, non_blocking=True)
+            targets = targets.to(device, non_blocking=True)
+            if torch.any(targets < 0):
+                raise ValueError("Training rows contain labels absent from the train class mapping.")
+            optimizer.zero_grad(set_to_none=True)
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                logits = model(images)
+                loss = criterion(logits, targets)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            batch = int(images.shape[0])
+            total_loss += float(loss.detach().cpu()) * batch
+            total_seen += batch
+        eval_predictions, eval_metrics = _evaluate_resnet50(model, eval_loader, eval_rows, classes, device)
+        score = eval_metrics.get("macro_f1")
+        if not isinstance(score, float) or math.isnan(score):
+            score = eval_metrics.get("accuracy", -float("inf"))
+        train_loss = total_loss / max(total_seen, 1)
+        record = {"epoch": epoch, "train_loss": train_loss, **eval_metrics}
+        history.append(record)
+        print(
+            f"[train] epoch={epoch}/{config.epochs} loss={train_loss:.6f} "
+            f"val_acc={eval_metrics['accuracy']:.6f} val_macro_f1={eval_metrics['macro_f1']:.6f}"
+        )
+        if float(score) > best_score:
+            best_score = float(score)
+            best_epoch = epoch
+            torch.save(
+                {
+                    "model_state_dict": model.state_dict(),
+                    "class_to_index": class_to_index,
+                    "classes": classes,
+                    "norm_stats": norm_stats,
+                    "epoch": epoch,
+                    "score": best_score,
+                    "config": {
+                        "image_size": config.image_size,
+                        "learning_rate": config.learning_rate,
+                        "weight_decay": config.weight_decay,
+                        "batch_size": config.batch_size,
+                    },
+                },
+                checkpoint_path,
+            )
+    state = torch.load(checkpoint_path, map_location=device)
+    model.load_state_dict(state["model_state_dict"])
+    final_predictions, final_metrics = _evaluate_resnet50(model, eval_loader, eval_rows, classes, device)
+    final_metrics.update(
+        {
+            "best_epoch": best_epoch,
+            "best_validation_score": best_score,
+            "checkpoint_path": str(checkpoint_path),
+            "norm_stats_path": str(norm_path),
+            "train_rows_readable": len(train_ok),
+        }
+    )
+    debug = {
+        "model": "resnet50_fmow_sentinel",
+        "model_family": "resnet",
+        "model_variant": "resnet50_13band_from_scratch",
+        "first_conv_in_channels": 13,
+        "weights": "none",
+        "normalization": "train_split_per_band_mean_std",
+        "classes": classes,
+        "history": history,
+        "device": str(device),
+    }
+    return final_predictions, final_metrics, norm_warnings, debug
+
+
 def _model_metadata(config: FmowClassificationConfig) -> dict[str, str]:
+    if config.model == "resnet50":
+        return {
+            "model": "resnet50_fmow_sentinel",
+            "model_family": "resnet",
+            "model_variant": "resnet50_13band_from_scratch",
+            "adaptation_protocol": "supervised_baseline",
+            "training_budget": f"adamw_cross_entropy_epochs_{config.epochs}",
+        }
     if config.model == "dofa":
         return {
             "model": "dofa_fmow_sentinel",
@@ -317,16 +644,21 @@ def _prediction_rows(
     eval_rows: Sequence[dict[str, Any]],
     predictions: Sequence[str],
     config: FmowClassificationConfig,
+    confidences: Sequence[float | str] | None = None,
+    top5_correct: Sequence[float | str] | None = None,
 ) -> list[dict[str, Any]]:
     meta = _model_metadata(config)
     rows: list[dict[str, Any]] = []
-    for row, prediction in zip(eval_rows, predictions):
+    confidence_values = list(confidences) if confidences is not None else [""] * len(predictions)
+    top5_values = list(top5_correct) if top5_correct is not None else [""] * len(predictions)
+    for row, prediction, confidence, top5 in zip(eval_rows, predictions, confidence_values, top5_values):
         label = str(row.get("category", ""))
         correct = float(prediction == label)
         out: dict[str, Any] = {
             "sample_id": row.get("sample_id", ""),
             "image_id": row.get("image_id", ""),
             "image_path": row.get("image_path", ""),
+            "extracted_path": row.get("extracted_path", row.get("extracted_image_path", "")),
             "dataset": "fmow_sentinel",
             "task": "scene_classification",
             "split": row.get("split", config.eval_split),
@@ -334,9 +666,13 @@ def _prediction_rows(
             "category": label,
             "class_label": label,
             "prediction": prediction,
+            "predicted_category": prediction,
             "correct": correct,
             "score": correct,
             "risk": 1.0 - correct,
+            "confidence": confidence,
+            "max_probability": confidence,
+            "top5_correct": top5,
             "model": meta["model"],
             "model_family": meta["model_family"],
             "model_variant": meta["model_variant"],
@@ -401,7 +737,24 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
     if not eval_rows:
         raise ValueError(f"No evaluation rows found for split={config.eval_split!r}.")
 
-    if config.model == "dofa":
+    resnet_metrics: dict[str, Any] = {}
+    resnet_debug: dict[str, Any] = {}
+    resnet_warnings: list[str] = []
+    if config.model == "resnet50":
+        resnet_eval_predictions, resnet_metrics, resnet_warnings, resnet_debug = _train_resnet50(train_rows, eval_rows, config, output)
+        eval_ok = [dict(item["row"]) for item in resnet_eval_predictions]
+        predictions = [str(item["prediction"]) for item in resnet_eval_predictions]
+        prediction_rows = _prediction_rows(
+            eval_ok,
+            predictions,
+            config,
+            confidences=[item["confidence"] for item in resnet_eval_predictions],
+            top5_correct=[item["top5_correct"] for item in resnet_eval_predictions],
+        )
+        train_ok = train_rows
+        warnings_train = resnet_warnings
+        warnings_eval: list[str] = []
+    elif config.model == "dofa":
         if config.model_config is None:
             raise ValueError("--model-config is required for --model dofa.")
         adapter = DOFAAdapter.from_config_file(config.model_config)
@@ -416,15 +769,17 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
     else:
         raise ValueError(f"Unsupported fMoW-Sentinel classification model: {config.model}")
 
-    classifier = _NearestCentroidClassifier()
-    classifier.fit(train_x, train_y)
-    predictions = classifier.predict(eval_x)
-    prediction_rows = _prediction_rows(eval_ok, predictions, config)
+    if config.model != "resnet50":
+        classifier = _NearestCentroidClassifier()
+        classifier.fit(train_x, train_y)
+        predictions = classifier.predict(eval_x)
+        prediction_rows = _prediction_rows(eval_ok, predictions, config)
     audit_rows = build_audit_table_from_predictions_from_rows(prediction_rows)
 
     artifacts = {
         "predictions": output / "predictions.csv",
         "audit_table": output / "audit_table.csv",
+        "metrics_summary": output / "metrics_summary.csv",
         "run_metadata": output / "run_metadata.json",
         "model_debug": output / "model_debug.json",
         "report": output / "report.md",
@@ -433,6 +788,21 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
     write_audit_table(artifacts["audit_table"], audit_rows)
     warnings = warnings_train + warnings_eval
     accuracy = np.mean([float(row["correct"]) for row in prediction_rows]) if prediction_rows else float("nan")
+    top5_values = [float(row["top5_correct"]) for row in prediction_rows if not _is_missing(row.get("top5_correct"))]
+    metric_row = {
+        "dataset": "fmow_sentinel",
+        "task": "scene_classification",
+        "model": _model_metadata(config)["model"],
+        "model_family": _model_metadata(config)["model_family"],
+        "model_variant": _model_metadata(config)["model_variant"],
+        "split": config.eval_split,
+        "eval_scope": config.eval_scope or config.eval_split,
+        "accuracy": accuracy,
+        "balanced_accuracy": resnet_metrics.get("balanced_accuracy", ""),
+        "macro_f1": resnet_metrics.get("macro_f1", ""),
+        "top5_accuracy": resnet_metrics.get("top5_accuracy", float(np.mean(top5_values)) if top5_values else ""),
+    }
+    write_csv(artifacts["metrics_summary"], [metric_row])
     metadata = {
         "dataset": "fmow_sentinel",
         "task": "scene_classification",
@@ -447,28 +817,39 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
         "image_size": config.image_size,
         "band_profile": config.band_profile,
         "input_mode": "s2_13band_image_only",
+        "created_utc": datetime.now(timezone.utc).isoformat(),
+        "python": sys.version,
         "train_rows_requested": len(train_rows),
-        "train_rows_readable": len(train_ok),
+        "train_rows_readable": resnet_metrics.get("train_rows_readable", len(train_ok)),
         "eval_rows_requested": len(eval_rows),
         "eval_rows_readable": len(eval_ok),
         "aggregate_accuracy": accuracy,
+        "balanced_accuracy": metric_row["balanced_accuracy"],
+        "macro_f1": metric_row["macro_f1"],
+        "top5_accuracy": metric_row["top5_accuracy"],
+        "epochs": config.epochs if config.model == "resnet50" else "",
+        "batch_size": config.batch_size,
+        "learning_rate": config.learning_rate if config.model == "resnet50" else "",
+        "weight_decay": config.weight_decay if config.model == "resnet50" else "",
+        "optimizer": "AdamW" if config.model == "resnet50" else "nearest_centroid",
+        "loss": "cross_entropy" if config.model == "resnet50" else "",
+        "random_seed": config.seed,
         "geography_metadata_usage": "audit_slicing_only_not_model_input",
         "geography_join_level": "location_level",
     }
+    metadata.update({key: value for key, value in resnet_metrics.items() if key in {"best_epoch", "best_validation_score", "checkpoint_path", "norm_stats_path"}})
     artifacts["run_metadata"].write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    artifacts["model_debug"].write_text(
-        json.dumps(
-            {
-                "model": metadata["model"],
-                "classifier": "nearest_centroid",
-                "feature_dimension": int(train_x.shape[1]),
-                "classes": classifier.classes,
-                "warnings": warnings[:100],
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    if config.model == "resnet50":
+        debug_payload = {**resnet_debug, "warnings": warnings[:100]}
+    else:
+        debug_payload = {
+            "model": metadata["model"],
+            "classifier": "nearest_centroid",
+            "feature_dimension": int(train_x.shape[1]),
+            "classes": classifier.classes,
+            "warnings": warnings[:100],
+        }
+    artifacts["model_debug"].write_text(json.dumps(debug_payload, indent=2), encoding="utf-8")
     _write_report(output, prediction_rows, warnings, config)
     if config.run_bwer:
         artifacts.update(run_fmow_geography_bwer(FmowBwerConfig(input_dir=output, output_dir=output / "bwer", bootstrap=config.bwer_bootstrap, seed=config.seed)))

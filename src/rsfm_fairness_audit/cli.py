@@ -157,7 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
     fmow_cls.add_argument("--metadata-csv", type=Path, required=True, help="Final enriched fMoW-Sentinel metadata or subset manifest CSV.")
     fmow_cls.add_argument("--data-root", type=Path, help="Root used to resolve relative image_path values.")
     fmow_cls.add_argument("--output-dir", type=Path, required=True)
-    fmow_cls.add_argument("--model", choices=["supervised_stats", "dofa"], default="supervised_stats")
+    fmow_cls.add_argument("--model", choices=["supervised_stats", "dofa", "resnet50"], default="supervised_stats")
     fmow_cls.add_argument("--model-config", type=Path, default=Path("configs/models/dofa_fmow_sentinel.yaml"))
     fmow_cls.add_argument("--train-split", default="train")
     fmow_cls.add_argument("--eval-split", default="val")
@@ -165,8 +165,15 @@ def build_parser() -> argparse.ArgumentParser:
     fmow_cls.add_argument("--max-samples-per-split", type=int, help="Explicit per-split cap applied after train/eval split filtering.")
     fmow_cls.add_argument("--image-size", type=int, default=96)
     fmow_cls.add_argument("--batch-size", type=int, default=32)
+    fmow_cls.add_argument("--epochs", type=int, default=20)
+    fmow_cls.add_argument("--learning-rate", type=float, default=1e-3)
+    fmow_cls.add_argument("--weight-decay", type=float, default=1e-4)
+    fmow_cls.add_argument("--num-workers", type=int, default=2)
+    fmow_cls.add_argument("--device", default="auto")
+    fmow_cls.add_argument("--norm-stats", type=Path, help="Optional train-only norm_stats.json to reuse for ResNet-50.")
+    fmow_cls.add_argument("--amp", default="true", help="true/false; enable CUDA AMP for ResNet-50.")
     fmow_cls.add_argument("--seed", type=int, default=42)
-    fmow_cls.add_argument("--split-protocol", choices=["official_split", "location_split", "region_split", "time_split", "custom_stratified_subset"], default="official_split")
+    fmow_cls.add_argument("--split-protocol", choices=["official_split", "location_split", "location_disjoint", "region_split", "time_split", "custom_stratified_subset"], default="official_split")
     fmow_cls.add_argument("--eval-scope", default="val")
     fmow_cls.add_argument("--band-profile", default="sentinel2_13band_fmow")
     fmow_cls.add_argument("--allow-torch-hub-download", action="store_true", help="Explicitly allow DOFA torch.hub download for Colab runs.")
@@ -468,11 +475,18 @@ def main() -> None:
                 max_samples_per_split=None if args.max_samples_per_split in (None, 0) else args.max_samples_per_split,
                 image_size=args.image_size,
                 batch_size=args.batch_size,
+                epochs=args.epochs,
+                learning_rate=args.learning_rate,
+                weight_decay=args.weight_decay,
+                num_workers=args.num_workers,
+                device=args.device,
+                norm_stats=args.norm_stats,
                 seed=args.seed,
                 split_protocol=args.split_protocol,
                 eval_scope=args.eval_scope,
                 band_profile=args.band_profile,
                 allow_torch_hub_download=args.allow_torch_hub_download,
+                amp=_parse_bool(args.amp),
                 run_bwer=args.run_bwer,
                 bwer_bootstrap=args.bwer_bootstrap,
             )

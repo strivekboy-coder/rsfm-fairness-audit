@@ -7,11 +7,14 @@ import uuid
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from rsfm_fairness_audit.cli import main
 from rsfm_fairness_audit.adapters.dofa import DOFAAdapter
 from rsfm_fairness_audit.fmow_sentinel_classification import (
     FmowClassificationConfig,
+    _prediction_rows,
+    build_resnet50_13band,
     compare_fmow_runs,
     load_fmow_sentinel_image,
     run_fmow_geography_bwer,
@@ -171,3 +174,96 @@ def test_fmow_max_samples_is_applied_after_train_eval_split() -> None:
     assert '"train_rows_readable": 2' in run_metadata
     assert '"eval_rows_readable": 2' in run_metadata
     _cleanup(root)
+
+
+def test_resnet50_first_conv_accepts_13_channels() -> None:
+    pytest.importorskip("torch")
+    pytest.importorskip("torchvision")
+    model = build_resnet50_13band(num_classes=62)
+    assert model.conv1.in_channels == 13
+    assert model.fc.out_features == 62
+
+
+def test_resnet50_prediction_rows_preserve_audit_schema_and_geography() -> None:
+    row = {
+        "sample_id": "s1",
+        "image_id": "img1",
+        "image_path": "fmow-sentinel/val/airport/airport_1/airport_1_1.tif",
+        "extracted_path": "/content/data/subset/fmow-sentinel/val/airport/airport_1/airport_1_1.tif",
+        "category": "airport",
+        "split": "val",
+        "timestamp": "2020-07-10",
+        "year": "2020",
+        "month": "7",
+        "season": "JJA",
+        "location_id": "1",
+        "latitude": "45.0",
+        "longitude": "7.0",
+        "country": "ITA",
+        "continent": "Europe",
+        "un_region": "Southern Europe",
+        "region": "Europe",
+        "latitude_band": "north_mid_latitude",
+        "metadata_provenance": "location_level_geography_enrichment",
+    }
+    rows = _prediction_rows(
+        [row],
+        ["port"],
+        FmowClassificationConfig(
+            metadata_csv=Path("metadata.csv"),
+            output_dir=Path("outputs/unused"),
+            model="resnet50",
+            split_protocol="location_disjoint",
+            eval_scope="val",
+        ),
+        confidences=[0.73],
+        top5_correct=[1.0],
+    )
+    out = rows[0]
+    required = {
+        "sample_id",
+        "image_id",
+        "image_path",
+        "extracted_path",
+        "dataset",
+        "task",
+        "split",
+        "label",
+        "category",
+        "prediction",
+        "predicted_category",
+        "correct",
+        "risk",
+        "confidence",
+        "max_probability",
+        "model_family",
+        "model_variant",
+        "input_mode",
+        "adaptation_protocol",
+        "split_protocol",
+        "eval_scope",
+        "resolution",
+        "band_profile",
+        "timestamp",
+        "year",
+        "month",
+        "season",
+        "location_id",
+        "latitude",
+        "longitude",
+        "country",
+        "continent",
+        "un_region",
+        "region",
+        "latitude_band",
+    }
+    assert required.issubset(out)
+    assert out["dataset"] == "fmow_sentinel"
+    assert out["task"] == "scene_classification"
+    assert out["model_family"] == "resnet"
+    assert out["model_variant"] == "resnet50_13band_from_scratch"
+    assert out["input_mode"] == "s2_13band_image_only"
+    assert out["adaptation_protocol"] == "supervised_baseline"
+    assert out["split_protocol"] == "location_disjoint"
+    assert out["country"] == "ITA"
+    assert out["risk"] == 1.0

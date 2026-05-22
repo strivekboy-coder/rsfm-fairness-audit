@@ -99,8 +99,27 @@ does not redo metadata enrichment and does not feed geography metadata into the
 model. Geography fields are carried only into prediction tables, support
 diagnostics, and BWER reporting.
 
+The finalized Step 3 dataset/protocol record is
+`fmow_sentinel_clean_subset_30k_location_disjoint_v2`. It was extracted from
+the official Stanford PURL `fmow-sentinel.tar.gz` after downloading the full
+tarball to Colab local `/content` storage, without fully extracting the archive.
+Earlier streaming partial-extraction experiments are excluded from formal data.
+
+Canonical Colab paths:
+
+```text
+/content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv
+/content/drive/MyDrive/rsfm_fairness_audit/fmow_sentinel_clean_subset_30k_location_disjoint_v2.zip
+```
+
+The final manifest has 30,000 rows, a location-disjoint 70/30 split
+(`group = category + location_id`), `split_original` preserving the source
+split, and final `split` values of `train` / `val`. Location overlap between
+train and val is zero. Do not use the earlier 10k subset or a non-location-
+disjoint manifest for main Step 3 experiments.
+
 Prepare a clean subset from the official local archive without extracting all
-TIFF files:
+TIFF files when rebuilding from source:
 
 ```powershell
 python scripts/prepare_fmow_sentinel_clean_subset.py `
@@ -134,17 +153,17 @@ python scripts/prepare_fmow_sentinel_clean_subset.py `
   --seed 42
 ```
 
-Lightweight supervised image-only baseline:
+Lightweight supervised image-only sanity/debug baseline:
 
 ```powershell
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
-  --metadata-csv /content/data/fmow_sentinel_clean_subset_v1/clean_subset_manifest.csv `
-  --data-root /content/data/fmow_sentinel_clean_subset_v1 `
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv `
+  --data-root /content/data/fmow_sentinel_clean_subset_30k_v2 `
   --output-dir /content/outputs/fmow_sentinel_supervised_stats_val `
   --model supervised_stats `
   --train-split train `
   --eval-split val `
-  --max-samples-per-split 5000 `
+  --split-protocol location_disjoint `
   --image-size 96 `
   --run-bwer
 ```
@@ -153,19 +172,46 @@ Minimal DOFA frozen-encoder candidate:
 
 ```powershell
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
-  --metadata-csv /content/data/fmow_sentinel_clean_subset_v1/clean_subset_manifest.csv `
-  --data-root /content/data/fmow_sentinel_clean_subset_v1 `
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv `
+  --data-root /content/data/fmow_sentinel_clean_subset_30k_v2 `
   --output-dir /content/outputs/fmow_sentinel_dofa_frozen_probe_val `
   --model dofa `
   --model-config configs/models/dofa_fmow_sentinel.yaml `
   --train-split train `
   --eval-split val `
-  --max-samples-per-split 5000 `
+  --split-protocol location_disjoint `
   --image-size 224 `
   --batch-size 16 `
   --allow-torch-hub-download `
   --run-bwer
 ```
+
+Paper-grade supervised ResNet-50 baseline on the clean 30k
+location-disjoint subset:
+
+```powershell
+python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv `
+  --data-root /content/data/fmow_sentinel_clean_subset_30k_v2 `
+  --output-dir /content/outputs/fmow_sentinel_resnet50_30k_location_disjoint `
+  --model resnet50 `
+  --train-split train `
+  --eval-split val `
+  --split-protocol location_disjoint `
+  --eval-scope val `
+  --image-size 96 `
+  --batch-size 32 `
+  --epochs 20 `
+  --learning-rate 1e-3 `
+  --weight-decay 1e-4 `
+  --num-workers 2 `
+  --run-bwer
+```
+
+This ResNet-50 is trained from scratch with `weights=None`, a 13-channel first
+convolution, train-split-only per-band normalization, and Sentinel-2 image
+inputs only. Geography metadata is copied into prediction/audit rows for BWER
+slicing but is not used as model input.
 
 Post-hoc geography BWER can be rerun without model inference:
 

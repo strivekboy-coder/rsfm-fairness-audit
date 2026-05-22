@@ -331,10 +331,94 @@ Augmentation outputs:
 - `raster_validation_report_augmented.csv`
 - `warnings_augmented.json`
 
-Use `augmented_clean_subset_manifest.csv` for the final 30k Step 3 model
-prototype runs. Remaining low-support slices are recorded in the before/after
-support tables and should be reported as support limitations, not silently
-treated as balanced.
+The finalized Step 3 dataset is:
+
+```text
+fmow_sentinel_clean_subset_30k_location_disjoint_v2
+```
+
+Expected Colab manifest:
+
+```text
+/content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv
+```
+
+Drive archive:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/fmow_sentinel_clean_subset_30k_location_disjoint_v2.zip
+```
+
+Use this final manifest for ResNet-50 and DOFA Step 3 runs. Do not use the
+earlier 10k subset or any non-location-disjoint manifest for the main Step 3
+experiments. Do not package the raw full archive or a fully extracted fMoW tree
+into the repository.
+
+Remaining low-support slices are recorded in support tables and should be
+reported as support limitations, not silently treated as balanced.
+
+### Final 30k Location-Disjoint Dataset Record
+
+Source archive:
+
+- official fMoW-Sentinel `fmow-sentinel.tar.gz` from Stanford PURL.
+
+Extraction strategy:
+
+- full tarball downloaded to Colab local `/content`;
+- archive was not fully extracted;
+- support-aware clean subset extracted from the local tar;
+- earlier streaming partial-extraction experiments are excluded from formal
+  data.
+
+Split protocol:
+
+- `split_protocol = location_disjoint`
+- location-disjoint 70/30 split
+- group key: `category + location_id`
+- original source split preserved as `split_original`
+- final `split` column contains `train` / `val`
+- train/val location overlap: 0
+- `sample_id` was regenerated to be unique in the final manifest
+
+Final dataset facts:
+
+| field | value |
+| --- | ---: |
+| total rows | 30000 |
+| train rows | 21046 |
+| val rows | 8954 |
+| categories | 62 |
+| val category coverage | all 62 categories |
+| minimum val category support | 33 |
+| country coverage | 195 countries |
+| country missing ratio | 0 |
+| continent / un_region / region missing ratio | 0.024 |
+| season missing ratio | 0 |
+| latitude_band missing ratio | 0 |
+| val countries with >=20 samples | 145 |
+| val countries with >=30 samples | 105 |
+
+`continent`, `un_region`, `region`, `season`, and `latitude_band` all have
+validation support. Geography dirty country codes are retained in the manifest
+for provenance but should not be used for formal region-level BWER when mapped
+geography is missing:
+
+- `ambiguous_country`
+- `ANT`
+- `KO-`
+- `CA-`
+
+Formal analysis guidance for this dataset:
+
+- Primary formal slices: `continent`, `un_region`, `region`,
+  `latitude_band`, `season`, and `category`.
+- Country-level BWER should use support thresholds such as validation support
+  `>=20` or `>=30`.
+- `country x category` is diagnostic-only unless support-threshold filtered.
+- `region x category`, `season x category`, and
+  `latitude_band x category` may be used for standardisation where preflight
+  support allows; otherwise report them as diagnostics or sensitivity checks.
 
 ## Slice Support
 
@@ -439,6 +523,36 @@ python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification \
 The supervised prototype uses 13-band image statistics and a nearest-centroid
 classifier. It is a small supervised baseline for checking the geography BWER
 pipeline, not a SOTA classifier.
+
+Paper-grade supervised ResNet-50 baseline:
+
+```bash
+python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification \
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv \
+  --data-root /content/data/fmow_sentinel_clean_subset_30k_v2 \
+  --output-dir /content/outputs/fmow_sentinel_resnet50_30k_location_disjoint \
+  --model resnet50 \
+  --train-split train \
+  --eval-split val \
+  --split-protocol location_disjoint \
+  --eval-scope val \
+  --image-size 96 \
+  --batch-size 32 \
+  --epochs 20 \
+  --learning-rate 1e-3 \
+  --weight-decay 1e-4 \
+  --num-workers 2 \
+  --run-bwer
+```
+
+The ResNet-50 path uses torchvision's ResNet-50 with `weights=None`, replaces
+the first convolution with a 13-channel convolution, and trains with
+cross-entropy on Sentinel-2 13-band image tensors. It computes per-band
+mean/std from the training split only and writes `norm_stats.json` for reuse.
+Do not use ImageNet RGB normalization. The model input is imagery only:
+`country`, `region`, coordinates, timestamp, season, and other geography fields
+are copied to prediction/audit outputs solely for support diagnostics and BWER
+reporting.
 
 Minimal DOFA frozen-encoder candidate:
 
