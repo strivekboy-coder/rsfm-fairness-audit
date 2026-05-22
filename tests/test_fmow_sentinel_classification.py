@@ -267,3 +267,77 @@ def test_resnet50_prediction_rows_preserve_audit_schema_and_geography() -> None:
     assert out["split_protocol"] == "location_disjoint"
     assert out["country"] == "ITA"
     assert out["risk"] == 1.0
+
+
+def test_dofa_linear_probe_writes_formal_protocol_and_cache(monkeypatch) -> None:
+    pytest.importorskip("torch")
+
+    class FakeDOFAAdapter:
+        checkpoint_path = None
+        repo_path = None
+        torch_hub_repo = "fake/dofa"
+        model_variant = "vit_base_dofa"
+        allow_torch_hub_download = False
+        image_size = 8
+        band_profile = "sentinel2_13band_fmow"
+        embedding_layer = "forward_features"
+        wavelengths = [0.443, 0.49, 0.56, 0.665, 0.705, 0.74, 0.783, 0.842, 0.865, 0.945, 1.373, 1.61, 2.19]
+        normalization_mean = [0.0] * 13
+        normalization_std = [1.0] * 13
+        saw_image_only_samples = False
+
+        def load_model(self) -> None:
+            return None
+
+        def preprocess(self, batch):
+            assert all(set(sample) == {"image"} for sample in batch["samples"])
+            self.saw_image_only_samples = True
+            return batch
+
+        def extract_embeddings(self, batch):
+            images = np.stack([sample["image"] for sample in batch["samples"]]).astype(np.float32)
+            flat = images.reshape(images.shape[0], images.shape[1], -1)
+            return np.concatenate([flat.mean(axis=2), flat.std(axis=2)], axis=1).astype(np.float32)
+
+    fake_adapter = FakeDOFAAdapter()
+    monkeypatch.setattr(
+        "rsfm_fairness_audit.fmow_sentinel_classification.DOFAAdapter.from_config_file",
+        lambda _path: fake_adapter,
+    )
+    root = Path("outputs") / f"test_fmow_dofa_linear_{uuid.uuid4().hex}"
+    root.mkdir(parents=True)
+    metadata = _write_fmow_fixture(root, n_train_per_class=6, n_val_per_class_country=3)
+    out = root / "run"
+    run_fmow_sentinel_classification(
+        FmowClassificationConfig(
+            metadata_csv=metadata,
+            data_root=root,
+            output_dir=out,
+            model="dofa",
+            model_config=Path("fake.yaml"),
+            probe="linear",
+            probe_epochs=2,
+            batch_size=4,
+            image_size=8,
+            split_protocol="location_disjoint",
+        )
+    )
+    assert fake_adapter.saw_image_only_samples
+    predictions = read_csv_rows(out / "predictions.csv")
+    assert predictions
+    first = predictions[0]
+    assert first["model_family"] == "dofa"
+    assert first["model_variant"] == "dofa_vit_base"
+    assert first["adaptation_protocol"] == "frozen_encoder_linear_probe"
+    assert first["input_mode"] == "s2_13band_image_only"
+    assert first["split_protocol"] == "location_disjoint"
+    assert first["country"] in {"CountryA", "CountryB"}
+    assert first["confidence"] != ""
+    assert first["max_probability"] != ""
+    metadata_payload = (out / "run_metadata.json").read_text(encoding="utf-8")
+    assert '"adaptation_protocol": "frozen_encoder_linear_probe"' in metadata_payload
+    assert '"model_variant": "dofa_vit_base"' in metadata_payload
+    assert '"wavelength_list"' in metadata_payload
+    assert '"embedding_cache_path"' in metadata_payload
+    assert (out / "embedding_cache").exists()
+    _cleanup(root)

@@ -176,15 +176,16 @@ python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
   --run-bwer
 ```
 
-Minimal DOFA frozen-encoder candidate:
+Formal DOFA ViT-B frozen-backbone linear probe:
 
 ```powershell
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
   --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv `
   --data-root /content/data/fmow_sentinel_clean_subset_30k_v2 `
-  --output-dir /content/outputs/fmow_sentinel_dofa_frozen_probe_val `
+  --output-dir /content/outputs/fmow_sentinel_dofa_vitb_linear_probe_30k_location_disjoint `
   --model dofa `
   --model-config configs/models/dofa_fmow_sentinel.yaml `
+  --probe linear `
   --train-split train `
   --eval-split val `
   --split-protocol location_disjoint `
@@ -193,6 +194,11 @@ python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
   --allow-torch-hub-download `
   --run-bwer
 ```
+
+The DOFA path extracts frozen ViT-B embeddings once, caches train/val
+embeddings under the run output, trains a linear classifier on train
+embeddings, and writes confidence/max-probability from classifier softmax.
+Nearest-centroid probing is kept only as an optional sanity mode.
 
 Paper-grade supervised ResNet-50 baseline on the clean 30k
 location-disjoint subset:
@@ -234,7 +240,7 @@ Compare completed fMoW-Sentinel runs:
 ```powershell
 python -m rsfm_fairness_audit.cli compare-fmow-runs `
   --run supervised=/content/outputs/fmow_sentinel_supervised_stats_val `
-  --run dofa=/content/outputs/fmow_sentinel_dofa_frozen_probe_val `
+  --run dofa=/content/outputs/fmow_sentinel_dofa_vitb_linear_probe_30k_location_disjoint `
   --output-dir /content/outputs/comparisons/fmow_sentinel_supervised_vs_dofa
 ```
 

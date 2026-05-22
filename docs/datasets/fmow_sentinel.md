@@ -569,15 +569,16 @@ Do not use ImageNet RGB normalization. The model input is imagery only:
 are copied to prediction/audit outputs solely for support diagnostics and BWER
 reporting.
 
-Minimal DOFA frozen-encoder candidate:
+Formal DOFA ViT-B frozen-backbone linear probe:
 
 ```bash
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification \
   --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv \
   --data-root /content/data/fmow_sentinel_clean_subset_30k_v2 \
-  --output-dir /content/outputs/fmow_sentinel_dofa_frozen_probe_val \
+  --output-dir /content/outputs/fmow_sentinel_dofa_vitb_linear_probe_30k_location_disjoint \
   --model dofa \
   --model-config configs/models/dofa_fmow_sentinel.yaml \
+  --probe linear \
   --train-split train \
   --eval-split val \
   --split-protocol location_disjoint \
@@ -588,9 +589,14 @@ python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification \
 ```
 
 The DOFA command uses the existing DOFA adapter with
-`band_profile=sentinel2_13band_fmow`. Torch Hub download is disabled in the
-config by default; pass `--allow-torch-hub-download` only in a Colab/runtime
-where downloading the official weights is intended.
+`band_profile=sentinel2_13band_fmow`, the exact 13-band fMoW-Sentinel band
+order, and the corresponding `wavelength_list`. Torch Hub download is disabled
+in the config by default; pass `--allow-torch-hub-download` only in a
+Colab/runtime where downloading the official weights is intended. The formal
+protocol is `adaptation_protocol=frozen_encoder_linear_probe`: DOFA ViT-B is
+kept frozen, train/validation embeddings are cached once, and a linear
+classifier is trained on train embeddings. Nearest-centroid probing is retained
+only as an optional sanity mode, not the formal Step 3 RSFM comparison path.
 
 Post-hoc geography BWER can be rerun without model inference:
 
@@ -605,7 +611,7 @@ Compare the supervised prototype and DOFA frozen-probe run:
 ```bash
 python -m rsfm_fairness_audit.cli compare-fmow-runs \
   --run supervised=/content/outputs/fmow_sentinel_supervised_stats_val \
-  --run dofa=/content/outputs/fmow_sentinel_dofa_frozen_probe_val \
+  --run dofa=/content/outputs/fmow_sentinel_dofa_vitb_linear_probe_30k_location_disjoint \
   --output-dir /content/outputs/comparisons/fmow_sentinel_supervised_vs_dofa
 ```
 
@@ -629,7 +635,7 @@ outputs/fmow_sentinel_step3/<run_name>/
     predictions.csv
     metrics_summary.csv
     run_metadata.json
-  dofa_frozen_probe/
+  dofa_linear_probe/
     predictions.csv
     metrics_summary.csv
     run_metadata.json

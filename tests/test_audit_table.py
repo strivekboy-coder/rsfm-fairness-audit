@@ -83,6 +83,24 @@ def test_diagnostic_spectral_rule_is_valid_adaptation_protocol() -> None:
     )
 
 
+def test_frozen_encoder_linear_probe_is_valid_adaptation_protocol() -> None:
+    validate_audit_table(
+        [
+            {
+                "dataset": "fmow_sentinel",
+                "model": "dofa_fmow_sentinel",
+                "task": "scene_classification",
+                "split": "val",
+                "unit_id": "sample-1",
+                "score": 1.0,
+                "risk": 0.0,
+                "adaptation_protocol": "frozen_encoder_linear_probe",
+                "split_protocol": "location_disjoint",
+            }
+        ]
+    )
+
+
 def test_segmentation_metrics_convert_to_audit_table() -> None:
     root = __import__("pathlib").Path("outputs/test_audit_table_segmentation")
     root.mkdir(parents=True, exist_ok=True)

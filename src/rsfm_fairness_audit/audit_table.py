@@ -14,6 +14,7 @@ class AuditTableError(RuntimeError):
 ALLOWED_ADAPTATION_PROTOCOLS = {
     "",
     "frozen_probe",
+    "frozen_encoder_linear_probe",
     "frozen_encoder_lightweight_head",
     "task_adapted_decoder",
     "full_finetune",

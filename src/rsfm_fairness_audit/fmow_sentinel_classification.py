@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import shutil
@@ -42,6 +43,10 @@ class FmowClassificationConfig:
     data_root: Path | None = None
     model: str = "supervised_stats"
     model_config: Path | None = None
+    probe: str = "linear"
+    probe_epochs: int = 200
+    probe_learning_rate: float = 1e-2
+    embedding_cache_dir: Path | None = None
     train_split: str = "train"
     eval_split: str = "val"
     max_samples: int | None = None
@@ -310,6 +315,199 @@ def _dofa_embeddings(
     if not embeddings:
         raise ValueError("No readable fMoW-Sentinel images found for DOFA embedding extraction.")
     return np.concatenate(embeddings, axis=0).astype(np.float32), labels, ok_rows, warnings
+
+
+def _adapter_source(adapter: DOFAAdapter) -> str:
+    if adapter.checkpoint_path is not None:
+        return str(adapter.checkpoint_path)
+    if adapter.repo_path is not None:
+        return str(adapter.repo_path)
+    return f"torch_hub:{adapter.torch_hub_repo}:{adapter.model_variant}:pretrained={adapter.allow_torch_hub_download}"
+
+
+def _row_hash(rows: Sequence[Mapping[str, Any]]) -> str:
+    digest = hashlib.sha256()
+    for row in rows:
+        digest.update(str(row.get("sample_id", "")).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(row.get("image_id", "")).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(row.get("image_path", row.get("extracted_path", ""))).encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()[:16]
+
+
+def _dofa_cache_key(
+    rows: Sequence[dict[str, Any]],
+    split_name: str,
+    config: FmowClassificationConfig,
+    adapter: DOFAAdapter,
+) -> str:
+    payload = {
+        "split": split_name,
+        "manifest": str(config.metadata_csv),
+        "manifest_resolved": str(config.metadata_csv.resolve()) if config.metadata_csv.exists() else str(config.metadata_csv),
+        "model_variant": adapter.model_variant,
+        "image_size": config.image_size,
+        "adapter_image_size": adapter.image_size,
+        "band_profile": config.band_profile,
+        "checkpoint_source": _adapter_source(adapter),
+        "embedding_layer": adapter.embedding_layer,
+        "row_count": len(rows),
+        "row_hash": _row_hash(rows),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:20]
+
+
+def _cached_dofa_embeddings(
+    rows: Sequence[dict[str, Any]],
+    split_name: str,
+    config: FmowClassificationConfig,
+    adapter: DOFAAdapter,
+    output_dir: Path,
+) -> tuple[np.ndarray, list[str], list[dict[str, Any]], list[str], Path, dict[str, Any]]:
+    cache_dir = ensure_dir(config.embedding_cache_dir or output_dir / "embedding_cache")
+    key = _dofa_cache_key(rows, split_name, config, adapter)
+    cache_path = cache_dir / f"dofa_{split_name}_{key}.npz"
+    metadata_path = cache_dir / f"dofa_{split_name}_{key}.json"
+    row_by_sample = {str(row.get("sample_id", "")): row for row in rows}
+    if cache_path.exists() and metadata_path.exists():
+        data = np.load(cache_path, allow_pickle=False)
+        sample_ids = [str(value) for value in data["sample_ids"].tolist()]
+        ok_rows = [row_by_sample[sample_id] for sample_id in sample_ids if sample_id in row_by_sample]
+        if len(ok_rows) == len(sample_ids):
+            print(f"[cache] loaded DOFA embeddings split={split_name} path={cache_path}")
+            return (
+                np.asarray(data["embeddings"], dtype=np.float32),
+                [str(value) for value in data["labels"].tolist()],
+                ok_rows,
+                [],
+                cache_path,
+                json.loads(metadata_path.read_text(encoding="utf-8")),
+            )
+    embeddings, labels, ok_rows, warnings = _dofa_embeddings(rows, config, adapter)
+    sample_ids = np.asarray([str(row.get("sample_id", "")) for row in ok_rows])
+    np.savez_compressed(
+        cache_path,
+        embeddings=embeddings.astype(np.float32),
+        labels=np.asarray(labels),
+        sample_ids=sample_ids,
+    )
+    metadata = {
+        "cache_key": key,
+        "split": split_name,
+        "manifest": str(config.metadata_csv),
+        "model_variant": adapter.model_variant,
+        "image_size": config.image_size,
+        "adapter_image_size": adapter.image_size,
+        "band_profile": config.band_profile,
+        "checkpoint_source": _adapter_source(adapter),
+        "embedding_layer": adapter.embedding_layer,
+        "row_count_requested": len(rows),
+        "row_count_cached": len(ok_rows),
+        "embedding_dim": int(embeddings.shape[1]) if embeddings.ndim == 2 else "",
+        "row_hash": _row_hash(rows),
+    }
+    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+    print(f"[cache] wrote DOFA embeddings split={split_name} path={cache_path}")
+    return embeddings, labels, ok_rows, warnings, cache_path, metadata
+
+
+def _nearest_centroid_with_confidence(classifier: _NearestCentroidClassifier, features: np.ndarray) -> tuple[list[str], list[float]]:
+    if classifier.centroids is None:
+        raise RuntimeError("classifier has not been fitted")
+    diff = features[:, None, :] - classifier.centroids[None, :, :]
+    distances = np.sum(diff * diff, axis=2)
+    scores = -distances
+    scores = scores - scores.max(axis=1, keepdims=True)
+    probs = np.exp(scores)
+    probs = probs / np.maximum(probs.sum(axis=1, keepdims=True), 1e-12)
+    indices = np.argmax(probs, axis=1)
+    return [classifier.classes[int(index)] for index in indices], [float(probs[row, index]) for row, index in enumerate(indices)]
+
+
+def _train_linear_probe(
+    train_x: np.ndarray,
+    train_y: Sequence[str],
+    eval_x: np.ndarray,
+    config: FmowClassificationConfig,
+    output_dir: Path,
+) -> tuple[list[str], list[float], dict[str, Any], dict[str, Any]]:
+    torch, nn, _F = _require_torch()
+    from torch.utils.data import DataLoader, TensorDataset
+
+    classes = sorted({str(label) for label in train_y})
+    class_to_index = {label: index for index, label in enumerate(classes)}
+    y = np.asarray([class_to_index[str(label)] for label in train_y], dtype=np.int64)
+    mean = train_x.mean(axis=0).astype(np.float32)
+    std = np.maximum(train_x.std(axis=0).astype(np.float32), 1e-6)
+    train_z = (train_x.astype(np.float32) - mean) / std
+    eval_z = (eval_x.astype(np.float32) - mean) / std
+    torch.manual_seed(config.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(config.seed)
+    device = _device_from_config(config)
+    model = nn.Linear(train_z.shape[1], len(classes)).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.probe_learning_rate, weight_decay=config.weight_decay)
+    criterion = nn.CrossEntropyLoss()
+    dataset = TensorDataset(torch.from_numpy(train_z), torch.from_numpy(y))
+    loader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    history: list[dict[str, Any]] = []
+    print(
+        f"[probe] training linear probe embeddings={train_z.shape} classes={len(classes)} "
+        f"epochs={config.probe_epochs} device={device}"
+    )
+    for epoch in range(1, config.probe_epochs + 1):
+        model.train()
+        total_loss = 0.0
+        total_seen = 0
+        for batch_x, batch_y in loader:
+            batch_x = batch_x.to(device)
+            batch_y = batch_y.to(device)
+            optimizer.zero_grad(set_to_none=True)
+            loss = criterion(model(batch_x), batch_y)
+            loss.backward()
+            optimizer.step()
+            total_loss += float(loss.detach().cpu()) * int(batch_x.shape[0])
+            total_seen += int(batch_x.shape[0])
+        if epoch == 1 or epoch == config.probe_epochs or epoch % 25 == 0:
+            record = {"epoch": epoch, "train_loss": total_loss / max(total_seen, 1)}
+            history.append(record)
+            print(f"[probe] epoch={epoch}/{config.probe_epochs} loss={record['train_loss']:.6f}")
+    model.eval()
+    with torch.no_grad():
+        logits = model(torch.from_numpy(eval_z).to(device))
+        probs = torch.softmax(logits, dim=1).detach().cpu().numpy()
+    pred_idx = np.argmax(probs, axis=1)
+    predictions = [classes[int(index)] for index in pred_idx]
+    confidence = [float(probs[row, index]) for row, index in enumerate(pred_idx)]
+    checkpoint_path = output_dir / "dofa_linear_probe_checkpoint.pt"
+    torch.save(
+        {
+            "state_dict": model.state_dict(),
+            "classes": classes,
+            "class_to_index": class_to_index,
+            "embedding_mean": mean,
+            "embedding_std": std,
+            "probe_epochs": config.probe_epochs,
+            "probe_learning_rate": config.probe_learning_rate,
+        },
+        checkpoint_path,
+    )
+    metadata = {
+        "probe": "linear",
+        "classifier": "torch.nn.Linear",
+        "probe_epochs": config.probe_epochs,
+        "probe_learning_rate": config.probe_learning_rate,
+        "checkpoint_path": str(checkpoint_path),
+        "class_to_index": class_to_index,
+    }
+    debug = {
+        "probe_history": history,
+        "embedding_dim": int(train_z.shape[1]),
+        "linear_probe_checkpoint": str(checkpoint_path),
+    }
+    return predictions, confidence, metadata, debug
 
 
 def _require_torch() -> tuple[Any, Any, Any]:
@@ -624,10 +822,18 @@ def _model_metadata(config: FmowClassificationConfig) -> dict[str, str]:
             "training_budget": f"adamw_cross_entropy_epochs_{config.epochs}",
         }
     if config.model == "dofa":
+        if config.probe == "linear":
+            return {
+                "model": "dofa_fmow_sentinel",
+                "model_family": "dofa",
+                "model_variant": "dofa_vit_base",
+                "adaptation_protocol": "frozen_encoder_linear_probe",
+                "training_budget": f"frozen_dofa_vitb_embeddings_linear_probe_epochs_{config.probe_epochs}",
+            }
         return {
             "model": "dofa_fmow_sentinel",
             "model_family": "dofa",
-            "model_variant": "vit_base_dofa_frozen_probe",
+            "model_variant": "dofa_vit_base_nearest_centroid_sanity",
             "adaptation_protocol": "frozen_probe",
             "training_budget": "frozen_encoder_nearest_centroid_probe",
         }
@@ -726,6 +932,31 @@ def _write_report(output_dir: Path, predictions: Sequence[Mapping[str, Any]], wa
     return path
 
 
+def _metrics_from_prediction_rows(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    correct = [float(row.get("correct", 0.0)) for row in rows]
+    labels = [str(row.get("label", row.get("category", ""))) for row in rows]
+    predictions = [str(row.get("prediction", "")) for row in rows]
+    true_counts: Counter[str] = Counter(labels)
+    correct_counts: Counter[str] = Counter(label for label, prediction in zip(labels, predictions) if label == prediction)
+    tp: Counter[str] = Counter()
+    fp: Counter[str] = Counter()
+    fn: Counter[str] = Counter()
+    for label, prediction in zip(labels, predictions):
+        if label == prediction:
+            tp[label] += 1
+        else:
+            fp[prediction] += 1
+            fn[label] += 1
+    recalls = [correct_counts[label] / count for label, count in true_counts.items() if count > 0]
+    top5_values = [float(row["top5_correct"]) for row in rows if not _is_missing(row.get("top5_correct"))]
+    return {
+        "accuracy": float(np.mean(correct)) if correct else float("nan"),
+        "balanced_accuracy": float(np.mean(recalls)) if recalls else "",
+        "macro_f1": _macro_f1_from_counts(tp, fp, fn, sorted(set(true_counts) | set(fp) | set(tp))),
+        "top5_accuracy": float(np.mean(top5_values)) if top5_values else "",
+    }
+
+
 def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[str, Path]:
     output = ensure_dir(config.output_dir)
     rows = _load_metadata(config.metadata_csv)
@@ -740,6 +971,8 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
     resnet_metrics: dict[str, Any] = {}
     resnet_debug: dict[str, Any] = {}
     resnet_warnings: list[str] = []
+    dofa_run_metadata: dict[str, Any] = {}
+    dofa_debug: dict[str, Any] = {}
     if config.model == "resnet50":
         resnet_eval_predictions, resnet_metrics, resnet_warnings, resnet_debug = _train_resnet50(train_rows, eval_rows, config, output)
         eval_ok = [dict(item["row"]) for item in resnet_eval_predictions]
@@ -755,21 +988,57 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
         warnings_train = resnet_warnings
         warnings_eval: list[str] = []
     elif config.model == "dofa":
+        if config.probe not in {"linear", "nearest_centroid"}:
+            raise ValueError("--probe must be 'linear' or 'nearest_centroid' for --model dofa.")
         if config.model_config is None:
             raise ValueError("--model-config is required for --model dofa.")
         adapter = DOFAAdapter.from_config_file(config.model_config)
         if config.allow_torch_hub_download:
             adapter.allow_torch_hub_download = True
         adapter.load_model()
-        train_x, train_y, train_ok, warnings_train = _dofa_embeddings(train_rows, config, adapter)
-        eval_x, _eval_y, eval_ok, warnings_eval = _dofa_embeddings(eval_rows, config, adapter)
+        train_x, train_y, train_ok, warnings_train, train_cache, train_cache_meta = _cached_dofa_embeddings(
+            train_rows, config.train_split, config, adapter, output
+        )
+        eval_x, _eval_y, eval_ok, warnings_eval, eval_cache, eval_cache_meta = _cached_dofa_embeddings(
+            eval_rows, config.eval_split, config, adapter, output
+        )
+        if config.probe == "linear":
+            predictions, confidences, probe_metadata, dofa_debug = _train_linear_probe(train_x, train_y, eval_x, config, output)
+            prediction_rows = _prediction_rows(eval_ok, predictions, config, confidences=confidences)
+        else:
+            classifier = _NearestCentroidClassifier()
+            classifier.fit(train_x, train_y)
+            predictions, confidences = _nearest_centroid_with_confidence(classifier, eval_x)
+            prediction_rows = _prediction_rows(eval_ok, predictions, config, confidences=confidences)
+            probe_metadata = {"probe": "nearest_centroid", "class_to_index": {label: index for index, label in enumerate(classifier.classes)}}
+            dofa_debug = {"classifier": "nearest_centroid", "classes": classifier.classes}
+        profile = get_band_profile(config.band_profile)
+        dofa_run_metadata = {
+            "probe": config.probe,
+            "probe_epochs": config.probe_epochs if config.probe == "linear" else "",
+            "probe_learning_rate": config.probe_learning_rate if config.probe == "linear" else "",
+            "band_order": profile.get("band_names", []),
+            "wavelength_list": profile.get("wavelength_list", adapter.wavelengths or []),
+            "normalization_mean": adapter.normalization_mean,
+            "normalization_std": adapter.normalization_std,
+            "checkpoint_source": _adapter_source(adapter),
+            "dofa_model_variant": adapter.model_variant,
+            "embedding_cache_path": str(output / "embedding_cache"),
+            "train_embedding_cache_path": str(train_cache),
+            "eval_embedding_cache_path": str(eval_cache),
+            "train_embedding_cache_key": train_cache_meta.get("cache_key", ""),
+            "eval_embedding_cache_key": eval_cache_meta.get("cache_key", ""),
+            "embedding_dim": train_cache_meta.get("embedding_dim", ""),
+            "class_mapping": probe_metadata.get("class_to_index", {}),
+            **{key: value for key, value in probe_metadata.items() if key not in {"class_to_index"}},
+        }
     elif config.model == "supervised_stats":
         train_x, train_y, train_ok, warnings_train = _rows_to_features(train_rows, config)
         eval_x, _eval_y, eval_ok, warnings_eval = _rows_to_features(eval_rows, config)
     else:
         raise ValueError(f"Unsupported fMoW-Sentinel classification model: {config.model}")
 
-    if config.model != "resnet50":
+    if config.model == "supervised_stats":
         classifier = _NearestCentroidClassifier()
         classifier.fit(train_x, train_y)
         predictions = classifier.predict(eval_x)
@@ -787,8 +1056,8 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
     write_csv(artifacts["predictions"], prediction_rows)
     write_audit_table(artifacts["audit_table"], audit_rows)
     warnings = warnings_train + warnings_eval
-    accuracy = np.mean([float(row["correct"]) for row in prediction_rows]) if prediction_rows else float("nan")
-    top5_values = [float(row["top5_correct"]) for row in prediction_rows if not _is_missing(row.get("top5_correct"))]
+    row_metrics = _metrics_from_prediction_rows(prediction_rows)
+    accuracy = row_metrics["accuracy"]
     metric_row = {
         "dataset": "fmow_sentinel",
         "task": "scene_classification",
@@ -798,9 +1067,9 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
         "split": config.eval_split,
         "eval_scope": config.eval_scope or config.eval_split,
         "accuracy": accuracy,
-        "balanced_accuracy": resnet_metrics.get("balanced_accuracy", ""),
-        "macro_f1": resnet_metrics.get("macro_f1", ""),
-        "top5_accuracy": resnet_metrics.get("top5_accuracy", float(np.mean(top5_values)) if top5_values else ""),
+        "balanced_accuracy": resnet_metrics.get("balanced_accuracy", row_metrics.get("balanced_accuracy", "")),
+        "macro_f1": resnet_metrics.get("macro_f1", row_metrics.get("macro_f1", "")),
+        "top5_accuracy": resnet_metrics.get("top5_accuracy", row_metrics.get("top5_accuracy", "")),
     }
     write_csv(artifacts["metrics_summary"], [metric_row])
     metadata = {
@@ -827,20 +1096,35 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
         "balanced_accuracy": metric_row["balanced_accuracy"],
         "macro_f1": metric_row["macro_f1"],
         "top5_accuracy": metric_row["top5_accuracy"],
-        "epochs": config.epochs if config.model == "resnet50" else "",
+        "epochs": config.epochs if config.model == "resnet50" else config.probe_epochs if config.model == "dofa" and config.probe == "linear" else "",
         "batch_size": config.batch_size,
-        "learning_rate": config.learning_rate if config.model == "resnet50" else "",
+        "learning_rate": config.learning_rate if config.model == "resnet50" else config.probe_learning_rate if config.model == "dofa" and config.probe == "linear" else "",
         "weight_decay": config.weight_decay if config.model == "resnet50" else "",
-        "optimizer": "AdamW" if config.model == "resnet50" else "nearest_centroid",
-        "loss": "cross_entropy" if config.model == "resnet50" else "",
+        "optimizer": "AdamW" if config.model in {"resnet50", "dofa"} and (config.model == "resnet50" or config.probe == "linear") else "nearest_centroid",
+        "loss": "cross_entropy" if config.model in {"resnet50", "dofa"} and (config.model == "resnet50" or config.probe == "linear") else "",
         "random_seed": config.seed,
         "geography_metadata_usage": "audit_slicing_only_not_model_input",
         "geography_join_level": "location_level",
     }
     metadata.update({key: value for key, value in resnet_metrics.items() if key in {"best_epoch", "best_validation_score", "checkpoint_path", "norm_stats_path"}})
+    metadata.update(dofa_run_metadata)
     artifacts["run_metadata"].write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     if config.model == "resnet50":
         debug_payload = {**resnet_debug, "warnings": warnings[:100]}
+    elif config.model == "dofa":
+        debug_payload = {
+            "model": metadata["model"],
+            "model_family": metadata["model_family"],
+            "model_variant": metadata["model_variant"],
+            "adaptation_protocol": metadata["adaptation_protocol"],
+            "probe": config.probe,
+            "frozen_backbone": True,
+            "embedding_cache_path": metadata.get("embedding_cache_path", ""),
+            "band_order": metadata.get("band_order", []),
+            "wavelength_list": metadata.get("wavelength_list", []),
+            **dofa_debug,
+            "warnings": warnings[:100],
+        }
     else:
         debug_payload = {
             "model": metadata["model"],

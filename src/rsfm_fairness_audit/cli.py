@@ -159,6 +159,10 @@ def build_parser() -> argparse.ArgumentParser:
     fmow_cls.add_argument("--output-dir", type=Path, required=True)
     fmow_cls.add_argument("--model", choices=["supervised_stats", "dofa", "resnet50"], default="supervised_stats")
     fmow_cls.add_argument("--model-config", type=Path, default=Path("configs/models/dofa_fmow_sentinel.yaml"))
+    fmow_cls.add_argument("--probe", choices=["linear", "nearest_centroid"], default="linear", help="Probe used for --model dofa. Formal path is linear.")
+    fmow_cls.add_argument("--probe-epochs", type=int, default=200)
+    fmow_cls.add_argument("--probe-learning-rate", type=float, default=1e-2)
+    fmow_cls.add_argument("--embedding-cache-dir", type=Path, help="Optional cache directory for frozen encoder embeddings.")
     fmow_cls.add_argument("--train-split", default="train")
     fmow_cls.add_argument("--eval-split", default="val")
     fmow_cls.add_argument("--max-samples", type=int, help="Backward-compatible per-split prototype cap. Omit or pass 0 for all rows.")
@@ -469,6 +473,10 @@ def main() -> None:
                 output_dir=args.output_dir,
                 model=args.model,
                 model_config=args.model_config,
+                probe=args.probe,
+                probe_epochs=args.probe_epochs,
+                probe_learning_rate=args.probe_learning_rate,
+                embedding_cache_dir=args.embedding_cache_dir,
                 train_split=args.train_split,
                 eval_split=args.eval_split,
                 max_samples=max_samples,
