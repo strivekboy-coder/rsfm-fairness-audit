@@ -163,6 +163,21 @@ def test_dofa_config_detects_normalization_length_mismatch() -> None:
         adapter.preprocess(batch)
 
 
+def test_dofa_input_scale_is_applied_before_normalization() -> None:
+    adapter = DOFAAdapter(
+        sensor_mode="S2",
+        expected_bands=13,
+        wavelengths=[0.443, 0.49, 0.56, 0.665, 0.705, 0.74, 0.783, 0.842, 0.865, 0.945, 1.373, 1.61, 2.19],
+        normalization_mean=[0.0] * 13,
+        normalization_std=[1.0] * 13,
+        input_scale=10000,
+        model=MockDOFAModel(),
+    )
+    image = np.full((13, 4, 4), 3000.0, dtype=np.float32)
+    processed = adapter.preprocess({"samples": [{"image": image}], "metadata": [{"sample_id": "x"}]})
+    assert np.isclose(processed["images"].max(), 0.3)
+
+
 def test_run_real_with_mock_dofa_writes_expected_artifacts() -> None:
     root = Path("outputs/test_real_pipeline_fixture")
     metadata_path = _write_fixture(root, count=8)

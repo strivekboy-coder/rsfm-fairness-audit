@@ -7,5 +7,6 @@ repo_path:
 input_modality: S2
 band_profile: sentinel2_13band_fmow
 image_size: 224
+input_scale: 10000
 embedding_layer: forward_features
 allow_torch_hub_download: false

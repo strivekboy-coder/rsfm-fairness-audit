@@ -186,6 +186,7 @@ python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
   --model dofa `
   --model-config configs/models/dofa_fmow_sentinel.yaml `
   --probe linear `
+  --dofa-input-scale 10000 `
   --train-split train `
   --eval-split val `
   --split-protocol location_disjoint `
@@ -198,7 +199,9 @@ python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
 The DOFA path extracts frozen ViT-B embeddings once, caches train/val
 embeddings under the run output, trains a linear classifier on train
 embeddings, and writes confidence/max-probability from classifier softmax.
-Nearest-centroid probing is kept only as an optional sanity mode.
+Nearest-centroid probing is kept only as an optional sanity mode. fMoW-Sentinel
+TIFF values are raw reflectance-like values, so the formal DOFA config scales
+inputs by `input_scale=10000` before DOFA normalization/embedding extraction.
 
 Paper-grade supervised ResNet-50 baseline on the clean 30k
 location-disjoint subset:

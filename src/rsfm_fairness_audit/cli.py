@@ -163,6 +163,7 @@ def build_parser() -> argparse.ArgumentParser:
     fmow_cls.add_argument("--probe-epochs", type=int, default=200)
     fmow_cls.add_argument("--probe-learning-rate", type=float, default=1e-2)
     fmow_cls.add_argument("--embedding-cache-dir", type=Path, help="Optional cache directory for frozen encoder embeddings.")
+    fmow_cls.add_argument("--dofa-input-scale", type=float, help="Override DOFA input_scale from config, e.g. 10000 for raw fMoW-Sentinel reflectance-like values.")
     fmow_cls.add_argument("--train-split", default="train")
     fmow_cls.add_argument("--eval-split", default="val")
     fmow_cls.add_argument("--max-samples", type=int, help="Backward-compatible per-split prototype cap. Omit or pass 0 for all rows.")
@@ -477,6 +478,7 @@ def main() -> None:
                 probe_epochs=args.probe_epochs,
                 probe_learning_rate=args.probe_learning_rate,
                 embedding_cache_dir=args.embedding_cache_dir,
+                dofa_input_scale=args.dofa_input_scale,
                 train_split=args.train_split,
                 eval_split=args.eval_split,
                 max_samples=max_samples,

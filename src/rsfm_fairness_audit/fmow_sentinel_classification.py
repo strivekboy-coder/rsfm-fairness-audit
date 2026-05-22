@@ -47,6 +47,7 @@ class FmowClassificationConfig:
     probe_epochs: int = 200
     probe_learning_rate: float = 1e-2
     embedding_cache_dir: Path | None = None
+    dofa_input_scale: float | None = None
     train_split: str = "train"
     eval_split: str = "val"
     max_samples: int | None = None
@@ -353,6 +354,7 @@ def _dofa_cache_key(
         "band_profile": config.band_profile,
         "checkpoint_source": _adapter_source(adapter),
         "embedding_layer": adapter.embedding_layer,
+        "input_scale": adapter.input_scale,
         "row_count": len(rows),
         "row_hash": _row_hash(rows),
     }
@@ -403,6 +405,7 @@ def _cached_dofa_embeddings(
         "band_profile": config.band_profile,
         "checkpoint_source": _adapter_source(adapter),
         "embedding_layer": adapter.embedding_layer,
+        "input_scale": adapter.input_scale,
         "row_count_requested": len(rows),
         "row_count_cached": len(ok_rows),
         "embedding_dim": int(embeddings.shape[1]) if embeddings.ndim == 2 else "",
@@ -995,6 +998,8 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
         adapter = DOFAAdapter.from_config_file(config.model_config)
         if config.allow_torch_hub_download:
             adapter.allow_torch_hub_download = True
+        if config.dofa_input_scale is not None:
+            adapter.input_scale = float(config.dofa_input_scale)
         adapter.load_model()
         train_x, train_y, train_ok, warnings_train, train_cache, train_cache_meta = _cached_dofa_embeddings(
             train_rows, config.train_split, config, adapter, output
@@ -1021,6 +1026,7 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
             "wavelength_list": profile.get("wavelength_list", adapter.wavelengths or []),
             "normalization_mean": adapter.normalization_mean,
             "normalization_std": adapter.normalization_std,
+            "input_scale": adapter.input_scale,
             "checkpoint_source": _adapter_source(adapter),
             "dofa_model_variant": adapter.model_variant,
             "embedding_cache_path": str(output / "embedding_cache"),
@@ -1122,6 +1128,7 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
             "embedding_cache_path": metadata.get("embedding_cache_path", ""),
             "band_order": metadata.get("band_order", []),
             "wavelength_list": metadata.get("wavelength_list", []),
+            "input_scale": metadata.get("input_scale", ""),
             **dofa_debug,
             "warnings": warnings[:100],
         }

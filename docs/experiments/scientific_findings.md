@@ -400,3 +400,70 @@ Final artifacts:
   `cache/fmow_sentinel/metadata/final_backup_20260520_233834/`; keep until
   the Step 3 fMoW-Sentinel prototype runs successfully from
   `cache/fmow_sentinel/metadata/final/`.
+
+## fMoW-Sentinel Step 3 ResNet-50 Experiment Record
+
+Recorded: 2026-05-22.
+
+Experiment:
+- Dataset: `fmow_sentinel_clean_subset_30k_location_disjoint_v2`.
+- Task: 62-class scene classification.
+- Input: Sentinel-2 13-band image-only.
+- Model: ResNet-50, 13-band first convolution, trained from scratch.
+- Adaptation protocol: `supervised_baseline`.
+- Split protocol: `location_disjoint`.
+- Train / validation rows: train = 21046, val = 8954.
+- Location leakage check: `category + location_id` overlap between train and
+  validation = 0.
+- Geography metadata was used only for audit slicing/reporting, not as model
+  input.
+
+Aggregate validation metrics:
+- accuracy = 0.2000.
+- balanced_accuracy = 0.1841.
+- macro_f1 = 0.1725.
+- top5_accuracy = 0.4518.
+
+Training behavior:
+- Training loss decreased from approximately 3.8464 at epoch 1 to
+  approximately 0.1872 by epoch 14.
+- Validation accuracy plateaued around 0.18-0.20.
+- Best observed validation accuracy in the shown log was approximately 0.2000.
+- This run is recorded as the first full fMoW-Sentinel 30k
+  location-disjoint ResNet-50 supervised baseline result.
+
+Raw-BWER results:
+
+| slice | BWER | tail_risk | mean_risk | best_slice | best_slice_risk | worst_slice | worst_slice_risk | n_slices_valid | support note |
+| --- | ---: | ---: | ---: | --- | ---: | --- | ---: | ---: | --- |
+| continent | 0.056653 | 0.871941 | 0.815287 | Asia | 0.747496 | Africa | 0.871941 | 5 |  |
+| un_region | 0.056653 | 0.871941 | 0.815287 | Asia | 0.747496 | Africa | 0.871941 | 5 |  |
+| region | 0.139434 | 0.948864 | 0.809429 | Central America | 0.628272 | Melanesia | 1.0 | 20 |  |
+| latitude_band | 0.096197 | 0.923850 | 0.827653 | lat_10_20 | 0.746247 | lat_60_70 | 0.928058 | 13 |  |
+| season | 0.038336 | 0.855556 | 0.817219 | Autumn | 0.785540 | Summer | 0.855556 | 4 |  |
+| country | 0.173612 | 0.998011 | 0.824399 | ANT | 0.125 | UGA | 1.0 | 145 | min_samples_per_slice = 20 |
+
+Class-standardised BWER results:
+
+| slice | balance | BWER | tail_risk | mean_risk | best_slice | best_slice_risk | worst_slice | worst_slice_risk | n_slices_valid | warning |
+| --- | --- | ---: | ---: | ---: | --- | ---: | --- | ---: | ---: | --- |
+| continent | class_label | 0.039066 | 0.883193 | 0.844126 | Asia | 0.821358 | Africa | 0.883193 | 5 | Some continent x class_label cells are missing, especially for Oceania. |
+| un_region | class_label | 0.039066 | 0.883193 | 0.844126 | Asia | 0.821358 | Africa | 0.883193 | 5 | Some un_region x class_label cells are missing, especially for Oceania. |
+| region | class_label | 0.102101 | 0.963204 | 0.861103 | Eastern Asia | 0.810753 | Melanesia | 1.0 | 20 | Many region x class_label cells are missing; use support diagnostics when interpreting. |
+| latitude_band | class_label | 0.102722 | 0.951230 | 0.848508 | lat_-30_-20 | 0.794963 | lat_60_70 | 0.964959 | 13 | Some latitude_band x class_label cells are missing, especially in extreme latitude bands. |
+| season | class_label | 0.029463 | 0.862754 | 0.833290 | Autumn | 0.809773 | Summer | 0.862754 | 4 | Winter missing class_label level interchange. |
+| country | class_label | 0.142348 | 0.998814 | 0.856465 | KO- | 0.418182 | UGA | 1.0 | 145 | country x class_label has extensive missing cells; treat as diagnostic/support-filtered only. |
+
+Formal-analysis notes:
+- Primary formal geography slices for this run: `continent`, `un_region`,
+  `region`, `latitude_band`, and `season`.
+- Country-level results use support threshold `min_samples_per_slice = 20`.
+- `country x class_label` is diagnostic only unless additional support
+  filtering is applied.
+- Missing class-label cells are expected in intersectional standardisation
+  because the 30k subset has limited support for fine-grained slice x class
+  combinations.
+- Do not state causal fairness or country-level discrimination from these
+  results.
+- Do not claim these are full fMoW-Sentinel benchmark results; they are results
+  on the support-aware 30k location-disjoint audit subset.

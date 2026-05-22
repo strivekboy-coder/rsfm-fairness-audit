@@ -48,6 +48,7 @@ class DOFAAdapter(ModelAdapter):
         embedding_layer: str = "forward_features",
         normalization_mean: Sequence[float] | None = None,
         normalization_std: Sequence[float] | None = None,
+        input_scale: float | None = None,
         sensor_mode: str = "S2",
         wavelengths: Sequence[float] | None = None,
         model: Any | None = None,
@@ -66,6 +67,7 @@ class DOFAAdapter(ModelAdapter):
         self.embedding_layer = embedding_layer
         self.normalization_mean = list(normalization_mean) if normalization_mean is not None else None
         self.normalization_std = list(normalization_std) if normalization_std is not None else None
+        self.input_scale = float(input_scale) if input_scale not in (None, "", 0) else None
         self.sensor_mode = sensor_mode.upper()
         self.wavelengths = list(wavelengths) if wavelengths is not None else None
         self.model = model
@@ -110,6 +112,7 @@ class DOFAAdapter(ModelAdapter):
             embedding_layer=str(merged.get("embedding_layer", "forward_features")),
             normalization_mean=merged.get("normalization_mean"),
             normalization_std=merged.get("normalization_std"),
+            input_scale=merged.get("input_scale"),
             sensor_mode=str(merged.get("input_modality", merged.get("sensor_mode", "S2"))),
             wavelengths=merged.get("wavelength_list"),
             model=model,
@@ -239,9 +242,17 @@ class DOFAAdapter(ModelAdapter):
         self._log_profile(array.shape[1])
         wavelengths = self._resolve_wavelengths(array.shape[1])
         self._validate_normalization_lengths(array.shape[1])
+        array = self._scale_input(array)
         array = self._normalize(array)
         array = self._resize_if_needed(array)
         return {"images": array, "metadata": batch["metadata"], "wavelengths": wavelengths}
+
+    def _scale_input(self, array: np.ndarray) -> np.ndarray:
+        if self.input_scale is None:
+            return array
+        if self.input_scale <= 0:
+            raise DOFAConfigurationError("input_scale must be positive when provided.")
+        return array / np.float32(self.input_scale)
 
     def _normalize(self, array: np.ndarray) -> np.ndarray:
         if self.normalization_mean is None and self.normalization_std is None:

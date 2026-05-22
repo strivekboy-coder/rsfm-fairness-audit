@@ -338,6 +338,7 @@ def test_dofa_linear_probe_writes_formal_protocol_and_cache(monkeypatch) -> None
     assert '"adaptation_protocol": "frozen_encoder_linear_probe"' in metadata_payload
     assert '"model_variant": "dofa_vit_base"' in metadata_payload
     assert '"wavelength_list"' in metadata_payload
+    assert '"input_scale"' in metadata_payload
     assert '"embedding_cache_path"' in metadata_payload
     assert (out / "embedding_cache").exists()
     _cleanup(root)

@@ -579,6 +579,7 @@ python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification \
   --model dofa \
   --model-config configs/models/dofa_fmow_sentinel.yaml \
   --probe linear \
+  --dofa-input-scale 10000 \
   --train-split train \
   --eval-split val \
   --split-protocol location_disjoint \
@@ -597,6 +598,10 @@ protocol is `adaptation_protocol=frozen_encoder_linear_probe`: DOFA ViT-B is
 kept frozen, train/validation embeddings are cached once, and a linear
 classifier is trained on train embeddings. Nearest-centroid probing is retained
 only as an optional sanity mode, not the formal Step 3 RSFM comparison path.
+fMoW-Sentinel TIFF values are raw reflectance-like values, so the formal DOFA
+configuration uses `input_scale=10000` to apply `x = x / input_scale` before
+DOFA normalization and embedding extraction. This differs from the ResNet-50
+path, which computes train-split normalization separately.
 
 Post-hoc geography BWER can be rerun without model inference:
 
