@@ -112,7 +112,7 @@ inputs.
 Canonical Colab paths:
 
 ```text
-/content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv
+/content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v3_merged.csv
 /content/drive/MyDrive/rsfm_fairness_audit/prepared_zips/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip
 ```
 
@@ -169,7 +169,7 @@ Lightweight supervised image-only sanity/debug baseline:
 
 ```powershell
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
-  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv `
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v3_merged.csv `
   --data-root /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged `
   --output-dir /content/outputs/fmow_sentinel_supervised_stats_val `
   --model supervised_stats `
@@ -184,7 +184,7 @@ Formal DOFA ViT-B frozen-backbone linear probe:
 
 ```powershell
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
-  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv `
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v3_merged.csv `
   --data-root /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged `
   --output-dir /content/outputs/fmow_sentinel_dofa_vitb_linear_probe_30k_location_disjoint `
   --model dofa `
@@ -212,7 +212,7 @@ location-disjoint subset:
 
 ```powershell
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
-  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv `
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v3_merged.csv `
   --data-root /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged `
   --output-dir /content/outputs/fmow_sentinel_resnet50_30k_location_disjoint `
   --model resnet50 `

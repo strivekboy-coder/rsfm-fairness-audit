@@ -14,7 +14,7 @@ scientific conclusions.
 - Formal Step 3 subset archive:
   `fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip`
 - Manifest:
-  `/content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv`
+  `/content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v3_merged.csv`
 - Drive archive:
   `/content/drive/MyDrive/rsfm_fairness_audit/prepared_zips/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip`
 - Final Step 3 result bundle:

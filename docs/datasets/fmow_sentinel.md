@@ -340,7 +340,7 @@ fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip
 Expected Colab manifest:
 
 ```text
-/content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv
+/content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v3_merged.csv
 ```
 
 Drive archive:
@@ -507,7 +507,7 @@ forward for support diagnostics and BWER reporting.
 Expected final Step 3 dataset input:
 
 ```text
-/content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv
+/content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v3_merged.csv
 ```
 
 This manifest already includes final `train` / `val` split labels,
@@ -518,7 +518,7 @@ Raster inspection before model work:
 
 ```bash
 python -m rsfm_fairness_audit.cli preflight-fmow-sentinel \
-  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv \
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v3_merged.csv \
   --country-region-map /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_country_region_map_full_v1.csv \
   --output-dir /content/outputs/fmow_sentinel_preflight/step3_raster_sample \
   --data-root /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged \
@@ -532,7 +532,7 @@ Lightweight supervised image-only prototype:
 
 ```bash
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification \
-  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv \
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v3_merged.csv \
   --data-root /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged \
   --output-dir /content/outputs/fmow_sentinel_supervised_stats_val \
   --model supervised_stats \
@@ -551,7 +551,7 @@ Paper-grade supervised ResNet-50 baseline:
 
 ```bash
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification \
-  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv \
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v3_merged.csv \
   --data-root /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged \
   --output-dir /content/outputs/fmow_sentinel_resnet50_30k_location_disjoint \
   --model resnet50 \
@@ -581,7 +581,7 @@ Formal DOFA ViT-B frozen-backbone linear probe:
 
 ```bash
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification \
-  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv \
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v3_merged.csv \
   --data-root /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged \
   --output-dir /content/outputs/fmow_sentinel_dofa_vitb_linear_probe_30k_location_disjoint \
   --model dofa \
@@ -642,7 +642,7 @@ Recommended result layout:
 ```text
 outputs/fmow_sentinel_step3/<run_name>/
   data/
-    final_clean_subset_manifest_30k_location_disjoint_v2.csv
+    final_clean_subset_manifest_30k_location_disjoint_v3_merged.csv
     subset_support_summary.csv
     raster_validation_report.csv
     warnings.json
@@ -733,7 +733,7 @@ Files to preserve for reproducibility:
 - final dataset archive:
   `/content/drive/MyDrive/rsfm_fairness_audit/prepared_zips/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip`
 - final manifest:
-  `final_clean_subset_manifest_30k_location_disjoint_v2.csv`
+  `final_clean_subset_manifest_30k_location_disjoint_v3_merged.csv`
 - final enriched metadata
 - country-region map
 - `target_paths.csv`

@@ -18,6 +18,7 @@ FINAL_RESNET_ZIP_NAME = "resnet50_30k_location_disjoint_patched_metadata.zip"
 FINAL_DOFA_ZIP_NAME = "dofa_scaled10000_30k_location_disjoint.zip"
 FINAL_COMPARISON_ZIP_NAME = "comparison_resnet50_vs_dofa_scaled10000.zip"
 FINAL_BUNDLE_ZIP_NAME = "fmow_step3_final_bundle_30k_location_disjoint.zip"
+FINAL_MANIFEST_NAME = "final_clean_subset_manifest_30k_location_disjoint_v3_merged.csv"
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
@@ -242,7 +243,7 @@ def main() -> int:
     args = parser.parse_args()
 
     checks: list[dict[str, str]] = [
-        _check_zip(args.prepared_dataset_zip, FINAL_DATASET_ZIP_NAME, "prepared_dataset_zip", ("final_clean_subset_manifest",)),
+        _check_zip(args.prepared_dataset_zip, FINAL_DATASET_ZIP_NAME, "prepared_dataset_zip", (FINAL_MANIFEST_NAME,)),
         _check_zip(args.resnet_artifact_zip, FINAL_RESNET_ZIP_NAME, "resnet_artifact_zip", ("run_metadata.json", "audit_table.csv")),
         _check_zip(args.dofa_artifact_zip, FINAL_DOFA_ZIP_NAME, "dofa_artifact_zip", ("run_metadata.json", "audit_table.csv")),
         _check_zip(args.comparison_artifact_zip, FINAL_COMPARISON_ZIP_NAME, "comparison_artifact_zip", ("comparison_summary.csv",)),
