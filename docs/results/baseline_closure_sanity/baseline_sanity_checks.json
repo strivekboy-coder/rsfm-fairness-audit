@@ -1,6 +1,36 @@
 {
   "checks": [
     {
+      "check": "prepared_dataset_zip",
+      "status": "awaiting_colab_run",
+      "evidence": "",
+      "note": "Pass --prepared-dataset-zip to verify fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip."
+    },
+    {
+      "check": "resnet_artifact_zip",
+      "status": "awaiting_colab_run",
+      "evidence": "",
+      "note": "Pass --resnet-artifact-zip to verify resnet50_30k_location_disjoint_patched_metadata.zip."
+    },
+    {
+      "check": "dofa_artifact_zip",
+      "status": "awaiting_colab_run",
+      "evidence": "",
+      "note": "Pass --dofa-artifact-zip to verify dofa_scaled10000_30k_location_disjoint.zip."
+    },
+    {
+      "check": "comparison_artifact_zip",
+      "status": "awaiting_colab_run",
+      "evidence": "",
+      "note": "Pass --comparison-artifact-zip to verify comparison_resnet50_vs_dofa_scaled10000.zip."
+    },
+    {
+      "check": "final_bundle_zip",
+      "status": "awaiting_colab_run",
+      "evidence": "",
+      "note": "Pass --final-bundle-zip to verify fmow_step3_final_bundle_30k_location_disjoint.zip."
+    },
+    {
       "check": "fmow_band_wavelength_profile",
       "status": "pass",
       "evidence": "src/rsfm_fairness_audit/band_profiles.py",
@@ -38,21 +68,21 @@
     },
     {
       "check": "dofa_pooling_ablation",
-      "status": "open_recorded",
+      "status": "awaiting_colab_run",
       "evidence": "docs/experiments/fmow_step3_scientific_findings.md",
       "note": "Current completed run uses flattened forward_features. CLS/mean pooling are not exposed as formal completed outputs."
     },
     {
       "check": "tiny_overfit",
-      "status": "optional_not_run",
+      "status": "awaiting_colab_run",
       "evidence": "",
-      "note": "No local data run was performed. This is a diagnostic for suspected training bugs, not required for current modest-performance claims."
+      "note": "Diagnostic only. No local data run was performed and no formal model result should depend on it."
     },
     {
       "check": "random_split_sanity",
-      "status": "optional_not_run",
+      "status": "awaiting_colab_run",
       "evidence": "",
-      "note": "No random-split fMoW result is part of Step 0. Keep any future run diagnostic-only."
+      "note": "Diagnostic only. Do not present random-split fMoW as a main result."
     }
   ]
 }

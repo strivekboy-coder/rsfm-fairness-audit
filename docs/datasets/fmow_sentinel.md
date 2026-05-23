@@ -242,7 +242,7 @@ first, extract only those archive members, and validate every extracted TIFF:
 python scripts/prepare_fmow_sentinel_clean_subset.py \
   --archive /content/fmow-sentinel.tar.gz \
   --metadata-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_sample_manifest_final_v1.csv \
-  --output-dir /content/data/fmow_sentinel_clean_subset_v1 \
+  --output-dir /content/data/fmow_sentinel_clean_subset_build \
   --split train \
   --split val \
   --max-samples-per-split 5000 \
@@ -262,7 +262,7 @@ python scripts/prepare_fmow_sentinel_clean_subset.py \
   --satmae-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/train.csv \
   --satmae-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/val.csv \
   --location-geography-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_geography_final_v1.csv \
-  --output-dir /content/data/fmow_sentinel_clean_subset_v1 \
+  --output-dir /content/data/fmow_sentinel_clean_subset_build \
   --split train \
   --split val \
   --max-samples-per-split 5000 \
@@ -301,8 +301,8 @@ Example: grow a valid 10k subset to a 30k final Step 3 audit subset with a
 python scripts/prepare_fmow_sentinel_clean_subset.py \
   --archive /content/fmow-sentinel.tar.gz \
   --metadata-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_sample_manifest_final_v1.csv \
-  --augment-existing-manifest /content/data/fmow_sentinel_clean_subset_v1/clean_subset_manifest.csv \
-  --output-dir /content/data/fmow_sentinel_clean_subset_v1 \
+  --augment-existing-manifest /content/data/fmow_sentinel_clean_subset_build/clean_subset_manifest.csv \
+  --output-dir /content/data/fmow_sentinel_clean_subset_30k_build \
   --split train \
   --split val \
   --target-total 30000 \
@@ -331,16 +331,16 @@ Augmentation outputs:
 - `raster_validation_report_augmented.csv`
 - `warnings_augmented.json`
 
-The finalized Step 3 dataset is:
+The finalized Step 3 dataset archive is:
 
 ```text
-fmow_sentinel_clean_subset_30k_location_disjoint_v2
+fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip
 ```
 
 Expected Colab manifest:
 
 ```text
-/content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv
+/content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv
 ```
 
 Drive archive:
@@ -351,8 +351,11 @@ Drive archive:
 
 The archive name uses `v3_merged` because it is the self-contained Drive copy
 after merging the earlier 10k image tree into the final 30k extracted subset.
-The dataset protocol and final manifest remain
-`fmow_sentinel_clean_subset_30k_location_disjoint_v2`.
+Treat this archive as the formal reproduction input. The earlier `v1` subset
+and the pre-merge `v2` archive are not formal Step 3 inputs because the old 10k
+rows required path repair before the final self-contained archive was created.
+Some internal manifest filenames may retain `v2` from the original extraction
+workflow; the `v3_merged` archive is the source of truth.
 
 The full official fMoW-Sentinel tarball is also cached in Drive for future
 reprocessing:
@@ -504,7 +507,7 @@ forward for support diagnostics and BWER reporting.
 Expected final Step 3 dataset input:
 
 ```text
-/content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv
+/content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv
 ```
 
 This manifest already includes final `train` / `val` split labels,
@@ -515,10 +518,10 @@ Raster inspection before model work:
 
 ```bash
 python -m rsfm_fairness_audit.cli preflight-fmow-sentinel \
-  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv \
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv \
   --country-region-map /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_country_region_map_full_v1.csv \
   --output-dir /content/outputs/fmow_sentinel_preflight/step3_raster_sample \
-  --data-root /content/data/fmow_sentinel_clean_subset_30k_v2 \
+  --data-root /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged \
   --inspect-rasters \
   --raster-sample-size 256 \
   --split location_disjoint \
@@ -529,8 +532,8 @@ Lightweight supervised image-only prototype:
 
 ```bash
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification \
-  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv \
-  --data-root /content/data/fmow_sentinel_clean_subset_30k_v2 \
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv \
+  --data-root /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged \
   --output-dir /content/outputs/fmow_sentinel_supervised_stats_val \
   --model supervised_stats \
   --train-split train \
@@ -548,8 +551,8 @@ Paper-grade supervised ResNet-50 baseline:
 
 ```bash
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification \
-  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv \
-  --data-root /content/data/fmow_sentinel_clean_subset_30k_v2 \
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv \
+  --data-root /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged \
   --output-dir /content/outputs/fmow_sentinel_resnet50_30k_location_disjoint \
   --model resnet50 \
   --train-split train \
@@ -578,8 +581,8 @@ Formal DOFA ViT-B frozen-backbone linear probe:
 
 ```bash
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification \
-  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv \
-  --data-root /content/data/fmow_sentinel_clean_subset_30k_v2 \
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv \
+  --data-root /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged \
   --output-dir /content/outputs/fmow_sentinel_dofa_vitb_linear_probe_30k_location_disjoint \
   --model dofa \
   --model-config configs/models/dofa_fmow_sentinel.yaml \
@@ -669,9 +672,9 @@ For single-model prototype runs, the existing run-level layout
 `<run_dir>/predictions.csv`, `<run_dir>/audit_table.csv`, and
 `<run_dir>/bwer/` is also accepted by the validators.
 
-The data contract for Step 3 formal runs is
-`fmow_sentinel_clean_subset_30k_location_disjoint_v2`: 30,000 rows,
-`split_protocol=location_disjoint`, final `split=train/val`,
+The data contract for formal fMoW Step 3 runs is the self-contained
+`fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip` archive:
+30,000 rows, `split_protocol=location_disjoint`, final `split=train/val`,
 `split_original` preserved, unique `sample_id`, and zero train/val overlap for
 the `category + location_id` grouping key.
 
@@ -695,19 +698,20 @@ This writes:
 - `provenance_report.md`
 - `handoff_checklist.md`
 
-Package the handoff zip without raster imagery:
+Package a provisional handoff zip without raster imagery:
 
 ```bash
 python -m rsfm_fairness_audit.cli package-fmow-step3-handoff \
   --run-dir /content/outputs/fmow_sentinel_supervised_stats_val \
-  --output-zip /content/drive/MyDrive/rsfm_fairness_audit/outputs/fmow_step3_supervised_stats_handoff.zip
+  --output-zip /content/drive/MyDrive/rsfm_fairness_audit/outputs/provisional/fmow_step3_<run_name>_handoff.zip
 ```
 
 The handoff package includes reports, manifests, prediction tables, BWER
 outputs, metadata summaries, warnings, and checksums. It excludes `.tif`,
 `.npy`, `.npz`, HDF5, and other raster/array payloads by default. Use
 `--include-rasters` only for a deliberately small artifact where packaging
-images is intended.
+images is intended. Do not treat old handoff-only, unpatched, or debug archives
+as formal Step 3 results when the curated `outputs/final_step3/` bundle exists.
 
 Current download and data handling protocol:
 
@@ -739,7 +743,7 @@ Files to preserve for reproducibility:
 - prediction tables
 - BWER outputs
 - `archive_manifest.json`
-- handoff zip
+- final result bundle or explicitly provisional handoff zip
 
 ## Final Step 3 Archive
 
@@ -775,6 +779,8 @@ It contains:
 
 Final dataset/protocol record:
 
+- Dataset archive:
+  `fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip`.
 - Dataset: fMoW-Sentinel 30k support-aware clean subset.
 - Split: location-disjoint.
 - Group definition: `category + location_id`.
@@ -783,6 +789,19 @@ Final dataset/protocol record:
 - Task: 62-class scene classification.
 - Input: Sentinel-2 13-band image-only.
 - Geography metadata is audit-only and not model input.
+
+Verify the final dataset/artifact references before using them in paper text or
+new sanity checks:
+
+```bash
+python scripts/run_baseline_closure_sanity.py \
+  --prepared-dataset-zip /content/drive/MyDrive/rsfm_fairness_audit/prepared_zips/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip \
+  --resnet-artifact-zip /content/drive/MyDrive/rsfm_fairness_audit/outputs/final_step3/resnet50_30k_location_disjoint_patched_metadata.zip \
+  --dofa-artifact-zip /content/drive/MyDrive/rsfm_fairness_audit/outputs/final_step3/dofa_scaled10000_30k_location_disjoint.zip \
+  --comparison-artifact-zip /content/drive/MyDrive/rsfm_fairness_audit/outputs/final_step3/comparison_resnet50_vs_dofa_scaled10000.zip \
+  --final-bundle-zip /content/drive/MyDrive/rsfm_fairness_audit/outputs/final_step3/fmow_step3_final_bundle_30k_location_disjoint.zip \
+  --output-dir /content/outputs/baseline_closure_sanity
+```
 
 ## fMoW-Sentinel Step 3 Pitfalls
 

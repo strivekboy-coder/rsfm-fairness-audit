@@ -99,16 +99,20 @@ does not redo metadata enrichment and does not feed geography metadata into the
 model. Geography fields are carried only into prediction tables, support
 diagnostics, and BWER reporting.
 
-The finalized Step 3 dataset/protocol record is
-`fmow_sentinel_clean_subset_30k_location_disjoint_v2`. It was extracted from
-the official Stanford PURL `fmow-sentinel.tar.gz` after downloading the full
-tarball to Colab local `/content` storage, without fully extracting the archive.
-Earlier streaming partial-extraction experiments are excluded from formal data.
+The finalized Step 3 dataset archive is
+`fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip`. It is the
+self-contained clean 30k location-disjoint dataset used for formal fMoW Step 3
+reproduction. It was extracted from the official Stanford PURL
+`fmow-sentinel.tar.gz` after downloading the full tarball to Colab local
+`/content` storage, without fully extracting the archive. Earlier streaming
+partial-extraction experiments are excluded from formal data. The earlier `v1`
+10k subset and the pre-merge `v2` archive are not formal Step 3 reproduction
+inputs.
 
 Canonical Colab paths:
 
 ```text
-/content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv
+/content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv
 /content/drive/MyDrive/rsfm_fairness_audit/prepared_zips/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip
 ```
 
@@ -133,7 +137,7 @@ TIFF files when rebuilding from source:
 python scripts/prepare_fmow_sentinel_clean_subset.py `
   --archive /content/fmow-sentinel.tar.gz `
   --metadata-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_sample_manifest_final_v1.csv `
-  --output-dir /content/data/fmow_sentinel_clean_subset_v1 `
+  --output-dir /content/data/fmow_sentinel_clean_subset_build `
   --split train `
   --split val `
   --max-samples-per-split 5000 `
@@ -151,8 +155,8 @@ without discarding existing valid samples:
 python scripts/prepare_fmow_sentinel_clean_subset.py `
   --archive /content/fmow-sentinel.tar.gz `
   --metadata-csv /content/drive/MyDrive/rsfm_fairness_audit/cache/fmow_sentinel/metadata/final/fmow_sentinel_enriched_sample_manifest_final_v1.csv `
-  --augment-existing-manifest /content/data/fmow_sentinel_clean_subset_v1/clean_subset_manifest.csv `
-  --output-dir /content/data/fmow_sentinel_clean_subset_v1 `
+  --augment-existing-manifest /content/data/fmow_sentinel_clean_subset_build/clean_subset_manifest.csv `
+  --output-dir /content/data/fmow_sentinel_clean_subset_30k_build `
   --split train `
   --split val `
   --target-total 30000 `
@@ -165,8 +169,8 @@ Lightweight supervised image-only sanity/debug baseline:
 
 ```powershell
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
-  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv `
-  --data-root /content/data/fmow_sentinel_clean_subset_30k_v2 `
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv `
+  --data-root /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged `
   --output-dir /content/outputs/fmow_sentinel_supervised_stats_val `
   --model supervised_stats `
   --train-split train `
@@ -180,8 +184,8 @@ Formal DOFA ViT-B frozen-backbone linear probe:
 
 ```powershell
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
-  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv `
-  --data-root /content/data/fmow_sentinel_clean_subset_30k_v2 `
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv `
+  --data-root /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged `
   --output-dir /content/outputs/fmow_sentinel_dofa_vitb_linear_probe_30k_location_disjoint `
   --model dofa `
   --model-config configs/models/dofa_fmow_sentinel.yaml `
@@ -208,8 +212,8 @@ location-disjoint subset:
 
 ```powershell
 python -m rsfm_fairness_audit.cli run-fmow-sentinel-classification `
-  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv `
-  --data-root /content/data/fmow_sentinel_clean_subset_30k_v2 `
+  --metadata-csv /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv `
+  --data-root /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged `
   --output-dir /content/outputs/fmow_sentinel_resnet50_30k_location_disjoint `
   --model resnet50 `
   --train-split train `
@@ -247,7 +251,11 @@ python -m rsfm_fairness_audit.cli compare-fmow-runs `
   --output-dir /content/outputs/comparisons/fmow_sentinel_supervised_vs_dofa
 ```
 
-Validate and package a completed Step 3 run without including raster imagery:
+Validate and package a completed Step 3 run without including raster imagery.
+This is a provisional packaging utility for individual runs. The formal Step 3
+result artifacts are the patched/final zips under
+`/content/drive/MyDrive/rsfm_fairness_audit/outputs/final_step3/`, not old
+handoff-only or unpatched/debug zips.
 
 ```powershell
 python -m rsfm_fairness_audit.cli validate-fmow-step3-results `
@@ -258,7 +266,7 @@ python -m rsfm_fairness_audit.cli validate-fmow-step3-results `
 
 python -m rsfm_fairness_audit.cli package-fmow-step3-handoff `
   --run-dir /content/outputs/fmow_sentinel_supervised_stats_val `
-  --output-zip /content/drive/MyDrive/rsfm_fairness_audit/outputs/fmow_step3_supervised_stats_handoff.zip
+  --output-zip /content/drive/MyDrive/rsfm_fairness_audit/outputs/provisional/fmow_step3_<run_name>_handoff.zip
 ```
 
 ## BigEarthNet + DOFA Runs

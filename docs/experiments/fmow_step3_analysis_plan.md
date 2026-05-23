@@ -11,10 +11,10 @@ scientific conclusions.
 - Input: Sentinel-2 13-band image-only raster input
 - Input mode: `s2_13band_image_only`
 - Band profile: `sentinel2_13band_fmow`
-- Formal Step 3 subset:
-  `fmow_sentinel_clean_subset_30k_location_disjoint_v2`
+- Formal Step 3 subset archive:
+  `fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip`
 - Manifest:
-  `/content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv`
+  `/content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/final_clean_subset_manifest_30k_location_disjoint_v2.csv`
 - Drive archive:
   `/content/drive/MyDrive/rsfm_fairness_audit/prepared_zips/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip`
 - Final Step 3 result bundle:
@@ -31,6 +31,8 @@ The final Step 3 subset is a support-aware clean subset extracted from the
 official Stanford PURL `fmow-sentinel.tar.gz`. The full tarball is downloaded
 to Colab local `/content` storage and is not fully extracted. Earlier streaming
 partial-extraction experiments are excluded from formal data.
+The earlier `v1` 10k subset and the pre-merge `v2` archive are not formal
+reproduction inputs; `v3_merged` is the self-contained final archive.
 
 The split protocol is `location_disjoint`: final `split` values are
 `train` / `val`, `split_original` preserves the source split, and the group key

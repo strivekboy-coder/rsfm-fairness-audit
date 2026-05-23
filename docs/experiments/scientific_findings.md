@@ -412,7 +412,7 @@ Final artifacts:
 Recorded: 2026-05-22.
 
 Experiment:
-- Dataset: `fmow_sentinel_clean_subset_30k_location_disjoint_v2`.
+- Dataset: `fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged`.
 - Task: 62-class scene classification.
 - Input: Sentinel-2 13-band image-only.
 - Model: ResNet-50, 13-band first convolution, trained from scratch.
