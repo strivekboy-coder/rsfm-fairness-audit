@@ -111,6 +111,12 @@ BWER(event_id):
 Interpretation:
 The official task-adapted Prithvi decoder produces strong average native segmentation performance, but event-level deployment risk remains heterogeneous. Pakistan and Bolivia form the event-tail under the current raw event-level BWER audit. This is a meaningful paper-grade event fairness signal, unlike the earlier chip-level classification sanity run or the frozen non-TL threshold diagnostics.
 
+Claim guardrail:
+This result supports event-level deployment-tail-risk evidence for the
+Sen1Floods11 native segmentation case study. It should not be generalized to
+all disaster segmentation tasks, all flood mapping settings, or all disaster
+geographies without additional datasets and evaluation protocols.
+
 Quality notes:
 - Five chips have zero valid pixels and should remain documented as data QC edge cases.
 - Fifty-three chips have zero predicted positive pixels, while fifty-two chips have zero ground-truth positive pixels; this does not indicate a global all-background failure.

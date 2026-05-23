@@ -1,0 +1,58 @@
+{
+  "checks": [
+    {
+      "check": "fmow_band_wavelength_profile",
+      "status": "pass",
+      "evidence": "src/rsfm_fairness_audit/band_profiles.py",
+      "note": "bands=B01,B02,B03,B04,B05,B06,B07,B08,B8A,B09,B10,B11,B12 wavelengths=0.443,0.49,0.56,0.665,0.705,0.74,0.783,0.842,0.865,0.945,1.373,1.61,2.19"
+    },
+    {
+      "check": "location_disjoint_leakage",
+      "status": "recorded_done",
+      "evidence": "docs/experiments/scientific_findings.md; docs/datasets/fmow_sentinel.md",
+      "note": "Formal record states category + location_id train/val overlap is zero. Provide --manifest to recompute from artifact."
+    },
+    {
+      "check": "class_mapping",
+      "status": "recorded_done",
+      "evidence": "docs/experiments/fmow_step3_scientific_findings.md",
+      "note": "Formal record states ResNet metadata was patched and DOFA run metadata records class mapping. Provide --run-dir to recompute."
+    },
+    {
+      "check": "fmow_per_band_statistics",
+      "status": "partial",
+      "evidence": "",
+      "note": "Workflow supports band_statistics_sample.csv, but no final stats file was supplied to this local check."
+    },
+    {
+      "check": "dofa_embedding_cache_input_scale",
+      "status": "code_done",
+      "evidence": "src/rsfm_fairness_audit/fmow_sentinel_classification.py",
+      "note": "The DOFA embedding cache key includes input_scale. Provide --embedding-cache-dir to inspect completed cache metadata."
+    },
+    {
+      "check": "dofa_embedding_numeric",
+      "status": "recorded_done",
+      "evidence": "docs/experiments/fmow_step3_scientific_findings.md",
+      "note": "Formal record states scaled DOFA embeddings had no NaN/Inf and non-collapsed variance. Provide --embedding-cache-dir to recompute."
+    },
+    {
+      "check": "dofa_pooling_ablation",
+      "status": "open_recorded",
+      "evidence": "docs/experiments/fmow_step3_scientific_findings.md",
+      "note": "Current completed run uses flattened forward_features. CLS/mean pooling are not exposed as formal completed outputs."
+    },
+    {
+      "check": "tiny_overfit",
+      "status": "optional_not_run",
+      "evidence": "",
+      "note": "No local data run was performed. This is a diagnostic for suspected training bugs, not required for current modest-performance claims."
+    },
+    {
+      "check": "random_split_sanity",
+      "status": "optional_not_run",
+      "evidence": "",
+      "note": "No random-split fMoW result is part of Step 0. Keep any future run diagnostic-only."
+    }
+  ]
+}

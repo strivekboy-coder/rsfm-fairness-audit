@@ -31,6 +31,11 @@ official Prithvi TL audit and the supervised U-Net baseline. For U-Net,
 Chip-level macro IoU is auxiliary. Formal BWER inputs should be event-level
 rows aggregated from valid pixel counts and confusion counts.
 
+Claim guardrail: Sen1Floods11 results in this project support event-level
+tail-risk evidence for this specific case study. They should not be generalized
+to all disaster segmentation tasks, all flood settings, or all disaster
+geographies without additional datasets and protocols.
+
 ## Open Items
 
 - Current official license or terms in the GCS bucket: to_verify.

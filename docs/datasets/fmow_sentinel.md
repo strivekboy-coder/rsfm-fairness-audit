@@ -346,8 +346,13 @@ Expected Colab manifest:
 Drive archive:
 
 ```text
-/content/drive/MyDrive/rsfm_fairness_audit/fmow_sentinel_clean_subset_30k_location_disjoint_v2.zip
+/content/drive/MyDrive/rsfm_fairness_audit/prepared_zips/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip
 ```
+
+The archive name uses `v3_merged` because it is the self-contained Drive copy
+after merging the earlier 10k image tree into the final 30k extracted subset.
+The dataset protocol and final manifest remain
+`fmow_sentinel_clean_subset_30k_location_disjoint_v2`.
 
 The full official fMoW-Sentinel tarball is also cached in Drive for future
 reprocessing:
@@ -622,8 +627,10 @@ python -m rsfm_fairness_audit.cli compare-fmow-runs \
 
 The comparison reports aggregate accuracy, Raw-BWER(country), and
 class-standardised country BWER where the completed run outputs support it.
-Use these together: high average accuracy does not by itself imply low
-geography tail risk.
+Use these together: model ranking by aggregate accuracy can differ from model
+ranking by geography tail-risk metrics. The current fMoW-Sentinel Step 3
+models have modest aggregate accuracy, so do not frame this as a
+high-accuracy-failure result.
 
 ## Step 3 Result Contract And Handoff
 
@@ -720,7 +727,7 @@ Current download and data handling protocol:
 Files to preserve for reproducibility:
 
 - final dataset archive:
-  `/content/drive/MyDrive/rsfm_fairness_audit/fmow_sentinel_clean_subset_30k_location_disjoint_v2.zip`
+  `/content/drive/MyDrive/rsfm_fairness_audit/prepared_zips/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip`
 - final manifest:
   `final_clean_subset_manifest_30k_location_disjoint_v2.csv`
 - final enriched metadata
@@ -733,3 +740,82 @@ Files to preserve for reproducibility:
 - BWER outputs
 - `archive_manifest.json`
 - handoff zip
+
+## Final Step 3 Archive
+
+Recorded: 2026-05-22.
+
+The final fMoW-Sentinel Step 3 bundle is:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/final_step3/fmow_step3_final_bundle_30k_location_disjoint.zip
+```
+
+Archive size: 385.37 MB.
+
+It contains:
+
+- `final_step3/resnet50_30k_location_disjoint_patched_metadata.zip`
+  - ResNet-50 13-band supervised baseline outputs.
+  - Includes patched `run_metadata.json` with reconstructed `class_mapping`.
+  - `model_variant = resnet50_13band_from_scratch`.
+  - `adaptation_protocol = supervised_baseline`.
+  - Dataset: fMoW-Sentinel 30k location-disjoint subset.
+- `final_step3/dofa_scaled10000_30k_location_disjoint.zip`
+  - DOFA ViT-B frozen encoder plus linear-probe outputs.
+  - Uses `input_scale = 10000`.
+  - `model_variant = dofa_vit_base`.
+  - `adaptation_protocol = frozen_encoder_linear_probe`.
+  - This is the valid DOFA run. The earlier unscaled DOFA run is debug-only and
+    invalid for scientific comparison.
+- `final_step3/comparison_resnet50_vs_dofa_scaled10000.zip`
+  - ResNet-50 vs scaled-DOFA comparison outputs.
+  - Includes `comparison_summary.csv`, `average_vs_bwer.csv`,
+    `geography_slice_comparison.csv`, and `comparison_report.md`.
+
+Final dataset/protocol record:
+
+- Dataset: fMoW-Sentinel 30k support-aware clean subset.
+- Split: location-disjoint.
+- Group definition: `category + location_id`.
+- Train rows: 21046.
+- Val rows: 8954.
+- Task: 62-class scene classification.
+- Input: Sentinel-2 13-band image-only.
+- Geography metadata is audit-only and not model input.
+
+## fMoW-Sentinel Step 3 Pitfalls
+
+- A clean subset archive is not automatically self-contained after augmentation.
+  Verify image existence and readability for every manifest row before training.
+- The initial 30k v2 manifest/directory was incomplete because some old 10k rows
+  still pointed to v1 paths. This was fixed by merging v1 images into the v2
+  tree and creating `fixed_manifest_30k_merged.csv`.
+- Prefer relative image paths plus `data_root` over hardcoded `/content` paths
+  so Colab extracts, Drive zips, and local reruns stay portable.
+- Always check readable image ratio before training. If readable rows are far
+  fewer than processed rows, stop and fix paths/manifests.
+- Always run the `category + location_id` leakage check before treating the
+  location-disjoint split as formal.
+- ResNet-50 `run_metadata.json` initially missed `class_mapping` even though
+  `audit_table.csv` had 62 classes. The final ResNet archive contains patched
+  metadata reconstructed from `audit_table.csv`.
+- Unscaled DOFA is invalid for comparison because raw fMoW-Sentinel TIFF values
+  around 0-3000+ were fed directly into the frozen encoder with identity
+  normalization.
+- DOFA `input_scale = 10000` fixed the preprocessing issue and improved the run
+  from about accuracy 0.1094 / macro-F1 0.0631 to accuracy 0.177686 / macro-F1
+  0.168659.
+- Do not treat successful embedding extraction as proof of correct foundation
+  model preprocessing. Verify input scale, band order, wavelength list, resize,
+  pooling, and cache identity.
+- Cache keys must include protocol-changing settings such as `input_scale`,
+  `image_size`, `band_profile`, checkpoint/source, and manifest hash.
+- Use new output directories for protocol changes so debug and formal results
+  do not mix.
+- Country x class and country x category analyses should be treated as
+  diagnostic or support-threshold filtered because country-class support is
+  sparse.
+- Formal primary slices should focus on `continent`, `un_region`, `region`,
+  `latitude_band`, `season`, and `category`; country-level BWER should use
+  support thresholds.

@@ -16,7 +16,9 @@ scientific conclusions.
 - Manifest:
   `/content/data/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v2.csv`
 - Drive archive:
-  `/content/drive/MyDrive/rsfm_fairness_audit/fmow_sentinel_clean_subset_30k_location_disjoint_v2.zip`
+  `/content/drive/MyDrive/rsfm_fairness_audit/prepared_zips/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip`
+- Final Step 3 result bundle:
+  `/content/drive/MyDrive/rsfm_fairness_audit/outputs/final_step3/fmow_step3_final_bundle_30k_location_disjoint.zip`
 
 Geography metadata is used only for audit slicing, support diagnostics, BWER
 reporting, and comparison reports. Country, region, latitude, longitude,
@@ -118,3 +120,26 @@ balance variables, and documented protocol labels. Low-support geography x
 class outputs, sparse country cells, or runs with incomplete provenance should
 be marked diagnostic-only until the corresponding support and validation checks
 pass.
+
+## Final Bundle Contract
+
+The final Step 3 bundle is a handoff archive, not a raw-data archive. It should
+contain run outputs, comparison outputs, metadata/provenance reports, and BWER
+tables, but not the full fMoW-Sentinel tarball or a fully extracted raster tree.
+
+Current final bundle:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/final_step3/fmow_step3_final_bundle_30k_location_disjoint.zip
+```
+
+Expected contents:
+
+- `final_step3/resnet50_30k_location_disjoint_patched_metadata.zip`
+- `final_step3/dofa_scaled10000_30k_location_disjoint.zip`
+- `final_step3/comparison_resnet50_vs_dofa_scaled10000.zip`
+
+The ResNet-50 archive includes patched metadata with reconstructed
+`class_mapping`. The DOFA archive must be the scaled `input_scale = 10000`
+linear-probe run; unscaled DOFA outputs are debug artifacts and should not be
+included as formal comparison results.
