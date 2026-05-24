@@ -134,6 +134,8 @@ def main() -> int:
                 str(args.learning_rate),
                 "--weight-decay",
                 str(args.weight_decay),
+                "--checkpoint-metric",
+                "accuracy",
                 "--num-workers",
                 str(args.num_workers),
                 "--seed",
@@ -144,6 +146,7 @@ def main() -> int:
     )
     comparison_rows = _summary_rows(args.output_dir, args.location_disjoint_resnet_zip)
     write_csv(args.output_dir / "random_split_vs_location_disjoint_summary.csv", comparison_rows)
+    metrics = first_row(args.output_dir / "metrics_summary.csv")
     metadata = {
         "sanity_type": "random_split_sanity",
         "formal_result": False,
@@ -156,6 +159,10 @@ def main() -> int:
         "train_rows": train_count,
         "val_rows": val_count,
         "model": "resnet50_13band_from_scratch",
+        "checkpoint_metric": "accuracy",
+        "best_epoch": metrics.get("best_epoch", ""),
+        "best_validation_score": metrics.get("best_validation_score", ""),
+        "total_epochs": args.epochs,
         "protocol_note": "Random sample-level split sanity contrast only; not the formal deployment protocol.",
     }
     write_json(args.output_dir / "random_split_sanity_metadata.json", metadata)
@@ -168,9 +175,13 @@ def main() -> int:
         f"- random split manifest: `{split_manifest}`",
         f"- seed: `{args.seed}`",
         f"- train / val rows: {train_count} / {val_count}",
-        f"- epochs: {args.epochs}",
+        f"- best epoch: {metrics.get('best_epoch', '')}",
+        f"- total epochs: {args.epochs}",
+        f"- checkpoint metric: best validation accuracy",
+        f"- best validation score: {metrics.get('best_validation_score', '')}",
         "",
         "Outputs include `predictions.csv`, `audit_table.csv`, `metrics_summary.csv`, `bwer/`, and `random_split_vs_location_disjoint_summary.csv`.",
+        "Predictions and BWER are based on the best validation-accuracy checkpoint, not the final epoch.",
     ]
     (args.output_dir / "random_split_sanity_report.md").write_text("\n".join(report), encoding="utf-8")
     return 0
@@ -178,4 +189,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

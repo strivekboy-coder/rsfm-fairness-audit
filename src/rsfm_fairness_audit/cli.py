@@ -174,6 +174,7 @@ def build_parser() -> argparse.ArgumentParser:
     fmow_cls.add_argument("--epochs", type=int, default=20)
     fmow_cls.add_argument("--learning-rate", type=float, default=1e-3)
     fmow_cls.add_argument("--weight-decay", type=float, default=1e-4)
+    fmow_cls.add_argument("--checkpoint-metric", choices=["macro_f1", "accuracy"], default="macro_f1", help="Validation metric used for ResNet-50 checkpoint selection.")
     fmow_cls.add_argument("--num-workers", type=int, default=2)
     fmow_cls.add_argument("--device", default="auto")
     fmow_cls.add_argument("--norm-stats", type=Path, help="Optional train-only norm_stats.json to reuse for ResNet-50.")
@@ -490,6 +491,7 @@ def main() -> None:
                 epochs=args.epochs,
                 learning_rate=args.learning_rate,
                 weight_decay=args.weight_decay,
+                checkpoint_metric=args.checkpoint_metric,
                 num_workers=args.num_workers,
                 device=args.device,
                 norm_stats=args.norm_stats,

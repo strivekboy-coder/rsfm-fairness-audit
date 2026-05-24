@@ -58,6 +58,7 @@ class FmowClassificationConfig:
     epochs: int = 20
     learning_rate: float = 1e-3
     weight_decay: float = 1e-4
+    checkpoint_metric: str = "macro_f1"
     num_workers: int = 2
     device: str = "auto"
     norm_stats: Path | None = None
@@ -762,7 +763,7 @@ def _train_resnet50(
             total_loss += float(loss.detach().cpu()) * batch
             total_seen += batch
         eval_predictions, eval_metrics = _evaluate_resnet50(model, eval_loader, eval_rows, classes, device)
-        score = eval_metrics.get("macro_f1")
+        score = eval_metrics.get(config.checkpoint_metric)
         if not isinstance(score, float) or math.isnan(score):
             score = eval_metrics.get("accuracy", -float("inf"))
         train_loss = total_loss / max(total_seen, 1)
@@ -799,6 +800,7 @@ def _train_resnet50(
         {
             "best_epoch": best_epoch,
             "best_validation_score": best_score,
+            "best_validation_metric": config.checkpoint_metric,
             "checkpoint_path": str(checkpoint_path),
             "norm_stats_path": str(norm_path),
             "train_rows_readable": len(train_ok),
@@ -1082,6 +1084,10 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
         "balanced_accuracy": resnet_metrics.get("balanced_accuracy", row_metrics.get("balanced_accuracy", "")),
         "macro_f1": resnet_metrics.get("macro_f1", row_metrics.get("macro_f1", "")),
         "top5_accuracy": resnet_metrics.get("top5_accuracy", row_metrics.get("top5_accuracy", "")),
+        "best_epoch": resnet_metrics.get("best_epoch", ""),
+        "best_validation_metric": resnet_metrics.get("best_validation_metric", ""),
+        "best_validation_score": resnet_metrics.get("best_validation_score", ""),
+        "total_epochs": config.epochs if config.model == "resnet50" else "",
     }
     write_csv(artifacts["metrics_summary"], [metric_row])
     metadata = {
@@ -1112,13 +1118,14 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
         "batch_size": config.batch_size,
         "learning_rate": config.learning_rate if config.model == "resnet50" else config.probe_learning_rate if config.model == "dofa" and config.probe == "linear" else "",
         "weight_decay": config.weight_decay if config.model == "resnet50" else "",
+        "checkpoint_metric": config.checkpoint_metric if config.model == "resnet50" else "",
         "optimizer": "AdamW" if config.model in {"resnet50", "dofa"} and (config.model == "resnet50" or config.probe == "linear") else "nearest_centroid",
         "loss": "cross_entropy" if config.model in {"resnet50", "dofa"} and (config.model == "resnet50" or config.probe == "linear") else "",
         "random_seed": config.seed,
         "geography_metadata_usage": "audit_slicing_only_not_model_input",
         "geography_join_level": "location_level",
     }
-    metadata.update({key: value for key, value in resnet_metrics.items() if key in {"best_epoch", "best_validation_score", "checkpoint_path", "norm_stats_path"}})
+    metadata.update({key: value for key, value in resnet_metrics.items() if key in {"best_epoch", "best_validation_score", "best_validation_metric", "checkpoint_path", "norm_stats_path"}})
     metadata.update(dofa_run_metadata)
     artifacts["run_metadata"].write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     if config.model == "resnet50":
