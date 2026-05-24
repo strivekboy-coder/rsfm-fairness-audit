@@ -18,10 +18,11 @@ The baseline closure package is closed for the current paper foundation:
   formal comparison.
 
 The remaining items are not blockers for the current claims, but they must
-remain visible as limitations: DOFA pooling/fine-tuning recipe is unresolved,
-final per-band raster statistics should be referenced from the archived
-preflight outputs when writing the paper, and tiny-overfit/random-split fMoW
-checks are awaiting Colab artifact runs and should remain diagnostic-only.
+remain visible as limitations: DOFA fine-tuning recipe is unresolved, and final
+per-band raster statistics should be referenced from the archived preflight
+outputs when writing the paper. The fMoW random-split, tiny-overfit, and DOFA
+pooling sanity checks are now completed and archived as diagnostic-only
+baseline-closure evidence.
 
 ## Sen1Floods11 Closure
 
@@ -83,7 +84,7 @@ result, or a causal geography fairness claim.
 | unscaled DOFA status | done | `docs/experiments/fmow_step3_scientific_findings.md` | Unscaled DOFA is invalid/debug/protocol artifact, not a formal result. |
 | band order vs wavelength | partial but documented | `src/rsfm_fairness_audit/band_profiles.py`; `docs/experiments/fmow_step3_scientific_findings.md` | Band order itself is not critical; wavelength-band correspondence is critical. Current profile records the expected 13-band correspondence. |
 | embedding cache key | done | `src/rsfm_fairness_audit/fmow_sentinel_classification.py` | Cache key includes `input_scale`, `image_size`, `band_profile`, checkpoint/source, embedding layer, row hash, and manifest path. |
-| pooling/fine-tuning recipe | awaiting_colab_run | `docs/experiments/fmow_step3_scientific_findings.md` | Pooling and fine-tuning remain open until author examples or a cached-embedding ablation is deliberately run. |
+| pooling/fine-tuning recipe | partial | `docs/experiments/fmow_step3_scientific_findings.md`; `docs/results/baseline_closure_sanity/README.md` | Pooling ablation was completed for the current adapter and found flatten/mean_tokens identical because cached embeddings are already 2D pooled outputs. CLS remains unavailable. Fine-tuning remains outside closure. |
 
 ## Baseline Closure Sanity Checks
 
@@ -93,11 +94,25 @@ result, or a causal geography fairness claim.
 | class/label mapping | done | `docs/experiments/fmow_step3_scientific_findings.md`; final ResNet archive | ResNet metadata was patched with reconstructed `class_mapping`; DOFA run metadata records class mapping. |
 | embedding cache key includes input scale | done | `src/rsfm_fairness_audit/fmow_sentinel_classification.py`; `docs/results/baseline_closure_sanity/baseline_sanity_report.md` | Prevents accidental reuse of unscaled embeddings for scaled DOFA. |
 | band profile and wavelength list | done as code/protocol check | `src/rsfm_fairness_audit/band_profiles.py`; `docs/results/baseline_closure_sanity/baseline_sanity_report.md` | Expected 13-band profile is recorded. Actual TIFF channel order should still be cited from final raster inspection artifacts in paper text. |
-| final artifact verification | awaiting_colab_run | `docs/results/baseline_closure_sanity/baseline_sanity_report.md` | The sanity runner accepts explicit prepared/resnet/dofa/comparison/final-bundle zip paths so Colab can verify it is reading final artifacts. |
+| final artifact verification | done | `docs/results/baseline_closure_sanity/baseline_sanity_report.md`; `outputs/baseline_closure_sanity/fmow_baseline_closure_sanity_bundle.zip` | Baseline closure sanity outputs were completed and archived under `outputs/baseline_closure_sanity/`. |
 | per-band statistics / input range | partial | `docs/datasets/fmow_sentinel.md` names `band_statistics_sample.csv`; final artifact path should be cited from preflight zip | The workflow supports this. The final paper should cite the exact archived stats file if used. |
-| DOFA pooling ablation | awaiting_colab_run | `scripts/run_fmow_dofa_pooling_ablation_colab.py` | Compares formal `flatten` representation with `mean_tokens`; CLS is recorded as unavailable unless a real adapter output exposes it. Diagnostic only. |
-| tiny overfit test | awaiting_colab_run | `scripts/run_fmow_tiny_overfit_sanity_colab.py` | Verifies training loop / label mapping / loss on a repeated tiny subset. Diagnostic only; do not present as a main result. |
-| random split sanity | awaiting_colab_run | `scripts/run_fmow_random_split_sanity_colab.py` | Runs a random sample-level split contrast using ResNet-50 + BWER. Diagnostic only; not the formal deployment protocol. |
+| DOFA pooling ablation | done | `outputs/baseline_closure_sanity/fmow_dofa_pooling_ablation_sanity.zip`; `docs/experiments/fmow_step3_scientific_findings.md` | `flatten` and `mean_tokens` produced identical embeddings/results under the current adapter. CLS is unavailable. Diagnostic only. |
+| tiny overfit test | done | `outputs/baseline_closure_sanity/fmow_tiny_overfit_resnet50_sanity.zip`; `docs/experiments/fmow_step3_scientific_findings.md` | ResNet training loop, label mapping, and loss can overfit a tiny repeated subset. Diagnostic only; not a main result. |
+| random split sanity | done | `outputs/baseline_closure_sanity/fmow_random_split_resnet50_sanity.zip`; `docs/experiments/fmow_step3_scientific_findings.md` | Final saved random-split sanity output is the 16-epoch run only. Diagnostic contrast only; not the formal deployment protocol. |
+
+Completed baseline-closure sanity archives:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_random_split_resnet50_sanity.zip
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_tiny_overfit_resnet50_sanity.zip
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_dofa_pooling_ablation_sanity.zip
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_baseline_closure_sanity_bundle.zip
+```
+
+Do not document the earlier 8-epoch random split run as the final random-split
+sanity output. The recorded random-split sanity output is the 16-epoch run
+stored at `random_split_resnet50_16epoch` and archived as
+`fmow_random_split_resnet50_sanity.zip`.
 
 ## Claims Guardrails
 
@@ -123,9 +138,10 @@ Baseline closure is complete when the following are true:
 - final Drive artifact paths are documented and point to `v3_merged`,
   `patched_metadata`, `scaled10000`, and the formal comparison zip;
 - debug artifacts are explicitly excluded from formal claims;
-- known sanity checks are either completed, implemented as lightweight artifact
-  checks, or recorded as awaiting Colab diagnostic runs;
+- known sanity checks are completed, implemented as lightweight artifact
+  checks, or explicitly recorded as diagnostic-only;
 - claims are bounded to the evidence actually produced.
 
-Current status: closed for Step 1 drafting after Colab verifies final artifact
-paths with the baseline sanity runner.
+Current status: closed for Step 1 drafting. The completed Colab sanity outputs
+are diagnostic closure evidence and do not change the formal location-disjoint
+ResNet/DOFA main results.

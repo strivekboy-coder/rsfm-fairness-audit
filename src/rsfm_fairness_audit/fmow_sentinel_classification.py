@@ -346,10 +346,8 @@ def _dofa_cache_key(
     config: FmowClassificationConfig,
     adapter: DOFAAdapter,
 ) -> str:
+    _ = split_name
     payload = {
-        "split": split_name,
-        "manifest": str(config.metadata_csv),
-        "manifest_resolved": str(config.metadata_csv.resolve()) if config.metadata_csv.exists() else str(config.metadata_csv),
         "model_variant": adapter.model_variant,
         "image_size": config.image_size,
         "adapter_image_size": adapter.image_size,
@@ -375,6 +373,13 @@ def _cached_dofa_embeddings(
     key = _dofa_cache_key(rows, split_name, config, adapter)
     cache_path = cache_dir / f"dofa_{split_name}_{key}.npz"
     metadata_path = cache_dir / f"dofa_{split_name}_{key}.json"
+    if not (cache_path.exists() and metadata_path.exists()):
+        for candidate in sorted(cache_dir.glob(f"dofa_*_{key}.npz")):
+            candidate_metadata = candidate.with_suffix(".json")
+            if candidate_metadata.exists():
+                cache_path = candidate
+                metadata_path = candidate_metadata
+                break
     row_by_sample = {str(row.get("sample_id", "")): row for row in rows}
     if cache_path.exists() and metadata_path.exists():
         data = np.load(cache_path, allow_pickle=False)

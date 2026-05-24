@@ -845,6 +845,23 @@ python scripts/run_fmow_dofa_pooling_ablation_colab.py \
   --seed 42
 ```
 
+Optional DOFA random split sanity. This reuses the final 16-epoch ResNet
+`random_split_manifest.csv` and runs scaled DOFA (`input_scale=10000`) on the
+same random train/val partition. It is a diagnostic contrast only, not the
+formal deployment protocol:
+
+```bash
+python scripts/run_fmow_dofa_random_split_sanity_colab.py \
+  --random-split-manifest /content/outputs/baseline_closure_sanity/random_split_resnet50_16epoch/random_split_manifest.csv \
+  --prepared-dataset-zip /content/drive/MyDrive/rsfm_fairness_audit/prepared_zips/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip \
+  --extract-dir /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged \
+  --output-dir /content/outputs/baseline_closure_sanity/dofa_random_split_sanity \
+  --model-config configs/models/dofa_fmow_sentinel.yaml \
+  --probe-epochs 200 \
+  --batch-size 32 \
+  --seed 42
+```
+
 ## fMoW-Sentinel Step 3 Pitfalls
 
 - A clean subset archive is not automatically self-contained after augmentation.

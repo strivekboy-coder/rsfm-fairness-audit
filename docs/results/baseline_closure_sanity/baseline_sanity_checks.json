@@ -2,33 +2,33 @@
   "checks": [
     {
       "check": "prepared_dataset_zip",
-      "status": "awaiting_colab_run",
-      "evidence": "",
-      "note": "Pass --prepared-dataset-zip to verify fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip."
+      "status": "done",
+      "evidence": "prepared_zips/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip",
+      "note": "Final self-contained clean 30k location-disjoint dataset archive verified."
     },
     {
       "check": "resnet_artifact_zip",
-      "status": "awaiting_colab_run",
-      "evidence": "",
-      "note": "Pass --resnet-artifact-zip to verify resnet50_30k_location_disjoint_patched_metadata.zip."
+      "status": "done",
+      "evidence": "outputs/final_step3/resnet50_30k_location_disjoint_patched_metadata.zip",
+      "note": "Formal ResNet-50 output archive with patched metadata verified."
     },
     {
       "check": "dofa_artifact_zip",
-      "status": "awaiting_colab_run",
-      "evidence": "",
-      "note": "Pass --dofa-artifact-zip to verify dofa_scaled10000_30k_location_disjoint.zip."
+      "status": "done",
+      "evidence": "outputs/final_step3/dofa_scaled10000_30k_location_disjoint.zip",
+      "note": "Formal scaled10000 DOFA output archive verified."
     },
     {
       "check": "comparison_artifact_zip",
-      "status": "awaiting_colab_run",
-      "evidence": "",
-      "note": "Pass --comparison-artifact-zip to verify comparison_resnet50_vs_dofa_scaled10000.zip."
+      "status": "done",
+      "evidence": "outputs/final_step3/comparison_resnet50_vs_dofa_scaled10000.zip",
+      "note": "Formal ResNet-vs-DOFA comparison archive verified."
     },
     {
       "check": "final_bundle_zip",
-      "status": "awaiting_colab_run",
-      "evidence": "",
-      "note": "Pass --final-bundle-zip to verify fmow_step3_final_bundle_30k_location_disjoint.zip."
+      "status": "done",
+      "evidence": "outputs/final_step3/fmow_step3_final_bundle_30k_location_disjoint.zip",
+      "note": "Final Step 3 bundle verified."
     },
     {
       "check": "fmow_band_wavelength_profile",
@@ -68,21 +68,21 @@
     },
     {
       "check": "dofa_pooling_ablation",
-      "status": "awaiting_colab_run",
-      "evidence": "scripts/run_fmow_dofa_pooling_ablation_colab.py",
-      "note": "Runner compares flatten vs mean_tokens. CLS remains unavailable unless a real adapter output exposes it."
+      "status": "done",
+      "evidence": "outputs/baseline_closure_sanity/fmow_dofa_pooling_ablation_sanity.zip",
+      "note": "Flatten and mean_tokens produced identical results because cached embeddings are already 2D pooled outputs. CLS is unavailable. Diagnostic only."
     },
     {
       "check": "tiny_overfit",
-      "status": "awaiting_colab_run",
-      "evidence": "scripts/run_fmow_tiny_overfit_sanity_colab.py",
-      "note": "Diagnostic only. No local data run was performed and no formal model result should depend on it."
+      "status": "done",
+      "evidence": "outputs/baseline_closure_sanity/fmow_tiny_overfit_resnet50_sanity.zip",
+      "note": "Final accuracy 0.96875 and macro-F1 0.9686274509803923 on a tiny repeated subset. Diagnostic only."
     },
     {
       "check": "random_split_sanity",
-      "status": "awaiting_colab_run",
-      "evidence": "scripts/run_fmow_random_split_sanity_colab.py",
-      "note": "Diagnostic only. Do not present random-split fMoW as a main result."
+      "status": "done",
+      "evidence": "outputs/baseline_closure_sanity/fmow_random_split_resnet50_sanity.zip",
+      "note": "Final saved result is the 16-epoch run only: best epoch 14/16, accuracy 0.7118888888888889, country Raw-BWER about 0.2517475898. Not the formal deployment protocol."
     }
   ]
 }

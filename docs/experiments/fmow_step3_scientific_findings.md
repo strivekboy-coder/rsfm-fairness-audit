@@ -154,3 +154,163 @@ DOFA ViT-B frozen encoder with linear probe:
   patched metadata with `class_mapping` reconstructed from `audit_table.csv`.
 - Country x class and country x category analyses remain diagnostic or
   support-threshold filtered because country-class support is sparse.
+
+## Baseline Closure Sanity Results
+
+Recorded: 2026-05-24.
+
+The baseline closure sanity Colab runs were completed and archived under:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/
+```
+
+Archived files:
+
+- `fmow_random_split_resnet50_sanity.zip`.
+- `fmow_tiny_overfit_resnet50_sanity.zip`.
+- `fmow_dofa_pooling_ablation_sanity.zip`.
+- `fmow_baseline_closure_sanity_bundle.zip`.
+
+Only the 16-epoch random-split result is the final saved random-split sanity
+record. The earlier 8-epoch random-split run is not the final sanity output and
+should not be documented as such.
+
+### Random Split ResNet-50 Sanity
+
+Path:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_random_split_resnet50_sanity.zip
+```
+
+Source Colab output directory:
+
+```text
+/content/outputs/baseline_closure_sanity/random_split_resnet50_16epoch
+```
+
+Protocol:
+
+- Dataset: `fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip`.
+- Split protocol: `random_split_sanity`.
+- Model: ResNet-50 13-band from scratch.
+- Train/eval rows: 21000 / 9000.
+- Epochs: 16.
+- Checkpoint selection: best validation accuracy.
+- Best epoch: 14 / 16.
+- This is a sanity contrast only, not the formal deployment protocol.
+
+Metrics:
+
+- Accuracy: 0.7118888888888889.
+- Balanced accuracy: 0.6672910350320261.
+- Macro-F1: 0.678352105923704.
+- Top-5 accuracy: 0.8354444444444444.
+
+Random split accuracy is much higher than the formal location-disjoint ResNet
+result, whose accuracy is approximately 0.20. This supports the protocol record
+that the location-disjoint evaluation is substantially harder and is necessary
+for cross-location generalization evaluation.
+
+Even after random split accuracy rises strongly, geography tail risk does not
+disappear. From the BWER summary:
+
+- Country Raw-BWER: approximately 0.2517475898.
+- Country | class standardised BWER: approximately 0.2577851581.
+
+This is diagnostic evidence that average performance improvement does not
+automatically eliminate deployment slice risk. It must not be treated as the
+formal deployment protocol.
+
+### Tiny Overfit ResNet-50 Sanity
+
+Path:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_tiny_overfit_resnet50_sanity.zip
+```
+
+Source Colab output directory:
+
+```text
+/content/outputs/baseline_closure_sanity/tiny_overfit_resnet50
+```
+
+Protocol:
+
+- Tiny repeated train/eval subset.
+- Classes: 4.
+- Samples per class: 8.
+- Epochs: 40.
+- Diagnostic only, not a scientific result.
+
+Metrics:
+
+- Final accuracy: 0.96875.
+- Final macro-F1: 0.9686274509803923.
+
+This sanity check records that the ResNet training loop, label mapping, and loss
+plumbing can overfit a tiny subset. This reduces concern that low
+location-disjoint performance is caused by broken labels or broken training
+logic.
+
+### DOFA Pooling Ablation Sanity
+
+Path:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_dofa_pooling_ablation_sanity.zip
+```
+
+Source Colab output directory:
+
+```text
+/content/outputs/baseline_closure_sanity/dofa_pooling_ablation
+```
+
+Protocol:
+
+- Model: DOFA frozen encoder plus linear probe.
+- `input_scale`: 10000.
+- Split protocol: `location_disjoint`.
+- Compared pooling modes: `flatten` and `mean_tokens`.
+- CLS is unavailable in the current adapter/output contract; no CLS result is
+  fabricated.
+
+Comparison result:
+
+- `flatten` and `mean_tokens` produced identical results.
+- Accuracy: 0.17768595041322313.
+- Raw-BWER(country): 0.16141538857738702.
+- Standardised-BWER(country | class): 0.1269780950367737.
+
+Inspection result:
+
+- Cache keys differ: true.
+- Embeddings are identical across train/eval: true.
+- Diagnosis: the pooling parameter reached run metadata and cache keys, but
+  cached embeddings are already 2D and identical. The current DOFA
+  adapter/output path exposes a pooled 768-dimensional representation rather
+  than token/spatial features, so there is no token dimension for `mean_tokens`
+  to change.
+
+This is a protocol sanity finding, not a model-performance finding. Under the
+current DOFA adapter, pooling choice does not affect the formal result because
+the adapter exposes an already-pooled representation. CLS is unavailable and
+should not be claimed.
+
+### Baseline Closure Status
+
+The main baseline closure sanity checks are now completed:
+
+- Artifact sanity verification passed.
+- 30k random split sanity completed.
+- Tiny overfit sanity completed.
+- DOFA pooling inspection completed.
+
+Do not document the 8-epoch random split result as final. Do not create
+additional `v1`/`v2`/`v3` names for these sanity outputs. Do not treat random
+split as the formal deployment protocol. Do not treat DOFA pooling ablation as a
+performance improvement or failure. Do not rerun the formal location-disjoint
+ResNet/DOFA main experiments for this record.

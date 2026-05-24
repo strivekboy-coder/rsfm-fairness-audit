@@ -345,3 +345,37 @@ def test_dofa_linear_probe_writes_formal_protocol_and_cache(monkeypatch) -> None
     assert '"embedding_cache_path"' in metadata_payload
     assert (out / "embedding_cache").exists()
     _cleanup(root)
+
+
+def test_dofa_cache_key_ignores_manifest_path_and_split_label() -> None:
+    from rsfm_fairness_audit.adapters.dofa import DOFAAdapter
+    from rsfm_fairness_audit.fmow_sentinel_classification import _dofa_cache_key
+
+    rows = [
+        {"sample_id": "s1", "image_id": "i1", "image_path": "fmow-sentinel/train/a/a_1/a_1_0.tif"},
+        {"sample_id": "s2", "image_id": "i2", "image_path": "fmow-sentinel/train/b/b_2/b_2_0.tif"},
+    ]
+    adapter = DOFAAdapter(
+        checkpoint_path="checkpoint.pt",
+        model_variant="vit_base_dofa",
+        band_profile="sentinel2_13band_fmow",
+        image_size=224,
+        embedding_pooling="flatten",
+        input_scale=10000,
+    )
+    first = FmowClassificationConfig(
+        metadata_csv=Path("random_split_manifest.csv"),
+        output_dir=Path("unused-a"),
+        model="dofa",
+        image_size=224,
+        band_profile="sentinel2_13band_fmow",
+    )
+    second = FmowClassificationConfig(
+        metadata_csv=Path("another_manifest_path.csv"),
+        output_dir=Path("unused-b"),
+        model="dofa",
+        image_size=224,
+        band_profile="sentinel2_13band_fmow",
+    )
+
+    assert _dofa_cache_key(rows, "train", first, adapter) == _dofa_cache_key(rows, "val", second, adapter)
