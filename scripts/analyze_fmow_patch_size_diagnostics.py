@@ -30,22 +30,24 @@ def write_csv(path: Path, rows: Iterable[Mapping[str, Any]]) -> None:
 
 
 def resolve_image_path(row: Mapping[str, str], data_root: Path | None) -> Path:
-    for key in ("extracted_path", "extracted_image_path", "image_path", "raster_path", "path"):
+    candidates: list[Path] = []
+    for key in ("image_path", "archive_path", "target_path", "extracted_image_path", "raster_path", "path", "extracted_path"):
         value = str(row.get(key, "") or "").strip()
         if not value:
             continue
         path = Path(value)
-        if path.is_absolute() and path.exists():
-            return path
+        if path.is_absolute():
+            if path.exists():
+                return path
+            continue
         if data_root is not None:
-            candidate = data_root / path
-            if candidate.exists():
-                return candidate
-        if path.exists():
-            return path
-        if data_root is not None:
-            return data_root / path
-        return path
+            candidates.append(data_root / path)
+        candidates.append(path)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    if candidates:
+        return candidates[0]
     raise FileNotFoundError("row is missing extracted_path/image_path/raster_path/path")
 
 
@@ -140,6 +142,17 @@ def analyze_manifest(manifest: Path, data_root: Path | None, output_dir: Path, *
         )
 
     ok_rows = [row for row in per_sample if row["status"] == "ok"]
+    if rows and not ok_rows:
+        artifacts = {
+            "per_sample": output_dir / "patch_size_per_sample.csv",
+            "warnings": output_dir / "warnings.json",
+        }
+        write_csv(artifacts["per_sample"], per_sample)
+        artifacts["warnings"].write_text(json.dumps(warnings, indent=2, sort_keys=True), encoding="utf-8")
+        raise RuntimeError(
+            f"Patch-size diagnostics found 0 readable rasters from {len(rows)} manifest rows. "
+            "Check --data-root and path columns; stale absolute extracted_path values are ignored when they do not exist."
+        )
     by_category = summarize_groups(ok_rows, "category")
     by_split = summarize_groups(ok_rows, "split")
 
