@@ -281,6 +281,7 @@ def test_dofa_linear_probe_writes_formal_protocol_and_cache(monkeypatch) -> None
         image_size = 8
         band_profile = "sentinel2_13band_fmow"
         embedding_layer = "forward_features"
+        embedding_pooling = "flatten"
         wavelengths = [0.443, 0.49, 0.56, 0.665, 0.705, 0.74, 0.783, 0.842, 0.865, 0.945, 1.373, 1.61, 2.19]
         normalization_mean = [0.0] * 13
         normalization_std = [1.0] * 13
@@ -317,6 +318,7 @@ def test_dofa_linear_probe_writes_formal_protocol_and_cache(monkeypatch) -> None
             model_config=Path("fake.yaml"),
             probe="linear",
             probe_epochs=2,
+            dofa_embedding_pooling="mean_tokens",
             batch_size=4,
             image_size=8,
             split_protocol="location_disjoint",
@@ -339,6 +341,7 @@ def test_dofa_linear_probe_writes_formal_protocol_and_cache(monkeypatch) -> None
     assert '"model_variant": "dofa_vit_base"' in metadata_payload
     assert '"wavelength_list"' in metadata_payload
     assert '"input_scale"' in metadata_payload
+    assert '"embedding_pooling": "mean_tokens"' in metadata_payload
     assert '"embedding_cache_path"' in metadata_payload
     assert (out / "embedding_cache").exists()
     _cleanup(root)

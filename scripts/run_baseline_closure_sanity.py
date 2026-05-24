@@ -19,6 +19,7 @@ FINAL_DOFA_ZIP_NAME = "dofa_scaled10000_30k_location_disjoint.zip"
 FINAL_COMPARISON_ZIP_NAME = "comparison_resnet50_vs_dofa_scaled10000.zip"
 FINAL_BUNDLE_ZIP_NAME = "fmow_step3_final_bundle_30k_location_disjoint.zip"
 FINAL_MANIFEST_NAME = "final_clean_subset_manifest_30k_location_disjoint_v3_merged.csv"
+MANIFEST_PREFIX = "final_clean_subset_manifest"
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
@@ -46,6 +47,35 @@ def _check_zip(path: Path | None, expected_name: str, label: str, required_membe
     if missing:
         return _status(label, "fail", str(path), f"Missing expected members ending with: {missing}")
     return _status(label, "pass", str(path), f"Verified final zip name and readability; members={len(names)}")
+
+
+def _check_prepared_dataset_zip(path: Path | None) -> dict[str, str]:
+    if path is None:
+        return _status("prepared_dataset_zip", "awaiting_colab_run", "", f"Pass --prepared-dataset-zip to verify {FINAL_DATASET_ZIP_NAME}.")
+    if path.name != FINAL_DATASET_ZIP_NAME:
+        return _status("prepared_dataset_zip", "fail", str(path), f"Expected final artifact name {FINAL_DATASET_ZIP_NAME}, got {path.name}.")
+    if not path.exists():
+        return _status("prepared_dataset_zip", "fail", str(path), "Path does not exist.")
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = archive.namelist()
+    except zipfile.BadZipFile:
+        return _status("prepared_dataset_zip", "fail", str(path), "Not a readable zip file.")
+    candidates = [
+        name
+        for name in names
+        if Path(name).name.startswith(MANIFEST_PREFIX) and Path(name).suffix.lower() == ".csv"
+    ]
+    if not candidates:
+        return _status("prepared_dataset_zip", "fail", str(path), f"No {MANIFEST_PREFIX}*.csv file found in zip.")
+    candidates = sorted(candidates, key=lambda item: (FINAL_MANIFEST_NAME not in Path(item).name, item))
+    selected = candidates[0]
+    return _status(
+        "prepared_dataset_zip",
+        "pass",
+        str(path),
+        f"Verified final zip name and readability; selected_manifest={selected}; manifest_candidates={len(candidates)}; members={len(names)}",
+    )
 
 
 def _location_leakage_check(manifest: Path | None) -> dict[str, str]:
@@ -190,19 +220,19 @@ def _formal_open_checks() -> list[dict[str, str]]:
         _status(
             "dofa_pooling_ablation",
             "awaiting_colab_run",
-            "docs/experiments/fmow_step3_scientific_findings.md",
-            "Current completed run uses flattened forward_features. CLS/mean pooling are not exposed as formal completed outputs.",
+            "scripts/run_fmow_dofa_pooling_ablation_colab.py",
+            "Runner compares flatten vs mean_tokens. CLS remains unavailable unless a real adapter output exposes it.",
         ),
         _status(
             "tiny_overfit",
             "awaiting_colab_run",
-            "",
+            "scripts/run_fmow_tiny_overfit_sanity_colab.py",
             "Diagnostic only. No local data run was performed and no formal model result should depend on it.",
         ),
         _status(
             "random_split_sanity",
             "awaiting_colab_run",
-            "",
+            "scripts/run_fmow_random_split_sanity_colab.py",
             "Diagnostic only. Do not present random-split fMoW as a main result.",
         ),
     ]
@@ -243,7 +273,7 @@ def main() -> int:
     args = parser.parse_args()
 
     checks: list[dict[str, str]] = [
-        _check_zip(args.prepared_dataset_zip, FINAL_DATASET_ZIP_NAME, "prepared_dataset_zip", (FINAL_MANIFEST_NAME,)),
+        _check_prepared_dataset_zip(args.prepared_dataset_zip),
         _check_zip(args.resnet_artifact_zip, FINAL_RESNET_ZIP_NAME, "resnet_artifact_zip", ("run_metadata.json", "audit_table.csv")),
         _check_zip(args.dofa_artifact_zip, FINAL_DOFA_ZIP_NAME, "dofa_artifact_zip", ("run_metadata.json", "audit_table.csv")),
         _check_zip(args.comparison_artifact_zip, FINAL_COMPARISON_ZIP_NAME, "comparison_artifact_zip", ("comparison_summary.csv",)),

@@ -46,6 +46,7 @@ class DOFAAdapter(ModelAdapter):
         expected_bands: int | None = None,
         image_size: int | None = None,
         embedding_layer: str = "forward_features",
+        embedding_pooling: str = "flatten",
         normalization_mean: Sequence[float] | None = None,
         normalization_std: Sequence[float] | None = None,
         input_scale: float | None = None,
@@ -65,6 +66,7 @@ class DOFAAdapter(ModelAdapter):
         self.expected_bands = expected_bands
         self.image_size = image_size
         self.embedding_layer = embedding_layer
+        self.embedding_pooling = embedding_pooling
         self.normalization_mean = list(normalization_mean) if normalization_mean is not None else None
         self.normalization_std = list(normalization_std) if normalization_std is not None else None
         self.input_scale = float(input_scale) if input_scale not in (None, "", 0) else None
@@ -110,6 +112,7 @@ class DOFAAdapter(ModelAdapter):
             expected_bands=merged.get("expected_bands"),
             image_size=merged.get("image_size"),
             embedding_layer=str(merged.get("embedding_layer", "forward_features")),
+            embedding_pooling=str(merged.get("embedding_pooling", "flatten")),
             normalization_mean=merged.get("normalization_mean"),
             normalization_std=merged.get("normalization_std"),
             input_scale=merged.get("input_scale"),
@@ -158,6 +161,8 @@ class DOFAAdapter(ModelAdapter):
             raise DOFAConfigurationError(f"Configured DOFA checkpoint_path does not exist: {self.checkpoint_path}")
         if self.embedding_layer not in {"forward_features", "forward"}:
             raise DOFAConfigurationError("embedding_layer must be 'forward_features' or 'forward'.")
+        if self.embedding_pooling not in {"flatten", "mean_tokens"}:
+            raise DOFAConfigurationError("embedding_pooling must be 'flatten' or 'mean_tokens'.")
 
     def _load_from_torch_hub(self) -> Any:
         try:
@@ -351,7 +356,15 @@ class DOFAAdapter(ModelAdapter):
             output = output.detach().cpu().numpy()
         embeddings = np.asarray(output, dtype=np.float32)
         if embeddings.ndim > 2:
-            embeddings = embeddings.reshape(embeddings.shape[0], -1)
+            if self.embedding_pooling == "mean_tokens":
+                if embeddings.ndim == 3:
+                    embeddings = embeddings.mean(axis=1)
+                elif embeddings.ndim == 4:
+                    embeddings = embeddings.mean(axis=(2, 3))
+                else:
+                    embeddings = embeddings.reshape(embeddings.shape[0], -1)
+            else:
+                embeddings = embeddings.reshape(embeddings.shape[0], -1)
         return embeddings
 
     def get_supported_modalities(self) -> Sequence[str]:

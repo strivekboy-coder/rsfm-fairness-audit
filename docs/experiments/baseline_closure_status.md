@@ -95,9 +95,9 @@ result, or a causal geography fairness claim.
 | band profile and wavelength list | done as code/protocol check | `src/rsfm_fairness_audit/band_profiles.py`; `docs/results/baseline_closure_sanity/baseline_sanity_report.md` | Expected 13-band profile is recorded. Actual TIFF channel order should still be cited from final raster inspection artifacts in paper text. |
 | final artifact verification | awaiting_colab_run | `docs/results/baseline_closure_sanity/baseline_sanity_report.md` | The sanity runner accepts explicit prepared/resnet/dofa/comparison/final-bundle zip paths so Colab can verify it is reading final artifacts. |
 | per-band statistics / input range | partial | `docs/datasets/fmow_sentinel.md` names `band_statistics_sample.csv`; final artifact path should be cited from preflight zip | The workflow supports this. The final paper should cite the exact archived stats file if used. |
-| DOFA pooling ablation | awaiting_colab_run | `docs/results/baseline_closure_sanity/baseline_sanity_report.md` | Current adapter flattens multi-dimensional `forward_features`; CLS/mean pooling are not exposed as formal outputs in the current completed run. |
-| tiny overfit test | awaiting_colab_run | `docs/results/baseline_closure_sanity/baseline_sanity_report.md` | Diagnostic only; do not present as a main result. |
-| random split sanity | awaiting_colab_run | `docs/results/baseline_closure_sanity/baseline_sanity_report.md` | Diagnostic only; do not present as a main result. |
+| DOFA pooling ablation | awaiting_colab_run | `scripts/run_fmow_dofa_pooling_ablation_colab.py` | Compares formal `flatten` representation with `mean_tokens`; CLS is recorded as unavailable unless a real adapter output exposes it. Diagnostic only. |
+| tiny overfit test | awaiting_colab_run | `scripts/run_fmow_tiny_overfit_sanity_colab.py` | Verifies training loop / label mapping / loss on a repeated tiny subset. Diagnostic only; do not present as a main result. |
+| random split sanity | awaiting_colab_run | `scripts/run_fmow_random_split_sanity_colab.py` | Runs a random sample-level split contrast using ResNet-50 + BWER. Diagnostic only; not the formal deployment protocol. |
 
 ## Claims Guardrails
 

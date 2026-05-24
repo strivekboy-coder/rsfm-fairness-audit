@@ -32,6 +32,7 @@ ALLOWED_SPLIT_PROTOCOLS = {
     "official_split",
     "location_split",
     "location_disjoint",
+    "random_split_sanity",
     "region_split",
     "time_split",
     "custom_stratified_subset",

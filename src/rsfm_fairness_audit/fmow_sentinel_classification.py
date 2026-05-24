@@ -48,6 +48,7 @@ class FmowClassificationConfig:
     probe_learning_rate: float = 1e-2
     embedding_cache_dir: Path | None = None
     dofa_input_scale: float | None = None
+    dofa_embedding_pooling: str | None = None
     train_split: str = "train"
     eval_split: str = "val"
     max_samples: int | None = None
@@ -354,6 +355,7 @@ def _dofa_cache_key(
         "band_profile": config.band_profile,
         "checkpoint_source": _adapter_source(adapter),
         "embedding_layer": adapter.embedding_layer,
+        "embedding_pooling": adapter.embedding_pooling,
         "input_scale": adapter.input_scale,
         "row_count": len(rows),
         "row_hash": _row_hash(rows),
@@ -405,6 +407,7 @@ def _cached_dofa_embeddings(
         "band_profile": config.band_profile,
         "checkpoint_source": _adapter_source(adapter),
         "embedding_layer": adapter.embedding_layer,
+        "embedding_pooling": adapter.embedding_pooling,
         "input_scale": adapter.input_scale,
         "row_count_requested": len(rows),
         "row_count_cached": len(ok_rows),
@@ -1000,6 +1003,8 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
             adapter.allow_torch_hub_download = True
         if config.dofa_input_scale is not None:
             adapter.input_scale = float(config.dofa_input_scale)
+        if config.dofa_embedding_pooling is not None:
+            adapter.embedding_pooling = str(config.dofa_embedding_pooling)
         adapter.load_model()
         train_x, train_y, train_ok, warnings_train, train_cache, train_cache_meta = _cached_dofa_embeddings(
             train_rows, config.train_split, config, adapter, output
@@ -1034,6 +1039,7 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
             "eval_embedding_cache_path": str(eval_cache),
             "train_embedding_cache_key": train_cache_meta.get("cache_key", ""),
             "eval_embedding_cache_key": eval_cache_meta.get("cache_key", ""),
+            "embedding_pooling": adapter.embedding_pooling,
             "embedding_dim": train_cache_meta.get("embedding_dim", ""),
             "class_mapping": probe_metadata.get("class_to_index", {}),
             **{key: value for key, value in probe_metadata.items() if key not in {"class_to_index"}},
@@ -1129,6 +1135,7 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
             "band_order": metadata.get("band_order", []),
             "wavelength_list": metadata.get("wavelength_list", []),
             "input_scale": metadata.get("input_scale", ""),
+            "embedding_pooling": metadata.get("embedding_pooling", ""),
             **dofa_debug,
             "warnings": warnings[:100],
         }

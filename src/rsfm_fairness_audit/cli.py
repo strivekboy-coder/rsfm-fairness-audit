@@ -164,6 +164,7 @@ def build_parser() -> argparse.ArgumentParser:
     fmow_cls.add_argument("--probe-learning-rate", type=float, default=1e-2)
     fmow_cls.add_argument("--embedding-cache-dir", type=Path, help="Optional cache directory for frozen encoder embeddings.")
     fmow_cls.add_argument("--dofa-input-scale", type=float, help="Override DOFA input_scale from config, e.g. 10000 for raw fMoW-Sentinel reflectance-like values.")
+    fmow_cls.add_argument("--dofa-embedding-pooling", choices=["flatten", "mean_tokens"], help="DOFA feature pooling for ablation runs. Formal completed run used flatten.")
     fmow_cls.add_argument("--train-split", default="train")
     fmow_cls.add_argument("--eval-split", default="val")
     fmow_cls.add_argument("--max-samples", type=int, help="Backward-compatible per-split prototype cap. Omit or pass 0 for all rows.")
@@ -178,7 +179,7 @@ def build_parser() -> argparse.ArgumentParser:
     fmow_cls.add_argument("--norm-stats", type=Path, help="Optional train-only norm_stats.json to reuse for ResNet-50.")
     fmow_cls.add_argument("--amp", default="true", help="true/false; enable CUDA AMP for ResNet-50.")
     fmow_cls.add_argument("--seed", type=int, default=42)
-    fmow_cls.add_argument("--split-protocol", choices=["official_split", "location_split", "location_disjoint", "region_split", "time_split", "custom_stratified_subset"], default="official_split")
+    fmow_cls.add_argument("--split-protocol", choices=["official_split", "location_split", "location_disjoint", "random_split_sanity", "region_split", "time_split", "custom_stratified_subset"], default="official_split")
     fmow_cls.add_argument("--eval-scope", default="val")
     fmow_cls.add_argument("--band-profile", default="sentinel2_13band_fmow")
     fmow_cls.add_argument("--allow-torch-hub-download", action="store_true", help="Explicitly allow DOFA torch.hub download for Colab runs.")
@@ -479,6 +480,7 @@ def main() -> None:
                 probe_learning_rate=args.probe_learning_rate,
                 embedding_cache_dir=args.embedding_cache_dir,
                 dofa_input_scale=args.dofa_input_scale,
+                dofa_embedding_pooling=args.dofa_embedding_pooling,
                 train_split=args.train_split,
                 eval_split=args.eval_split,
                 max_samples=max_samples,

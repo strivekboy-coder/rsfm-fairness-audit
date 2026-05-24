@@ -803,6 +803,48 @@ python scripts/run_baseline_closure_sanity.py \
   --output-dir /content/outputs/baseline_closure_sanity
 ```
 
+Additional baseline-closure sanity runners are Colab diagnostics only. They do
+not replace the formal location-disjoint ResNet/DOFA artifacts.
+
+Random sample-level split contrast:
+
+```bash
+python scripts/run_fmow_random_split_sanity_colab.py \
+  --prepared-dataset-zip /content/drive/MyDrive/rsfm_fairness_audit/prepared_zips/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip \
+  --extract-dir /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged \
+  --output-dir /content/outputs/baseline_closure_sanity/random_split_resnet50 \
+  --location-disjoint-resnet-zip /content/drive/MyDrive/rsfm_fairness_audit/outputs/final_step3/resnet50_30k_location_disjoint_patched_metadata.zip \
+  --epochs 8 \
+  --batch-size 32 \
+  --seed 42
+```
+
+Tiny overfit training-loop sanity:
+
+```bash
+python scripts/run_fmow_tiny_overfit_sanity_colab.py \
+  --prepared-dataset-zip /content/drive/MyDrive/rsfm_fairness_audit/prepared_zips/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip \
+  --extract-dir /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged \
+  --output-dir /content/outputs/baseline_closure_sanity/tiny_overfit_resnet50 \
+  --classes 4 \
+  --samples-per-class 8 \
+  --epochs 40 \
+  --seed 42
+```
+
+DOFA pooling ablation:
+
+```bash
+python scripts/run_fmow_dofa_pooling_ablation_colab.py \
+  --prepared-dataset-zip /content/drive/MyDrive/rsfm_fairness_audit/prepared_zips/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip \
+  --extract-dir /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged \
+  --output-dir /content/outputs/baseline_closure_sanity/dofa_pooling_ablation \
+  --model-config configs/models/dofa_fmow_sentinel.yaml \
+  --probe-epochs 200 \
+  --batch-size 32 \
+  --seed 42
+```
+
 ## fMoW-Sentinel Step 3 Pitfalls
 
 - A clean subset archive is not automatically self-contained after augmentation.

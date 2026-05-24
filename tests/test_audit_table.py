@@ -65,6 +65,24 @@ def test_random_chip_split_is_valid_split_protocol() -> None:
     )
 
 
+def test_random_split_sanity_is_valid_split_protocol() -> None:
+    validate_audit_table(
+        [
+            {
+                "dataset": "fmow_sentinel",
+                "model": "resnet50_fmow_sentinel",
+                "task": "scene_classification",
+                "split": "val",
+                "unit_id": "sample-1",
+                "score": 1.0,
+                "risk": 0.0,
+                "adaptation_protocol": "supervised_baseline",
+                "split_protocol": "random_split_sanity",
+            }
+        ]
+    )
+
+
 def test_diagnostic_spectral_rule_is_valid_adaptation_protocol() -> None:
     validate_audit_table(
         [
