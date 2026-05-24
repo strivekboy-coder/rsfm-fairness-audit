@@ -20,6 +20,7 @@ Archived files:
 - `fmow_random_split_resnet50_sanity.zip`
 - `fmow_tiny_overfit_resnet50_sanity.zip`
 - `fmow_dofa_pooling_ablation_sanity.zip`
+- `fmow_dofa_random_split_sanity.zip`
 - `fmow_baseline_closure_sanity_bundle.zip`
 
 Only the 16-epoch random-split result should be treated as the final saved
@@ -30,8 +31,8 @@ Completed diagnostic checks:
 
 - random split sanity:
   `fmow_random_split_resnet50_sanity.zip`
-- optional DOFA random split sanity runner:
-  `scripts/run_fmow_dofa_random_split_sanity_colab.py`
+- DOFA random split sanity:
+  `fmow_dofa_random_split_sanity.zip`
 - tiny overfit sanity:
   `fmow_tiny_overfit_resnet50_sanity.zip`
 - DOFA pooling ablation and cache inspection:
@@ -51,9 +52,9 @@ Suggested Colab run order:
 5. If flatten and mean-token metrics are identical, run
    `scripts/inspect_fmow_dofa_pooling_ablation.py` to compare cached embedding
    shapes, hashes, and max absolute differences without rerunning DOFA.
-6. Optional: run `scripts/run_fmow_dofa_random_split_sanity_colab.py` to reuse
-   the final ResNet 16-epoch `random_split_manifest.csv` for scaled DOFA.
+6. Completed: `scripts/run_fmow_dofa_random_split_sanity_colab.py` reused the
+   final ResNet 16-epoch `random_split_manifest.csv` for scaled DOFA.
 
 These checks are diagnostic closure evidence only. The random-split result is
-not the formal deployment protocol, and the DOFA pooling ablation is not a
+not the formal deployment protocol. The DOFA pooling ablation is not a
 performance finding.

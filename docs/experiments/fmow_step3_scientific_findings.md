@@ -170,6 +170,7 @@ Archived files:
 - `fmow_random_split_resnet50_sanity.zip`.
 - `fmow_tiny_overfit_resnet50_sanity.zip`.
 - `fmow_dofa_pooling_ablation_sanity.zip`.
+- `fmow_dofa_random_split_sanity.zip`.
 - `fmow_baseline_closure_sanity_bundle.zip`.
 
 Only the 16-epoch random-split result is the final saved random-split sanity
@@ -255,6 +256,40 @@ plumbing can overfit a tiny subset. This reduces concern that low
 location-disjoint performance is caused by broken labels or broken training
 logic.
 
+### DOFA Random Split Sanity
+
+Path:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_dofa_random_split_sanity.zip
+```
+
+Protocol:
+
+- Dataset: same `v3_merged` clean 30k subset.
+- Split: same `random_split_manifest.csv` as the final ResNet-50 16-epoch
+  random split sanity run.
+- Model: DOFA ViT-base frozen encoder plus linear probe.
+- `input_scale`: 10000.
+- Probe epochs: 200.
+- Diagnostic only, not the formal deployment protocol.
+
+Metrics:
+
+- Accuracy: 0.38433333333333336.
+- Balanced accuracy: 0.3845599647290616.
+- Macro-F1: 0.3798401872360772.
+
+BWER:
+
+- Country Raw-BWER: approximately 0.2051891816.
+- Country | class standardised BWER: approximately 0.1769901752.
+
+The DOFA random split result records that scaled DOFA also improves
+substantially under random sample-level splitting compared with the formal
+location-disjoint result. It remains a diagnostic sanity contrast and should
+not be used as a formal deployment benchmark.
+
 ### DOFA Pooling Ablation Sanity
 
 Path:
@@ -306,6 +341,7 @@ The main baseline closure sanity checks are now completed:
 
 - Artifact sanity verification passed.
 - 30k random split sanity completed.
+- DOFA random split sanity completed.
 - Tiny overfit sanity completed.
 - DOFA pooling inspection completed.
 

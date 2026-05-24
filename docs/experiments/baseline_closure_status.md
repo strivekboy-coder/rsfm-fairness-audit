@@ -20,9 +20,9 @@ The baseline closure package is closed for the current paper foundation:
 The remaining items are not blockers for the current claims, but they must
 remain visible as limitations: DOFA fine-tuning recipe is unresolved, and final
 per-band raster statistics should be referenced from the archived preflight
-outputs when writing the paper. The fMoW random-split, tiny-overfit, and DOFA
-pooling sanity checks are now completed and archived as diagnostic-only
-baseline-closure evidence.
+outputs when writing the paper. The fMoW random-split, tiny-overfit, DOFA
+pooling, and DOFA random-split sanity checks are now completed and archived as
+diagnostic-only baseline-closure evidence.
 
 ## Sen1Floods11 Closure
 
@@ -83,7 +83,7 @@ result, or a causal geography fairness claim.
 | formal fMoW scaling | done | `configs/models/dofa_fmow_sentinel.yaml`; `src/rsfm_fairness_audit/adapters/dofa.py` | `input_scale=10000` applies `x = x / input_scale` before DOFA normalization and embedding extraction. |
 | unscaled DOFA status | done | `docs/experiments/fmow_step3_scientific_findings.md` | Unscaled DOFA is invalid/debug/protocol artifact, not a formal result. |
 | band order vs wavelength | partial but documented | `src/rsfm_fairness_audit/band_profiles.py`; `docs/experiments/fmow_step3_scientific_findings.md` | Band order itself is not critical; wavelength-band correspondence is critical. Current profile records the expected 13-band correspondence. |
-| embedding cache key | done | `src/rsfm_fairness_audit/fmow_sentinel_classification.py` | Cache key includes `input_scale`, `image_size`, `band_profile`, checkpoint/source, embedding layer, row hash, and manifest path. |
+| embedding cache key | done | `src/rsfm_fairness_audit/fmow_sentinel_classification.py` | Cache key includes `input_scale`, `image_size`, `band_profile`, checkpoint/source, embedding layer, and row hash. It intentionally does not depend on the random split label itself. |
 | pooling/fine-tuning recipe | partial | `docs/experiments/fmow_step3_scientific_findings.md`; `docs/results/baseline_closure_sanity/README.md` | Pooling ablation was completed for the current adapter and found flatten/mean_tokens identical because cached embeddings are already 2D pooled outputs. CLS remains unavailable. Fine-tuning remains outside closure. |
 
 ## Baseline Closure Sanity Checks
@@ -97,6 +97,7 @@ result, or a causal geography fairness claim.
 | final artifact verification | done | `docs/results/baseline_closure_sanity/baseline_sanity_report.md`; `outputs/baseline_closure_sanity/fmow_baseline_closure_sanity_bundle.zip` | Baseline closure sanity outputs were completed and archived under `outputs/baseline_closure_sanity/`. |
 | per-band statistics / input range | partial | `docs/datasets/fmow_sentinel.md` names `band_statistics_sample.csv`; final artifact path should be cited from preflight zip | The workflow supports this. The final paper should cite the exact archived stats file if used. |
 | DOFA pooling ablation | done | `outputs/baseline_closure_sanity/fmow_dofa_pooling_ablation_sanity.zip`; `docs/experiments/fmow_step3_scientific_findings.md` | `flatten` and `mean_tokens` produced identical embeddings/results under the current adapter. CLS is unavailable. Diagnostic only. |
+| DOFA random split sanity | done | `outputs/baseline_closure_sanity/fmow_dofa_random_split_sanity.zip`; `docs/experiments/scientific_findings.md` | Reuses the final ResNet 16-epoch random split manifest. Scaled DOFA random-split accuracy is 0.3843. Diagnostic contrast only; not the formal deployment protocol. |
 | tiny overfit test | done | `outputs/baseline_closure_sanity/fmow_tiny_overfit_resnet50_sanity.zip`; `docs/experiments/fmow_step3_scientific_findings.md` | ResNet training loop, label mapping, and loss can overfit a tiny repeated subset. Diagnostic only; not a main result. |
 | random split sanity | done | `outputs/baseline_closure_sanity/fmow_random_split_resnet50_sanity.zip`; `docs/experiments/fmow_step3_scientific_findings.md` | Final saved random-split sanity output is the 16-epoch run only. Diagnostic contrast only; not the formal deployment protocol. |
 
@@ -106,6 +107,7 @@ Completed baseline-closure sanity archives:
 /content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_random_split_resnet50_sanity.zip
 /content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_tiny_overfit_resnet50_sanity.zip
 /content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_dofa_pooling_ablation_sanity.zip
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_dofa_random_split_sanity.zip
 /content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_baseline_closure_sanity_bundle.zip
 ```
 

@@ -473,3 +473,94 @@ Formal-analysis notes:
   results.
 - Do not claim these are full fMoW-Sentinel benchmark results; they are results
   on the support-aware 30k location-disjoint audit subset.
+
+## fMoW-Sentinel Baseline Closure Sanity Results
+
+Recorded: 2026-05-24.
+
+Baseline closure sanity runs are completed and archived under:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/
+```
+
+Final archived files:
+
+- `fmow_random_split_resnet50_sanity.zip`.
+- `fmow_tiny_overfit_resnet50_sanity.zip`.
+- `fmow_dofa_pooling_ablation_sanity.zip`.
+- `fmow_dofa_random_split_sanity.zip`.
+- `fmow_baseline_closure_sanity_bundle.zip`.
+
+Important record rule: the ResNet-50 random split final version is the
+16-epoch result only. The earlier 8-epoch result is not the final random-split
+sanity output and should not be documented as final.
+
+ResNet-50 random split sanity:
+
+- Dataset: `fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip`.
+- Split protocol: `random_split_sanity`.
+- Model: ResNet-50 13-band from scratch.
+- Train/eval rows: 21000 / 9000.
+- Epochs: 16.
+- Checkpoint selection: best validation accuracy.
+- Best epoch: 14 / 16.
+- Accuracy: 0.7118888888888889.
+- Balanced accuracy: 0.6672910350320261.
+- Macro-F1: 0.678352105923704.
+- Top-5 accuracy: 0.8354444444444444.
+- Country Raw-BWER: approximately 0.2517475898.
+- Country | class standardised BWER: approximately 0.2577851581.
+
+DOFA scaled10000 random split sanity:
+
+- Dataset: same `v3_merged` clean 30k subset.
+- Split: same `random_split_manifest.csv` as the final ResNet-50 16-epoch
+  random split sanity run.
+- Model: DOFA ViT-base frozen encoder plus linear probe.
+- `input_scale`: 10000.
+- Probe epochs: 200.
+- Accuracy: 0.38433333333333336.
+- Balanced accuracy: 0.3845599647290616.
+- Macro-F1: 0.3798401872360772.
+- Country Raw-BWER: approximately 0.2051891816.
+- Country | class standardised BWER: approximately 0.1769901752.
+
+Tiny overfit sanity:
+
+- Classes: 4.
+- Samples per class: 8.
+- Epochs: 40.
+- Final accuracy: 0.96875.
+- Final macro-F1: 0.9686274509803923.
+
+The tiny overfit result records that the ResNet training loop, label mapping,
+and loss plumbing are not broken.
+
+DOFA pooling ablation sanity:
+
+- `flatten` and `mean_tokens` are identical under the current adapter.
+- Accuracy: 0.17768595041322313.
+- Raw-BWER(country): 0.16141538857738702.
+- Standardised-BWER(country | class): 0.1269780950367737.
+- Cache keys differ, but embeddings are identical.
+- Diagnosis: the current DOFA adapter exposes a pooled 768-dimensional
+  representation, so there is no token dimension available for `mean_tokens` to
+  change.
+- CLS is unavailable and no CLS result is fabricated.
+
+Joint interpretation:
+
+- Random split substantially increases aggregate accuracy for both ResNet-50
+  and scaled DOFA compared with the formal location-disjoint results.
+- ResNet-50 increases from about 0.20 location-disjoint accuracy to 0.7119
+  random-split accuracy.
+- Scaled DOFA increases from about 0.1777 location-disjoint accuracy to 0.3843
+  random-split accuracy.
+- Therefore, `location_disjoint` is a meaningful and harder cross-location
+  generalization protocol, not a broken experiment.
+- Geography BWER remains non-trivial under random split, so improved aggregate
+  performance does not automatically eliminate geography tail risk.
+- This supports protocol sensitivity and model-ranking divergence. It does not
+  support a claim that DOFA is universally fairer, and it does not make random
+  split a formal deployment benchmark.

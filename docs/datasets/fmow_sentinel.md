@@ -862,6 +862,37 @@ python scripts/run_fmow_dofa_random_split_sanity_colab.py \
   --seed 42
 ```
 
+The completed DOFA random split sanity archive is:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_dofa_random_split_sanity.zip
+```
+
+Patch-size diagnostics. This is a dataset/protocol interpretability diagnostic
+only; it does not train models, run inference, or change the baseline closure
+results. It records the original TIFF width/height/area before model resizing:
+
+```bash
+python scripts/analyze_fmow_patch_size_diagnostics.py \
+  --manifest /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/fmow_sentinel_clean_subset_30k_v2/final_clean_subset_manifest_30k_location_disjoint_v3_merged.csv \
+  --data-root /content/data/fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged/fmow_sentinel_clean_subset_30k_v2 \
+  --output-dir /content/outputs/baseline_closure_sanity/fmow_patch_size_diagnostics \
+  --progress-every 1000
+```
+
+Expected outputs:
+
+- `patch_size_per_sample.csv`.
+- `patch_size_by_category.csv`.
+- `patch_size_by_split.csv`.
+- `patch_size_diagnostic_report.md`.
+- optional `figures/` when matplotlib is available.
+
+The report should be used to explain that fMoW-Sentinel can have variable patch
+extent even under consistent Sentinel-2 spatial resolution. Resizing normalizes
+model input shape but does not recover missing context for originally small
+patches.
+
 ## fMoW-Sentinel Step 3 Pitfalls
 
 - A clean subset archive is not automatically self-contained after augmentation.

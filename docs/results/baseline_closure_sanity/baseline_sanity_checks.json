@@ -73,6 +73,12 @@
       "note": "Flatten and mean_tokens produced identical results because cached embeddings are already 2D pooled outputs. CLS is unavailable. Diagnostic only."
     },
     {
+      "check": "dofa_random_split_sanity",
+      "status": "done",
+      "evidence": "outputs/baseline_closure_sanity/fmow_dofa_random_split_sanity.zip",
+      "note": "Reused the final ResNet 16-epoch random split manifest. Accuracy 0.38433333333333336, country Raw-BWER about 0.2051891816, country class-standardised BWER about 0.1769901752. Diagnostic only."
+    },
+    {
       "check": "tiny_overfit",
       "status": "done",
       "evidence": "outputs/baseline_closure_sanity/fmow_tiny_overfit_resnet50_sanity.zip",
