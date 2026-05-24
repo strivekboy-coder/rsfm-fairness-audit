@@ -17,6 +17,8 @@ Colab outputs are generated and copied back into the evidence package:
   `scripts/run_fmow_tiny_overfit_sanity_colab.py`
 - DOFA pooling ablation:
   `scripts/run_fmow_dofa_pooling_ablation_colab.py`
+- DOFA pooling ablation cache inspection:
+  `scripts/inspect_fmow_dofa_pooling_ablation.py`
 
 The artifact checker should be rerun in Colab with explicit final paths so the
 report records the actual files it read. The final prepared dataset zip may
@@ -29,6 +31,9 @@ Suggested Colab run order:
 2. Run `scripts/run_fmow_random_split_sanity_colab.py`.
 3. Run `scripts/run_fmow_tiny_overfit_sanity_colab.py`.
 4. Run `scripts/run_fmow_dofa_pooling_ablation_colab.py`.
+5. If flatten and mean-token metrics are identical, run
+   `scripts/inspect_fmow_dofa_pooling_ablation.py` to compare cached embedding
+   shapes, hashes, and max absolute differences without rerunning DOFA.
 
 Each runner writes its own report and metadata JSON under the selected
 `/content/outputs/baseline_closure_sanity/...` directory. Copy those outputs
