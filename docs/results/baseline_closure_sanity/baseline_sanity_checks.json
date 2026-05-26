@@ -79,6 +79,12 @@
       "note": "Reused the final ResNet 16-epoch random split manifest. Accuracy 0.38433333333333336, country Raw-BWER about 0.2051891816, country class-standardised BWER about 0.1769901752. Diagnostic only."
     },
     {
+      "check": "patch_size_diagnostics",
+      "status": "done",
+      "evidence": "outputs/baseline_closure_sanity/fmow_patch_size_diagnostics.zip",
+      "note": "30,000 readable rasters, 0 read failures. Patch extent varies strongly: area min/median/max 918/2244/253005 pixels. Dataset/protocol interpretability only."
+    },
+    {
       "check": "tiny_overfit",
       "status": "done",
       "evidence": "outputs/baseline_closure_sanity/fmow_tiny_overfit_resnet50_sanity.zip",

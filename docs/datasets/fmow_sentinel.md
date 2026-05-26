@@ -893,6 +893,33 @@ extent even under consistent Sentinel-2 spatial resolution. Resizing normalizes
 model input shape but does not recover missing context for originally small
 patches.
 
+Completed archive:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_patch_size_diagnostics.zip
+```
+
+Recorded results:
+
+- readable rasters: 30000.
+- read failures: 0.
+- width min / median / max: 50 / 51 / 502.
+- height min / median / max: 18 / 44 / 505.
+- area min / median / max: 918 / 2244 / 253005.
+
+Small-patch categories by median area include `smokestack` (1683),
+`waste_disposal` (1785), `water_treatment_facility` (1785), `interchange`
+(1836), `storage_tank` (1836), `debris_or_rubble` (1887), and `solar_farm`
+(1938).
+
+Large-patch categories by median area include `port` (240480), `airport`
+(239979), `shipyard` (200901), and `nuclear_powerplant` (181863).
+
+Interpretation guardrail: this supports dataset/protocol interpretability. It
+helps explain class-level visibility differences in RGB previews and model
+inputs, but it is not a fairness main finding and does not change any formal
+ResNet/DOFA result.
+
 ## fMoW-Sentinel Step 3 Pitfalls
 
 - A clean subset archive is not automatically self-contained after augmentation.

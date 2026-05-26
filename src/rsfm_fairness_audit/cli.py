@@ -33,6 +33,11 @@ from rsfm_fairness_audit.pipeline import (
     run_real_pipeline,
 )
 from rsfm_fairness_audit.preflight import checks_to_json, run_real_preflight
+from rsfm_fairness_audit.reben_sensor_audit import (
+    compute_selective_risk,
+    read_label_expanded_predictions,
+    run_reben_multilabel_bwer,
+)
 from rsfm_fairness_audit.segmentation import run_segmentation_smoke
 from rsfm_fairness_audit.spectral_baseline import SpectralBaselineConfig, run_spectral_sen1floods11
 from rsfm_fairness_audit.slice_support import evaluate_slice_support_from_files
@@ -211,6 +216,16 @@ def build_parser() -> argparse.ArgumentParser:
     fmow_package.add_argument("--run-dir", type=Path, required=True)
     fmow_package.add_argument("--output-zip", type=Path)
     fmow_package.add_argument("--include-rasters", action="store_true", help="Include raster/image files. Off by default.")
+
+    reben_bwer = subparsers.add_parser("run-reben-multilabel-bwer", help="Run post-hoc multi-label BWER for BigEarthNet v2.0 / reBEN label-expanded predictions.")
+    reben_bwer.add_argument("--predictions", type=Path, required=True, help="Label-expanded predictions/audit table with one row per sample x class.")
+    reben_bwer.add_argument("--output-dir", type=Path, required=True)
+    reben_bwer.add_argument("--model-name", required=True)
+    reben_bwer.add_argument("--split", default="validation")
+    reben_bwer.add_argument("--risk-column", choices=["risk_bce", "risk_binary_error"], default="risk_bce")
+    reben_bwer.add_argument("--alpha", type=float, default=0.1)
+    reben_bwer.add_argument("--min-support", type=int, default=20)
+    reben_bwer.add_argument("--selective-risk", action="store_true")
 
     seg = subparsers.add_parser("run-segmentation-real", help="Run native Sen1Floods11 segmentation metrics, preflight, and BWER audit.")
     seg.add_argument("--dataset", choices=["sen1floods11"], required=True)
@@ -559,6 +574,26 @@ def main() -> None:
             )
         )
         print("fMoW-Sentinel Step 3 handoff package complete.")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "run-reben-multilabel-bwer":
+        rows = read_label_expanded_predictions(args.predictions)
+        artifacts = run_reben_multilabel_bwer(
+            rows,
+            args.output_dir,
+            model_name=args.model_name,
+            split=args.split,
+            risk_column=args.risk_column,
+            alpha=args.alpha,
+            min_support=args.min_support,
+        )
+        if args.selective_risk:
+            from rsfm_fairness_audit.io import write_csv
+
+            selective_path = args.output_dir / "selective_risk_summary.csv"
+            write_csv(selective_path, compute_selective_risk(rows, risk_column=args.risk_column))
+            artifacts["selective_risk_summary"] = selective_path
+        print("reBEN multi-label BWER complete.")
         for name, path in artifacts.items():
             print(f"{name}: {path}")
     elif args.command == "run-segmentation-real":

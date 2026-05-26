@@ -490,6 +490,7 @@ Final archived files:
 - `fmow_tiny_overfit_resnet50_sanity.zip`.
 - `fmow_dofa_pooling_ablation_sanity.zip`.
 - `fmow_dofa_random_split_sanity.zip`.
+- `fmow_patch_size_diagnostics.zip`.
 - `fmow_baseline_closure_sanity_bundle.zip`.
 
 Important record rule: the ResNet-50 random split final version is the
@@ -497,6 +498,8 @@ Important record rule: the ResNet-50 random split final version is the
 sanity output and should not be documented as final.
 
 ResNet-50 random split sanity:
+
+Recorded: 2026-05-24.
 
 - Dataset: `fmow_sentinel_clean_subset_30k_location_disjoint_v3_merged.zip`.
 - Split protocol: `random_split_sanity`.
@@ -514,6 +517,8 @@ ResNet-50 random split sanity:
 
 DOFA scaled10000 random split sanity:
 
+Recorded: 2026-05-24.
+
 - Dataset: same `v3_merged` clean 30k subset.
 - Split: same `random_split_manifest.csv` as the final ResNet-50 16-epoch
   random split sanity run.
@@ -528,6 +533,8 @@ DOFA scaled10000 random split sanity:
 
 Tiny overfit sanity:
 
+Recorded: 2026-05-24.
+
 - Classes: 4.
 - Samples per class: 8.
 - Epochs: 40.
@@ -538,6 +545,8 @@ The tiny overfit result records that the ResNet training loop, label mapping,
 and loss plumbing are not broken.
 
 DOFA pooling ablation sanity:
+
+Recorded: 2026-05-24.
 
 - `flatten` and `mean_tokens` are identical under the current adapter.
 - Accuracy: 0.17768595041322313.
@@ -564,3 +573,27 @@ Joint interpretation:
 - This supports protocol sensitivity and model-ranking divergence. It does not
   support a claim that DOFA is universally fairer, and it does not make random
   split a formal deployment benchmark.
+
+Patch-size dataset/protocol diagnostic:
+
+Recorded: 2026-05-24.
+
+- Archive: `outputs/baseline_closure_sanity/fmow_patch_size_diagnostics.zip`.
+- Readable rasters: 30000.
+- Read failures: 0.
+- Width min / median / max: 50 / 51 / 502.
+- Height min / median / max: 18 / 44 / 505.
+- Area min / median / max: 918 / 2244 / 253005 pixels.
+- Small-patch categories by median area include `smokestack`,
+  `waste_disposal`, `water_treatment_facility`, `interchange`, `storage_tank`,
+  `debris_or_rubble`, and `solar_farm`.
+- Large-patch categories by median area include `port`, `airport`, `shipyard`,
+  and `nuclear_powerplant`.
+
+Interpretation: fMoW-Sentinel has highly variable patch extent even under
+consistent Sentinel-2 spatial resolution. Large-object classes such as airports
+and ports contain much more scene context and can be visually easier in RGB
+previews, while small or functional classes may be difficult for human/GPT RGB
+preview inspection. Resizing normalizes model input shape but does not recover
+missing context. This is dataset/protocol interpretability support, not a
+fairness main finding.

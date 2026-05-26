@@ -96,6 +96,7 @@ result, or a causal geography fairness claim.
 | band profile and wavelength list | done as code/protocol check | `src/rsfm_fairness_audit/band_profiles.py`; `docs/results/baseline_closure_sanity/baseline_sanity_report.md` | Expected 13-band profile is recorded. Actual TIFF channel order should still be cited from final raster inspection artifacts in paper text. |
 | final artifact verification | done | `docs/results/baseline_closure_sanity/baseline_sanity_report.md`; `outputs/baseline_closure_sanity/fmow_baseline_closure_sanity_bundle.zip` | Baseline closure sanity outputs were completed and archived under `outputs/baseline_closure_sanity/`. |
 | per-band statistics / input range | partial | `docs/datasets/fmow_sentinel.md` names `band_statistics_sample.csv`; final artifact path should be cited from preflight zip | The workflow supports this. The final paper should cite the exact archived stats file if used. |
+| patch-size diagnostics | done | `outputs/baseline_closure_sanity/fmow_patch_size_diagnostics.zip`; `docs/datasets/fmow_sentinel.md` | 30,000/30,000 rasters readable; original patch extent varies strongly by category. Dataset/protocol interpretability only, not a fairness main finding. |
 | DOFA pooling ablation | done | `outputs/baseline_closure_sanity/fmow_dofa_pooling_ablation_sanity.zip`; `docs/experiments/fmow_step3_scientific_findings.md` | `flatten` and `mean_tokens` produced identical embeddings/results under the current adapter. CLS is unavailable. Diagnostic only. |
 | DOFA random split sanity | done | `outputs/baseline_closure_sanity/fmow_dofa_random_split_sanity.zip`; `docs/experiments/scientific_findings.md` | Reuses the final ResNet 16-epoch random split manifest. Scaled DOFA random-split accuracy is 0.3843. Diagnostic contrast only; not the formal deployment protocol. |
 | tiny overfit test | done | `outputs/baseline_closure_sanity/fmow_tiny_overfit_resnet50_sanity.zip`; `docs/experiments/fmow_step3_scientific_findings.md` | ResNet training loop, label mapping, and loss can overfit a tiny repeated subset. Diagnostic only; not a main result. |
@@ -108,6 +109,7 @@ Completed baseline-closure sanity archives:
 /content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_tiny_overfit_resnet50_sanity.zip
 /content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_dofa_pooling_ablation_sanity.zip
 /content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_dofa_random_split_sanity.zip
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_patch_size_diagnostics.zip
 /content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_baseline_closure_sanity_bundle.zip
 ```
 

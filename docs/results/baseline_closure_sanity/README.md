@@ -21,6 +21,7 @@ Archived files:
 - `fmow_tiny_overfit_resnet50_sanity.zip`
 - `fmow_dofa_pooling_ablation_sanity.zip`
 - `fmow_dofa_random_split_sanity.zip`
+- `fmow_patch_size_diagnostics.zip`
 - `fmow_baseline_closure_sanity_bundle.zip`
 
 Only the 16-epoch random-split result should be treated as the final saved
@@ -37,6 +38,8 @@ Completed diagnostic checks:
   `fmow_tiny_overfit_resnet50_sanity.zip`
 - DOFA pooling ablation and cache inspection:
   `fmow_dofa_pooling_ablation_sanity.zip`
+- patch-size diagnostics:
+  `fmow_patch_size_diagnostics.zip`
 
 The artifact checker should be rerun in Colab with explicit final paths so the
 report records the actual files it read. The final prepared dataset zip may
@@ -57,4 +60,5 @@ Suggested Colab run order:
 
 These checks are diagnostic closure evidence only. The random-split result is
 not the formal deployment protocol. The DOFA pooling ablation is not a
-performance finding.
+performance finding. Patch-size diagnostics support dataset/protocol
+interpretability and do not change formal model results.

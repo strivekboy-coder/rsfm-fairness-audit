@@ -171,6 +171,7 @@ Archived files:
 - `fmow_tiny_overfit_resnet50_sanity.zip`.
 - `fmow_dofa_pooling_ablation_sanity.zip`.
 - `fmow_dofa_random_split_sanity.zip`.
+- `fmow_patch_size_diagnostics.zip`.
 - `fmow_baseline_closure_sanity_bundle.zip`.
 
 Only the 16-epoch random-split result is the final saved random-split sanity
@@ -178,6 +179,8 @@ record. The earlier 8-epoch random-split run is not the final sanity output and
 should not be documented as such.
 
 ### Random Split ResNet-50 Sanity
+
+Recorded: 2026-05-24.
 
 Path:
 
@@ -226,6 +229,8 @@ formal deployment protocol.
 
 ### Tiny Overfit ResNet-50 Sanity
 
+Recorded: 2026-05-24.
+
 Path:
 
 ```text
@@ -257,6 +262,8 @@ location-disjoint performance is caused by broken labels or broken training
 logic.
 
 ### DOFA Random Split Sanity
+
+Recorded: 2026-05-24.
 
 Path:
 
@@ -291,6 +298,8 @@ location-disjoint result. It remains a diagnostic sanity contrast and should
 not be used as a formal deployment benchmark.
 
 ### DOFA Pooling Ablation Sanity
+
+Recorded: 2026-05-24.
 
 Path:
 
@@ -337,6 +346,8 @@ should not be claimed.
 
 ### Baseline Closure Status
 
+Recorded: 2026-05-24.
+
 The main baseline closure sanity checks are now completed:
 
 - Artifact sanity verification passed.
@@ -344,9 +355,38 @@ The main baseline closure sanity checks are now completed:
 - DOFA random split sanity completed.
 - Tiny overfit sanity completed.
 - DOFA pooling inspection completed.
+- Patch-size diagnostics completed.
 
 Do not document the 8-epoch random split result as final. Do not create
 additional `v1`/`v2`/`v3` names for these sanity outputs. Do not treat random
 split as the formal deployment protocol. Do not treat DOFA pooling ablation as a
 performance improvement or failure. Do not rerun the formal location-disjoint
 ResNet/DOFA main experiments for this record.
+
+### Patch-Size Dataset Diagnostic
+
+Recorded: 2026-05-24.
+
+Path:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/baseline_closure_sanity/fmow_patch_size_diagnostics.zip
+```
+
+Results:
+
+- Readable rasters: 30000.
+- Read failures: 0.
+- Width min / median / max: 50 / 51 / 502.
+- Height min / median / max: 18 / 44 / 505.
+- Area min / median / max: 918 / 2244 / 253005 pixels.
+
+Small-patch categories by median area include `smokestack`,
+`waste_disposal`, `water_treatment_facility`, `interchange`, `storage_tank`,
+`debris_or_rubble`, and `solar_farm`. Large-patch categories by median area
+include `port`, `airport`, `shipyard`, and `nuclear_powerplant`.
+
+This diagnostic supports dataset/protocol interpretability: fMoW-Sentinel patch
+extent varies strongly by category even under consistent Sentinel-2 spatial
+resolution. Resizing normalizes model input shape but does not recover missing
+context for originally small patches. This is not a fairness main finding.
