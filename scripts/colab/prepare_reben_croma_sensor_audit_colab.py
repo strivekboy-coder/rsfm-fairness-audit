@@ -15,6 +15,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from rsfm_fairness_audit.io import ensure_dir  # noqa: E402
+from rsfm_fairness_audit.adapters.reben import check_reben_configilm_dependency_chain  # noqa: E402
 
 
 OFFICIAL_SOURCES = {
@@ -217,6 +218,17 @@ def _write_blocked_report(path: Path, missing: list[str], args: argparse.Namespa
             "This preparation script does not use the unofficial community Hugging Face LMDB mirror as a formal source.",
             "",
             "After placing the LMDB at the requested path, rerun this preparation script before smoke/full execution.",
+            "",
+            "## Dependency Compatibility Command",
+            "",
+            "Run this if the blocked report or preparation JSON shows `fastcore.dispatch`, `bigearthnet_common`, `bigearthnet_patch_interface`, or `configilm` import failures:",
+            "",
+            "```bash",
+            "pip install -U --no-deps configilm bigearthnet_patch_interface bigearthnet_common",
+            "pip install --force-reinstall 'fastcore==1.5.29'",
+            "```",
+            "",
+            "Do not reinstall torch/CUDA for this compatibility fix.",
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -236,6 +248,13 @@ def _write_preparation_report(path: Path, payload: dict[str, object], missing: l
     lines.extend(["", "## Resource Status", ""])
     for item in payload["resources"]:  # type: ignore[index]
         lines.append(f"- {item['name']}: {item['status']} (`{item['path']}`)")
+    dependency = payload.get("dependency_check", {})
+    if isinstance(dependency, dict):
+        lines.extend(["", "## Dependency Import Check", ""])
+        for item in dependency.get("checks", []):
+            lines.append(f"- {item.get('module', '')}: {item.get('status', '')} {item.get('version', '')} {item.get('message', '')}".strip())
+        if dependency.get("status") != "ok":
+            lines.extend(["", "Suggested compatibility command:", "", "```bash", str(dependency.get("install_command", "")), "```"])
     lines.extend(["", "## Disk Usage", ""])
     for item in payload["disk_usage"]:  # type: ignore[index]
         if item.get("status") == "ok":
@@ -258,9 +277,13 @@ def main() -> None:
     croma_repo = _clone_or_update_croma(args.croma_repo, allow_download=not args.no_download_croma, allow_git_pull=args.allow_git_pull)
     croma_checkpoint = _download_croma_checkpoint(args.croma_checkpoint, allow_download=not args.no_download_croma)
     metadata_rows = _prepare_metadata(args)
+    dependency_check = check_reben_configilm_dependency_chain()
+    for item in dependency_check.get("checks", []):
+        print(f"[reben:deps] {item.get('module', '')} status={item.get('status', '')} version={item.get('version', '')} {item.get('message', '')}".strip())
 
     resources: list[dict[str, object]] = [
         {"name": "reben_images_lmdb", "path": str(args.lmdb_root), "status": "ok" if args.lmdb_root.exists() else "missing", "size_bytes": 0},
+        {"name": "reben_configilm_dependency_chain", "path": "python_imports", "status": dependency_check["status"], "size_bytes": 0},
         {"name": "croma_repo_use_croma.py", "path": str(args.croma_repo / "use_croma.py"), "status": croma_repo["status"]},
         {"name": "croma_checkpoint_CROMA_base.pt", "path": str(args.croma_checkpoint), "status": croma_checkpoint["status"], "size_bytes": args.croma_checkpoint.stat().st_size if args.croma_checkpoint.exists() else 0},
     ]
@@ -273,6 +296,7 @@ def main() -> None:
         "croma_repo": croma_repo,
         "croma_checkpoint": croma_checkpoint,
         "metadata": metadata_rows,
+        "dependency_check": dependency_check,
         "resources": resources,
         "disk_usage": _disk_usage([Path("/content"), args.reben_root, args.croma_checkpoint.parent, out]),
         "status": "blocked" if missing else "ready",

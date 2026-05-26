@@ -4,13 +4,14 @@ import json
 import os
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from rsfm_fairness_audit.adapters.croma import CROMAAdapter
-from rsfm_fairness_audit.adapters.reben import ConfigILMRebenDatasetAdapter
+from rsfm_fairness_audit.adapters.reben import ConfigILMRebenDatasetAdapter, import_configilm_reben_dataset_class
 from rsfm_fairness_audit.io import read_csv_rows, write_csv
 from rsfm_fairness_audit.reben_sensor_audit import (
     BifoldResNet101Runner,
@@ -286,6 +287,23 @@ def test_configilm_reben_adapter_splits_s1_s2_channels() -> None:
     # ConfigILM to return 10 channels. The adapter should reject mismatches.
     with pytest.raises(Exception, match="Expected BIFOLD S2 10-channel"):
         bifold_s2.load_sample(0)
+
+
+def test_configilm_reben_import_prefers_ben2_dataset(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeBEN2DataSet:
+        pass
+
+    module = types.SimpleNamespace(BEN2DataSet=_FakeBEN2DataSet)
+
+    def fake_import(name: str):
+        if name == "configilm.extra.DataSets.BEN2_DataSet":
+            return module
+        raise ImportError(name)
+
+    monkeypatch.setattr("importlib.import_module", fake_import)
+    dataset_class, info = import_configilm_reben_dataset_class()
+    assert dataset_class is _FakeBEN2DataSet
+    assert info["qualified_name"] == "configilm.extra.DataSets.BEN2_DataSet.BEN2DataSet"
 
 
 def test_bifold_resnet101_runner_with_mock_model() -> None:

@@ -576,6 +576,7 @@ def run_bifold_resnet101_reben_inference(
             "official_model_id_or_path": model_runner.model_id_or_path,
             "logits_cache": str(cache_path),
             "threshold_source": threshold_source,
+            "reben_loader": eval_dataset.loader_info() if hasattr(eval_dataset, "loader_info") else {},
         },
         run_bwer=run_bwer,
     )
@@ -640,7 +641,12 @@ def run_croma_reben_frozen_probe(
         thresholds=thresholds,
         class_names=names,
         run_labels=run_labels,
-        probe_metadata={**probe_metadata, "embedding_cache": str(cache_path)},
+        probe_metadata={
+            **probe_metadata,
+            "embedding_cache": str(cache_path),
+            "train_reben_loader": train_dataset.loader_info() if hasattr(train_dataset, "loader_info") else {},
+            "eval_reben_loader": eval_dataset.loader_info() if hasattr(eval_dataset, "loader_info") else {},
+        },
         run_bwer=run_bwer,
     )
     artifacts["embeddings"] = cache_path

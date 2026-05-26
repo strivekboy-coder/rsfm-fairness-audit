@@ -15,7 +15,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 from rsfm_fairness_audit.io import ensure_dir  # noqa: E402
 from rsfm_fairness_audit.io import write_csv  # noqa: E402
 from rsfm_fairness_audit.adapters.croma import CROMAAdapter  # noqa: E402
-from rsfm_fairness_audit.adapters.reben import ConfigILMRebenDatasetAdapter  # noqa: E402
+from rsfm_fairness_audit.adapters.reben import ConfigILMRebenDatasetAdapter, check_reben_configilm_dependency_chain  # noqa: E402
 from rsfm_fairness_audit.reben_sensor_audit import (  # noqa: E402
     REBEN_BIFOLD_RESNET101_IDS,
     REBEN_CROMA_EMBEDDING_KEYS,
@@ -169,6 +169,7 @@ def _write_preflight(args: argparse.Namespace, out: Path) -> None:
             "all": args.bifold_resnet101_all,
         },
         "source_verification_urls": SOURCE_VERIFICATION_URLS,
+        "reben_configilm_dependency_check": check_reben_configilm_dependency_chain(),
         "status": "ready_for_colab_model_stage" if _exists(args.metadata_parquet) and _exists(args.croma_checkpoint) else "missing_required_runtime_inputs",
     }
     (out / "dataset_preflight.json").write_text(json.dumps(data, indent=2), encoding="utf-8")

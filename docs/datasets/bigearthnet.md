@@ -26,6 +26,13 @@ The Colab runner writes both primitives for each completed run: `risk_bce` as th
 
 The Colab workflow is:
 
+Before preparation, install the ConfigILM/reBEN dependency chain without reinstalling torch/CUDA:
+
+```bash
+pip install -U --no-deps configilm bigearthnet_patch_interface bigearthnet_common
+pip install --force-reinstall 'fastcore==1.5.29'
+```
+
 1. Prepare or verify official resources:
 
 ```bash
@@ -40,6 +47,8 @@ python scripts/colab/prepare_reben_croma_sensor_audit_colab.py \
 ```
 
 This preparation script downloads/verifies the official CROMA repo/checkpoint and the official BigEarthNet v2 Zenodo metadata parquet files. It does not use the unofficial community LMDB mirror. If the reBEN LMDB is missing, it writes `blocked_report.md` with manual placement instructions.
+
+The ConfigILM loader class used by the current Colab stack is `configilm.extra.DataSets.BEN2_DataSet.BEN2DataSet`. The adapter keeps fallback aliases, but reports the exact class used in `dataset_preflight.json` and per-run `run_metadata_*.json`. `bigearthnet_common` 2.8.x expects `fastcore.dispatch`, so pin `fastcore==1.5.29` if a newer fastcore removes that API. Do not reinstall torch/CUDA for this compatibility fix.
 
 2. Run the smoke or full audit runner:
 

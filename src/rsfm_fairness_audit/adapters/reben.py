@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -18,11 +19,82 @@ def _to_numpy(value: Any) -> np.ndarray:
     return np.asarray(value)
 
 
+def import_configilm_reben_dataset_class() -> tuple[type[Any], dict[str, str]]:
+    """Import the official ConfigILM reBEN Dataset class with version-compatible aliases."""
+    errors: list[str] = []
+    candidates = [
+        ("configilm.extra.DataSets.BEN2_DataSet", "BEN2DataSet"),
+        ("configilm.extra.DataSets.BEN2_DataSet", "BEN2_DataSet"),
+        ("configilm.extra.DataSets.BEN2_DataSet", "BENv2DataSet"),
+        ("configilm.extra.DataSets.BENv2_DataSet", "BENv2DataSet"),
+        ("configilm.extra.DataSets.BENv2_DataSet", "BENv2_DataSet"),
+    ]
+    for module_name, class_name in candidates:
+        try:
+            module = importlib.import_module(module_name)
+        except Exception as exc:
+            errors.append(f"{module_name}: import failed: {type(exc).__name__}: {exc}")
+            continue
+        dataset_class = getattr(module, class_name, None)
+        if dataset_class is None:
+            errors.append(f"{module_name}: missing class {class_name}")
+            continue
+        return dataset_class, {"module": module_name, "class": class_name, "qualified_name": f"{module_name}.{class_name}"}
+    raise RebenDatasetError(
+        "Could not import the ConfigILM BigEarthNet v2/reBEN dataset class. "
+        "Expected BEN2_DataSet/BEN2DataSet in ConfigILM 0.4.x. Import attempts: " + " | ".join(errors)
+    )
+
+
+def check_reben_configilm_dependency_chain() -> dict[str, Any]:
+    """Check imports that commonly fail before the ConfigILM reBEN loader is usable."""
+    modules = [
+        "fastcore",
+        "fastcore.dispatch",
+        "bigearthnet_common",
+        "bigearthnet_patch_interface",
+        "configilm",
+    ]
+    rows: list[dict[str, Any]] = []
+    ok = True
+    for module_name in modules:
+        try:
+            module = importlib.import_module(module_name)
+            version = str(getattr(module, "__version__", "unknown"))
+            rows.append({"module": module_name, "status": "ok", "version": version, "message": ""})
+        except Exception as exc:
+            ok = False
+            rows.append({"module": module_name, "status": "failed", "version": "", "message": f"{type(exc).__name__}: {exc}"})
+    dataset_info: dict[str, str] | None = None
+    if ok:
+        try:
+            _, dataset_info = import_configilm_reben_dataset_class()
+            rows.append({"module": dataset_info["module"], "status": "ok", "version": "", "message": f"class={dataset_info['class']}"})
+        except Exception as exc:
+            ok = False
+            rows.append({"module": "configilm.extra.DataSets.BEN2_DataSet", "status": "failed", "version": "", "message": f"{type(exc).__name__}: {exc}"})
+    install_command = (
+        "pip install -U --no-deps configilm bigearthnet_patch_interface bigearthnet_common "
+        "&& pip install --force-reinstall 'fastcore==1.5.29'"
+    )
+    return {
+        "status": "ok" if ok else "failed",
+        "checks": rows,
+        "dataset_class": dataset_info or {},
+        "install_command": install_command,
+        "notes": [
+            "Do not reinstall torch/CUDA for this compatibility fix.",
+            "fastcore==1.5.29 preserves fastcore.dispatch used by bigearthnet_common 2.8.x.",
+            "fasttransform is not required by this project unless pulled in by the user's environment.",
+        ],
+    }
+
+
 class ConfigILMRebenDatasetAdapter(DatasetAdapter):
     """Official ConfigILM-backed BigEarthNet v2.0 / reBEN adapter.
 
     This adapter is intentionally narrow: it delegates official LMDB/parquet
-    indexing to ConfigILM's `BENv2DataSet`, then exposes exactly the S1/S2
+    indexing to ConfigILM's `BEN2_DataSet`, then exposes exactly the S1/S2
     arrays needed by the CROMA sensor-mode audit.
     """
 
@@ -48,6 +120,7 @@ class ConfigILMRebenDatasetAdapter(DatasetAdapter):
         self.max_samples = None if max_samples in (None, 0) else int(max_samples)
         self.channel_profile = channel_profile
         self._dataset = dataset
+        self._dataset_class_info: dict[str, str] = {}
         if sensor_mode not in self.valid_sensor_modes:
             raise ValueError(f"sensor_mode must be one of {sorted(self.valid_sensor_modes)}, got {sensor_mode!r}.")
         if channel_profile not in {"croma", "bifold_resnet101"}:
@@ -77,13 +150,8 @@ class ConfigILMRebenDatasetAdapter(DatasetAdapter):
         for path in [self.images_lmdb, self.metadata_parquet, self.metadata_snow_cloud_parquet]:
             if not path.exists():
                 raise RebenDatasetError(f"Required reBEN path does not exist: {path}")
-        try:
-            from configilm.extra.DataSets import BENv2_DataSet
-        except ImportError as exc:
-            raise RebenDatasetError(
-                "Official reBEN loading requires ConfigILM. Install/use ConfigILM in Colab; "
-                "this project will not silently substitute the old BigEarthNet smoke adapter."
-            ) from exc
+        dataset_class, info = import_configilm_reben_dataset_class()
+        self._dataset_class_info = dict(info)
         kwargs = {
             "data_dirs": self.data_dirs,
             "split": self.split,
@@ -92,11 +160,22 @@ class ConfigILMRebenDatasetAdapter(DatasetAdapter):
         if self.max_samples is not None:
             kwargs["max_len"] = self.max_samples
         try:
-            self._dataset = BENv2_DataSet.BENv2DataSet(**kwargs)
+            self._dataset = dataset_class(**kwargs)
         except TypeError:
             kwargs.pop("bands", None)
-            self._dataset = BENv2_DataSet.BENv2DataSet(**kwargs)
+            self._dataset = dataset_class(**kwargs)
         return self._dataset
+
+    def loader_info(self) -> dict[str, Any]:
+        return {
+            "loader": "ConfigILM",
+            "dataset_class": dict(self._dataset_class_info),
+            "data_dirs": self.data_dirs,
+            "split": self.split,
+            "sensor_mode": self.sensor_mode,
+            "channel_profile": self.channel_profile,
+            "bands": self.bands,
+        }
 
     def _metadata_for_index(self, index: int) -> dict[str, Any]:
         dataset = self._load_official_dataset()
