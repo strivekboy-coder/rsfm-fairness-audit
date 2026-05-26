@@ -15,6 +15,7 @@ from rsfm_fairness_audit.adapters.reben import (
     ConfigILMRebenDatasetAdapter,
     LmdbSafetensorsRebenDatasetAdapter,
     import_configilm_reben_dataset_class,
+    reben_labels_to_multihot,
     resolve_reben_root_dir,
 )
 from rsfm_fairness_audit.io import read_csv_rows, write_csv
@@ -378,7 +379,7 @@ def test_lmdb_safetensors_adapter_loads_metadata_and_bands(monkeypatch: pytest.M
             "s2v1_name": "s2_a",
             "split": "train",
             "country": "DE",
-            "labels": [1] + [0] * 18,
+            "labels": ["Broad-leaved forest"],
         }
     ]
 
@@ -396,8 +397,18 @@ def test_lmdb_safetensors_adapter_loads_metadata_and_bands(monkeypatch: pytest.M
     sample = adapter.load_sample(0)
     assert sample["image"]["S1"].shape == (2, 4, 4)
     assert sample["image"]["S2"].shape == (12, 4, 4)
-    assert sample["metadata"]["label_vector"][0] == 1
+    assert sample["metadata"]["label_vector"][8] == 1
     assert adapter.loader_info()["payload_format"] == "safetensors"
+
+
+def test_reben_labels_to_multihot_handles_class_names_and_one_hot() -> None:
+    by_name = reben_labels_to_multihot(["Broad-leaved forest", "Marine waters"])
+    assert by_name.shape == (19,)
+    assert by_name[8] == 1
+    assert by_name[18] == 1
+    one_hot = reben_labels_to_multihot([1] + [0] * 18)
+    assert one_hot[0] == 1
+    assert int(one_hot.sum()) == 1
 
 
 def test_bifold_resnet101_runner_with_mock_model() -> None:

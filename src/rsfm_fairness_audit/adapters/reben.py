@@ -30,6 +30,28 @@ REBEN_CONFIGILM_IMAGE_SIZES = {
 S2_12_BANDS = ("B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B09", "B11", "B12")
 S2_10_BANDS = ("B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B11", "B12")
 S1_BANDS = ("VV", "VH")
+REBEN_CLASS_NAMES = (
+    "Urban fabric",
+    "Industrial or commercial units",
+    "Arable land",
+    "Permanent crops",
+    "Pastures",
+    "Complex cultivation patterns",
+    "Land principally occupied by agriculture, with significant areas of natural vegetation",
+    "Agro-forestry areas",
+    "Broad-leaved forest",
+    "Coniferous forest",
+    "Mixed forest",
+    "Natural grassland and sparsely vegetated areas",
+    "Moors, heathland and sclerophyllous vegetation",
+    "Transitional woodland, shrub",
+    "Beaches, dunes, sands",
+    "Inland wetlands",
+    "Coastal wetlands",
+    "Inland waters",
+    "Marine waters",
+)
+REBEN_CLASS_TO_INDEX = {name: index for index, name in enumerate(REBEN_CLASS_NAMES)}
 
 
 def _to_numpy(value: Any) -> np.ndarray:
@@ -78,7 +100,7 @@ def detect_lmdb_payload_format(lmdb_path: str | Path) -> str:
                 return "safetensors"
             except Exception:
                 pass
-            return "unknown"
+        return "unknown"
     finally:
         try:
             env.close()
@@ -124,6 +146,40 @@ def _normalise_split(value: Any) -> str:
     if text in {"validation", "valid"}:
         return "val"
     return text
+
+
+def reben_labels_to_multihot(labels: Any) -> np.ndarray:
+    if hasattr(labels, "tolist") and not isinstance(labels, (str, bytes)):
+        labels = labels.tolist()
+    if isinstance(labels, str):
+        text = labels.strip()
+        try:
+            labels = json.loads(text.replace("'", '"'))
+        except Exception:
+            labels = [part.strip() for part in text.replace(";", ",").split(",") if part.strip()]
+    if labels is None:
+        labels = []
+    if not isinstance(labels, (list, tuple, set)):
+        labels = [labels]
+    values = list(labels)
+    if len(values) == 19 and all(str(value).strip() in {"0", "1", "0.0", "1.0"} for value in values):
+        return np.asarray(values, dtype=np.int64)
+    multi_hot = np.zeros(19, dtype=np.int64)
+    for value in values:
+        if isinstance(value, (int, np.integer)):
+            index = int(value)
+        else:
+            text = str(value).strip()
+            if text in REBEN_CLASS_TO_INDEX:
+                index = REBEN_CLASS_TO_INDEX[text]
+            elif text.isdigit():
+                index = int(text)
+            else:
+                raise RebenDatasetError(f"Unknown reBEN label {text!r}; expected one of the official 19 class names.")
+        if index < 0 or index >= 19:
+            raise RebenDatasetError(f"reBEN label index out of range: {index}")
+        multi_hot[index] = 1
+    return multi_hot
 
 
 def prepare_configilm_compatible_metadata(
@@ -291,13 +347,7 @@ class LmdbSafetensorsRebenDatasetAdapter(DatasetAdapter):
     def load_sample(self, index: int) -> Mapping[str, Any]:
         row = self._metadata_rows()[index]
         metadata = self._normalize_metadata(index, row)
-        labels = row.get("labels", [])
-        if isinstance(labels, str):
-            try:
-                labels = json.loads(labels.replace("'", '"'))
-            except Exception:
-                labels = []
-        label_array = np.asarray(labels, dtype=np.int64)
+        label_array = reben_labels_to_multihot(row.get("labels", []))
         if label_array.shape[-1] != 19:
             raise RebenDatasetError(f"Expected 19-label vector in metadata labels, got shape {label_array.shape}.")
         s1_key = str(row.get("s1_name", ""))
