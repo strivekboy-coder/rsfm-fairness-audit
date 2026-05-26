@@ -52,8 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Colab-oriented reBEN/CROMA sensor-mode audit handoff runner. "
-            "This script performs protocol/data readiness checks and can run the "
-            "post-hoc multi-label BWER stage on completed label-expanded predictions."
+            "Run this after scripts/colab/prepare_reben_croma_sensor_audit_colab.py "
+            "has verified the reBEN LMDB/parquet files, CROMA repo/checkpoint, and "
+            "official BIFOLD model refs. This script performs protocol/data readiness "
+            "checks and can run the post-hoc multi-label BWER stage on completed "
+            "label-expanded predictions."
         )
     )
     parser.add_argument("--data-root", type=Path, help="Optional extracted BigEarthNet v2/reBEN root.")
@@ -88,6 +91,8 @@ def _write_reports(args: argparse.Namespace, out: Path) -> None:
     reports = ensure_dir(out / "reports")
     protocol = [
         "# reBEN / CROMA Sensor-Mode Audit Protocol",
+        "",
+        "Workflow: first run `scripts/colab/prepare_reben_croma_sensor_audit_colab.py`, then a smoke run with `--max-samples`, then the full run without `--max-samples`.",
         "",
         "This runner is for BigEarthNet v2.0 / reBEN, not BigEarthNet v1.",
         "",

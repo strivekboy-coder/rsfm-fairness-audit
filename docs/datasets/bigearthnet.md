@@ -24,7 +24,24 @@ The Colab runner writes both primitives for each completed run: `risk_bce` as th
 
 ## Current Implementation
 
-The Colab runner is:
+The Colab workflow is:
+
+1. Prepare or verify official resources:
+
+```bash
+python scripts/colab/prepare_reben_croma_sensor_audit_colab.py \
+  --reben-root /content/data/reben \
+  --lmdb-root /content/data/reben/BigEarthNetEncoded.lmdb \
+  --metadata-parquet /content/data/reben/metadata.parquet \
+  --metadata-snow-cloud-parquet /content/data/reben/metadata_for_patches_with_snow_cloud_or_shadow.parquet \
+  --croma-repo /content/CROMA \
+  --croma-checkpoint /content/checkpoints/CROMA_base.pt \
+  --output-dir /content/outputs/reben_croma_sensor_mode_audit_prepare
+```
+
+This preparation script downloads/verifies the official CROMA repo/checkpoint and the official BigEarthNet v2 Zenodo metadata parquet files. It does not use the unofficial community LMDB mirror. If the reBEN LMDB is missing, it writes `blocked_report.md` with manual placement instructions.
+
+2. Run the smoke or full audit runner:
 
 ```bash
 python scripts/colab/run_reben_croma_sensor_mode_audit_colab.py \
