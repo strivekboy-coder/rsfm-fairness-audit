@@ -75,6 +75,14 @@ def _open_lmdb(path: Path) -> Any:
     return env
 
 
+def _open_lmdb_uncached(path: Path) -> Any:
+    try:
+        import lmdb
+    except ImportError as exc:
+        raise RebenDatasetError("The lmdb package is required for reBEN LMDB loading.") from exc
+    return lmdb.open(str(path), readonly=True, lock=False, readahead=False, max_readers=16, subdir=path.is_dir())
+
+
 def _load_safetensors_lmdb_value(value: bytes) -> dict[str, np.ndarray]:
     try:
         from safetensors.numpy import load as load_safetensors
@@ -90,8 +98,9 @@ def detect_lmdb_payload_format(lmdb_path: str | Path) -> str:
     path = Path(lmdb_path)
     if not path.exists():
         return "missing"
+    env = None
     try:
-        env = _open_lmdb(path)
+        env = _open_lmdb_uncached(path)
         with env.begin(write=False) as txn:
             cursor = txn.cursor()
             if not cursor.first():
@@ -109,10 +118,8 @@ def detect_lmdb_payload_format(lmdb_path: str | Path) -> str:
                 pass
         return "unknown"
     finally:
-        try:
+        if env is not None:
             env.close()
-        except Exception:
-            pass
 
 
 def resolve_reben_root_dir(images_lmdb: str | Path) -> tuple[Path, Path, list[str]]:
@@ -438,8 +445,9 @@ def inspect_lmdb_payload(lmdb_path: str | Path, split_csv_path: str | Path | Non
     except ImportError as exc:
         result["error"] = f"lmdb package unavailable: {exc}"
         return result
+    env = None
     try:
-        env = lmdb.open(str(path), readonly=True, lock=False, readahead=False, max_readers=1, subdir=path.is_dir())
+        env = _open_lmdb_uncached(path)
         with env.begin(write=False) as txn:
             result["lmdb_stat"] = dict(txn.stat())
             cursor = txn.cursor()
@@ -460,9 +468,11 @@ def inspect_lmdb_payload(lmdb_path: str | Path, split_csv_path: str | Path | Non
                     result["numpy_load_status"] = "ok"
                 except Exception as exc:
                     result["numpy_load_status"] = f"failed: {type(exc).__name__}: {exc}"
-        env.close()
     except Exception as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        if env is not None:
+            env.close()
     return result
 
 
