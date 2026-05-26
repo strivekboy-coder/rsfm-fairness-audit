@@ -152,6 +152,13 @@ def _write_preflight(args: argparse.Namespace, out: Path) -> None:
             existing = json.loads(preflight_path.read_text(encoding="utf-8"))
         except Exception:
             existing = {}
+    payload_format = "missing"
+    if args.lmdb_root:
+        try:
+            _, resolved_lmdb_path, _ = resolve_reben_root_dir(args.lmdb_root)
+            payload_format = detect_lmdb_payload_format(resolved_lmdb_path)
+        except Exception as exc:
+            payload_format = f"detect_failed:{type(exc).__name__}:{exc}"
     data = {
         **existing,
         "dataset": "bigearthnet_v2_reben",
