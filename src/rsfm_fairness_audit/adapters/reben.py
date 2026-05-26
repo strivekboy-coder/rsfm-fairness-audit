@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib
+import inspect
+import json
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -17,6 +19,226 @@ def _to_numpy(value: Any) -> np.ndarray:
     if hasattr(value, "detach"):
         value = value.detach().cpu().numpy()
     return np.asarray(value)
+
+
+def resolve_reben_root_dir(images_lmdb: str | Path) -> tuple[Path, Path, list[str]]:
+    """Resolve ConfigILM root_dir and BigEarthNetEncoded.lmdb path.
+
+    ConfigILM BEN2DataSet expects root_dir to contain a child named
+    BigEarthNetEncoded.lmdb. Some downloaded bundles contain a wrapper folder
+    named BigEarthNetEncoded.lmdb that itself contains the actual LMDB folder.
+    """
+    path = Path(images_lmdb)
+    notes: list[str] = []
+    child = path / "BigEarthNetEncoded.lmdb"
+    if child.exists():
+        notes.append("input_path_contains_nested_BigEarthNetEncoded.lmdb; using input path as ConfigILM root_dir")
+        return path, child, notes
+    if path.name == "BigEarthNetEncoded.lmdb":
+        notes.append("input_path_named_BigEarthNetEncoded.lmdb; using parent as ConfigILM root_dir")
+        return path.parent, path, notes
+    notes.append("input_path_treated_as_ConfigILM_root_dir")
+    return path, child, notes
+
+
+def _read_parquet_frame(path: Path) -> Any:
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise RebenDatasetError("pandas + pyarrow are required for reBEN metadata compatibility preflight.") from exc
+    return pd.read_parquet(path)
+
+
+def _candidate_patch_id_columns(columns: Sequence[str]) -> list[str]:
+    preferred = ["name", "patch_id", "patch_name", "s2_name", "s1_name"]
+    return [column for column in preferred if column in columns]
+
+
+def _normalise_split(value: Any) -> str:
+    text = str(value).strip().lower()
+    if text in {"validation", "valid"}:
+        return "val"
+    return text
+
+
+def prepare_configilm_compatible_metadata(
+    metadata_parquet: str | Path,
+    root_dir: str | Path,
+    *,
+    patch_id_column: str | None = None,
+) -> dict[str, Any]:
+    """Generate non-destructive ConfigILM compatibility files from official metadata."""
+    metadata_path = Path(metadata_parquet)
+    root = Path(root_dir)
+    frame = _read_parquet_frame(metadata_path)
+    columns = [str(column) for column in frame.columns]
+    candidates = _candidate_patch_id_columns(columns)
+    if patch_id_column:
+        candidates = [patch_id_column] + [column for column in candidates if column != patch_id_column]
+    if not candidates:
+        raise RebenDatasetError(
+            "Cannot generate ConfigILM compatibility files because metadata has no patch id column. "
+            f"Observed columns: {columns}"
+        )
+    label_column = "labels" if "labels" in columns else "label" if "label" in columns else "class_labels" if "class_labels" in columns else ""
+    if not label_column:
+        raise RebenDatasetError(f"Cannot generate ConfigILM labels parquet; no labels column in metadata columns: {columns}")
+    split_column = "split" if "split" in columns else ""
+    selected = candidates[0]
+    names = frame[selected].astype(str)
+    labels_frame = frame[[label_column]].copy()
+    labels_frame.insert(0, "name", names)
+    labels_path = root / "labels_configilm_compat.parquet"
+    labels_frame.to_parquet(labels_path, index=False)
+    split_files: dict[str, str] = {}
+    split_counts: dict[str, int] = {}
+    if split_column:
+        split_values = frame[split_column].map(_normalise_split)
+        for split in ["train", "val", "test"]:
+            values = names[split_values == split]
+            path = root / f"{split}.csv"
+            values.to_csv(path, index=False, header=False)
+            split_files[split] = str(path)
+            split_counts[split] = int(len(values))
+    else:
+        path = root / "all.csv"
+        names.to_csv(path, index=False, header=False)
+        split_files["all"] = str(path)
+        split_counts["all"] = int(len(names))
+    return {
+        "metadata_parquet": str(metadata_path),
+        "metadata_columns": columns,
+        "patch_id_column": selected,
+        "candidate_patch_id_columns": candidates,
+        "label_column": label_column,
+        "split_column": split_column,
+        "labels_compat_parquet": str(labels_path),
+        "split_csv_files": split_files,
+        "split_counts": split_counts,
+        "csv_format": "single_column_patch_names_headerless",
+    }
+
+
+def instantiate_configilm_ben2_smoke(
+    *,
+    root_dir: str | Path,
+    labels_parquet: str | Path,
+    split: str = "train",
+    img_size: tuple[int, int, int] = (14, 120, 120),
+    max_img_idx: int = 2,
+) -> dict[str, Any]:
+    dataset_class, class_info = import_configilm_reben_dataset_class()
+    kwargs = {
+        "root_dir": Path(root_dir),
+        "split": split,
+        "max_img_idx": max_img_idx,
+        "img_size": img_size,
+        "return_patchname": True,
+        "new_label_file": Path(labels_parquet),
+    }
+    dataset = dataset_class(**kwargs)
+    length = len(dataset)
+    if length < 1:
+        raise RebenDatasetError(f"BEN2DataSet instantiated but length is {length}; check LMDB keys and split CSV patch ids.")
+    item = dataset[0]
+    if not isinstance(item, (list, tuple)):
+        raise RebenDatasetError(f"BEN2DataSet[0] returned {type(item).__name__}, expected tuple/list.")
+    item_length = len(item)
+    image = item[0]
+    label = item[1] if item_length >= 2 else None
+    patch_name = item[2] if item_length >= 3 else ""
+    image_array = _to_numpy(image)
+    label_array = _to_numpy(label)
+    return {
+        "status": "ok",
+        "dataset_class": class_info,
+        "constructor_kwargs": {key: str(value) for key, value in kwargs.items()},
+        "dataset_length": int(length),
+        "item_tuple_length": int(item_length),
+        "image_shape": list(image_array.shape),
+        "label_shape": list(label_array.shape),
+        "patch_name": str(patch_name),
+    }
+
+
+def run_configilm_reben_preflight(
+    *,
+    images_lmdb: str | Path,
+    metadata_parquet: str | Path,
+    metadata_snow_cloud_parquet: str | Path | None = None,
+    output_dir: str | Path | None = None,
+    split: str = "train",
+    img_size: tuple[int, int, int] = (14, 120, 120),
+) -> dict[str, Any]:
+    root_dir, lmdb_path, root_notes = resolve_reben_root_dir(images_lmdb)
+    result: dict[str, Any] = {
+        "status": "unknown",
+        "root_dir": str(root_dir),
+        "lmdb_path": str(lmdb_path),
+        "root_resolution_notes": root_notes,
+        "lmdb_exists": lmdb_path.exists(),
+        "metadata_parquet": str(metadata_parquet),
+        "metadata_snow_cloud_parquet": str(metadata_snow_cloud_parquet or ""),
+        "metadata_snow_cloud_exists": bool(metadata_snow_cloud_parquet and Path(metadata_snow_cloud_parquet).exists()),
+        "ben2_signature": "",
+        "compatibility_files": {},
+        "dataset_smoke": {},
+        "error": "",
+    }
+    try:
+        dataset_class, class_info = import_configilm_reben_dataset_class()
+        result["dataset_class"] = class_info
+        result["ben2_signature"] = str(inspect.signature(dataset_class.__init__))
+        if not lmdb_path.exists():
+            raise RebenDatasetError(f"Expected ConfigILM LMDB at {lmdb_path}")
+        compat = prepare_configilm_compatible_metadata(metadata_parquet, root_dir)
+        result["compatibility_files"] = compat
+        smoke = instantiate_configilm_ben2_smoke(
+            root_dir=root_dir,
+            labels_parquet=compat["labels_compat_parquet"],
+            split=split,
+            img_size=img_size,
+            max_img_idx=2,
+        )
+        result["dataset_smoke"] = smoke
+        result["status"] = "ok"
+    except Exception as exc:
+        result["status"] = "failed"
+        result["error"] = f"{type(exc).__name__}: {exc}"
+    if output_dir is not None:
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "reben_configilm_preflight.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+        lines = [
+            "# reBEN ConfigILM Preflight",
+            "",
+            f"Status: {result['status']}",
+            f"root_dir: `{result['root_dir']}`",
+            f"lmdb_path: `{result['lmdb_path']}`",
+            f"BEN2DataSet signature: `{result.get('ben2_signature', '')}`",
+            "",
+            "## Root Resolution",
+            "",
+            *[f"- {note}" for note in root_notes],
+        ]
+        if result["status"] == "ok":
+            smoke = result["dataset_smoke"]
+            lines.extend(
+                [
+                    "",
+                    "## Dataset Instantiation Smoke",
+                    "",
+                    f"- dataset_length: {smoke.get('dataset_length')}",
+                    f"- item_tuple_length: {smoke.get('item_tuple_length')}",
+                    f"- image_shape: {smoke.get('image_shape')}",
+                    f"- label_shape: {smoke.get('label_shape')}",
+                    f"- patch_name: {smoke.get('patch_name')}",
+                ]
+            )
+        else:
+            lines.extend(["", "## Error", "", str(result.get("error", ""))])
+        (out / "reben_configilm_preflight_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return result
 
 
 def import_configilm_reben_dataset_class() -> tuple[type[Any], dict[str, str]]:
@@ -128,10 +350,10 @@ class ConfigILMRebenDatasetAdapter(DatasetAdapter):
 
     @property
     def data_dirs(self) -> dict[str, str]:
-        root_dir = self.images_lmdb.parent if self.images_lmdb.name == "BigEarthNetEncoded.lmdb" else self.images_lmdb
+        root_dir, lmdb_path, _ = resolve_reben_root_dir(self.images_lmdb)
         return {
             "root_dir": str(root_dir),
-            "images_lmdb": str(root_dir / "BigEarthNetEncoded.lmdb"),
+            "images_lmdb": str(lmdb_path),
             "labels_parquet": str(self.metadata_parquet),
             "metadata_snow_cloud_parquet": str(self.metadata_snow_cloud_parquet),
         }
@@ -154,13 +376,30 @@ class ConfigILMRebenDatasetAdapter(DatasetAdapter):
                 raise RebenDatasetError(f"Required reBEN path does not exist: {path}")
         dataset_class, info = import_configilm_reben_dataset_class()
         self._dataset_class_info = dict(info)
-        root_dir = self.images_lmdb.parent if self.images_lmdb.name == "BigEarthNetEncoded.lmdb" else self.images_lmdb
+        root_dir, _, _ = resolve_reben_root_dir(self.images_lmdb)
+        compat_labels = root_dir / "labels_configilm_compat.parquet"
+        label_file = compat_labels if compat_labels.exists() else self.metadata_parquet
+        signature = inspect.signature(dataset_class.__init__)
+        if "data_dirs" in signature.parameters:
+            kwargs = {
+                "data_dirs": self.data_dirs,
+                "split": self.split,
+                "bands": self.bands,
+            }
+            if self.max_samples is not None:
+                kwargs["max_len"] = self.max_samples
+            try:
+                self._dataset = dataset_class(**kwargs)
+            except TypeError:
+                kwargs.pop("bands", None)
+                self._dataset = dataset_class(**kwargs)
+            return self._dataset
         kwargs = {
             "root_dir": root_dir,
             "split": self.split,
             "img_size": (self.bands, 120, 120),
             "return_patchname": True,
-            "new_label_file": self.metadata_parquet,
+            "new_label_file": label_file,
         }
         if self.max_samples is not None:
             kwargs["max_img_idx"] = self.max_samples

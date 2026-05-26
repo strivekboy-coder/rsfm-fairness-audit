@@ -11,7 +11,11 @@ import numpy as np
 import pytest
 
 from rsfm_fairness_audit.adapters.croma import CROMAAdapter
-from rsfm_fairness_audit.adapters.reben import ConfigILMRebenDatasetAdapter, import_configilm_reben_dataset_class
+from rsfm_fairness_audit.adapters.reben import (
+    ConfigILMRebenDatasetAdapter,
+    import_configilm_reben_dataset_class,
+    resolve_reben_root_dir,
+)
 from rsfm_fairness_audit.io import read_csv_rows, write_csv
 from rsfm_fairness_audit.reben_sensor_audit import (
     BifoldResNet101Runner,
@@ -349,6 +353,20 @@ def test_configilm_reben_import_prefers_ben2_dataset(monkeypatch: pytest.MonkeyP
     dataset_class, info = import_configilm_reben_dataset_class()
     assert dataset_class is _FakeBEN2DataSet
     assert info["qualified_name"] == "configilm.extra.DataSets.BEN2_DataSet.BEN2DataSet"
+
+
+def test_resolve_reben_root_dir_handles_nested_lmdb() -> None:
+    root, lmdb, notes = resolve_reben_root_dir(Path("/content/data/reben/BigEarthNetEncoded.lmdb"))
+    assert root == Path("/content/data/reben")
+    assert lmdb == Path("/content/data/reben/BigEarthNetEncoded.lmdb")
+    assert notes
+
+    nested_base = Path(".pytest_tmp/test_reben_nested/BigEarthNetEncoded.lmdb")
+    (nested_base / "BigEarthNetEncoded.lmdb").mkdir(parents=True, exist_ok=True)
+    root_nested, lmdb_nested, notes_nested = resolve_reben_root_dir(nested_base)
+    assert root_nested == nested_base
+    assert lmdb_nested == nested_base / "BigEarthNetEncoded.lmdb"
+    assert any("nested" in note for note in notes_nested)
 
 
 def test_bifold_resnet101_runner_with_mock_model() -> None:

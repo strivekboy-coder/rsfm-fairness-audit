@@ -15,7 +15,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from rsfm_fairness_audit.io import ensure_dir  # noqa: E402
-from rsfm_fairness_audit.adapters.reben import check_reben_configilm_dependency_chain  # noqa: E402
+from rsfm_fairness_audit.adapters.reben import check_reben_configilm_dependency_chain, run_configilm_reben_preflight  # noqa: E402
 
 
 OFFICIAL_SOURCES = {
@@ -219,6 +219,8 @@ def _write_blocked_report(path: Path, missing: list[str], args: argparse.Namespa
             "",
             "After placing the LMDB at the requested path, rerun this preparation script before smoke/full execution.",
             "",
+            "If your downloaded bundle contains `/content/data/reben/BigEarthNetEncoded.lmdb/BigEarthNetEncoded.lmdb`, pass the outer folder as `--lmdb-root /content/data/reben/BigEarthNetEncoded.lmdb`; the preflight will resolve that as ConfigILM `root_dir`.",
+            "",
             "## Dependency Compatibility Command",
             "",
             "Run this if the blocked report or preparation JSON shows `fastcore.dispatch`, `bigearthnet_common`, `bigearthnet_patch_interface`, or `configilm` import failures:",
@@ -280,10 +282,25 @@ def main() -> None:
     dependency_check = check_reben_configilm_dependency_chain()
     for item in dependency_check.get("checks", []):
         print(f"[reben:deps] {item.get('module', '')} status={item.get('status', '')} version={item.get('version', '')} {item.get('message', '')}".strip())
+    configilm_preflight = run_configilm_reben_preflight(
+        images_lmdb=args.lmdb_root,
+        metadata_parquet=args.metadata_parquet,
+        metadata_snow_cloud_parquet=args.metadata_snow_cloud_parquet,
+        output_dir=out,
+        split="train",
+        img_size=(14, 120, 120),
+    )
+    print(
+        "[reben:configilm] "
+        f"status={configilm_preflight.get('status')} "
+        f"root_dir={configilm_preflight.get('root_dir')} "
+        f"lmdb_path={configilm_preflight.get('lmdb_path')}"
+    )
 
     resources: list[dict[str, object]] = [
         {"name": "reben_images_lmdb", "path": str(args.lmdb_root), "status": "ok" if args.lmdb_root.exists() else "missing", "size_bytes": 0},
         {"name": "reben_configilm_dependency_chain", "path": "python_imports", "status": dependency_check["status"], "size_bytes": 0},
+        {"name": "reben_configilm_dataset_instantiation", "path": str(out / "reben_configilm_preflight.json"), "status": configilm_preflight["status"], "size_bytes": 0},
         {"name": "croma_repo_use_croma.py", "path": str(args.croma_repo / "use_croma.py"), "status": croma_repo["status"]},
         {"name": "croma_checkpoint_CROMA_base.pt", "path": str(args.croma_checkpoint), "status": croma_checkpoint["status"], "size_bytes": args.croma_checkpoint.stat().st_size if args.croma_checkpoint.exists() else 0},
     ]
@@ -297,6 +314,7 @@ def main() -> None:
         "croma_checkpoint": croma_checkpoint,
         "metadata": metadata_rows,
         "dependency_check": dependency_check,
+        "configilm_preflight": configilm_preflight,
         "resources": resources,
         "disk_usage": _disk_usage([Path("/content"), args.reben_root, args.croma_checkpoint.parent, out]),
         "status": "blocked" if missing else "ready",
