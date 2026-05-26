@@ -388,9 +388,9 @@ def test_lmdb_safetensors_adapter_loads_metadata_and_bands(monkeypatch: pytest.M
 
     def fake_load_key(self, key: str):
         if key == "s1_a":
-            return {"VV": np.ones((4, 4), dtype=np.float32), "VH": np.ones((4, 4), dtype=np.float32) * 2}
-        if key == "s2_a":
-            return {band: np.ones((4, 4), dtype=np.float32) * index for index, band in enumerate(("B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B09", "B11", "B12"))}
+            payload = {"VV": np.ones((4, 4), dtype=np.float32), "VH": np.ones((4, 4), dtype=np.float32) * 2}
+            payload.update({band: np.ones((4, 4), dtype=np.float32) * index for index, band in enumerate(("B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B09", "B11", "B12"))})
+            return payload
         raise KeyError(key)
 
     monkeypatch.setattr(LmdbSafetensorsRebenDatasetAdapter, "_load_key", fake_load_key)
@@ -400,6 +400,9 @@ def test_lmdb_safetensors_adapter_loads_metadata_and_bands(monkeypatch: pytest.M
     assert sample["image"]["S2"].shape == (12, 4, 4)
     assert sample["metadata"]["label_vector"][8] == 1
     assert adapter.loader_info()["payload_format"] == "safetensors"
+
+    s2_adapter = LmdbSafetensorsRebenDatasetAdapter("lmdb", "meta.parquet", split="train", sensor_mode="S2")
+    assert s2_adapter.load_sample(0)["image"].shape == (12, 4, 4)
 
 
 def test_reben_labels_to_multihot_handles_class_names_and_one_hot() -> None:

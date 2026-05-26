@@ -364,19 +364,22 @@ class LmdbSafetensorsRebenDatasetAdapter(DatasetAdapter):
         label_array = reben_labels_to_multihot(row.get("labels", []))
         if label_array.shape[-1] != 19:
             raise RebenDatasetError(f"Expected 19-label vector in metadata labels, got shape {label_array.shape}.")
-        s1_key = str(row.get("s1_name", ""))
-        s2_key = str(row.get("s2v1_name", row.get("s2_name", row.get("patch_id", ""))))
+        # The safetensors LMDB stores paired S1/S2 payloads under the S1 patch
+        # key. Do not query with s2v1_name; it is present in metadata but is not
+        # the LMDB key in the observed reBEN safetensors layout.
+        lmdb_key = str(row.get("s1_name", row.get("patch_id", row.get("sample_id", ""))))
         if self.sensor_mode == "S1":
-            image_payload: Any = self._stack_bands(self._load_key(s1_key), S1_BANDS)
+            image_payload: Any = self._stack_bands(self._load_key(lmdb_key), S1_BANDS)
         elif self.sensor_mode == "S2":
             bands = S2_10_BANDS if self.channel_profile == "bifold_resnet101" else S2_12_BANDS
-            image_payload = self._stack_bands(self._load_key(s2_key), bands)
+            image_payload = self._stack_bands(self._load_key(lmdb_key), bands)
         else:
             s2_bands = S2_10_BANDS if self.channel_profile == "bifold_resnet101" else S2_12_BANDS
+            payload = self._load_key(lmdb_key)
             if self.channel_profile == "bifold_resnet101":
-                image_payload = np.concatenate([self._stack_bands(self._load_key(s1_key), S1_BANDS), self._stack_bands(self._load_key(s2_key), s2_bands)], axis=0)
+                image_payload = np.concatenate([self._stack_bands(payload, S1_BANDS), self._stack_bands(payload, s2_bands)], axis=0)
             else:
-                image_payload = {"S1": self._stack_bands(self._load_key(s1_key), S1_BANDS), "S2": self._stack_bands(self._load_key(s2_key), s2_bands)}
+                image_payload = {"S1": self._stack_bands(payload, S1_BANDS), "S2": self._stack_bands(payload, s2_bands)}
         metadata["label_vector"] = label_array.astype(int).tolist()
         return {"image": image_payload, "metadata": metadata}
 
