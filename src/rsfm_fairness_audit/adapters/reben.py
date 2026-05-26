@@ -27,11 +27,63 @@ REBEN_CONFIGILM_IMAGE_SIZES = {
     ("bifold_resnet101", "S1+S2"): (12, 120, 120),
 }
 
+S2_12_BANDS = ("B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B09", "B11", "B12")
+S2_10_BANDS = ("B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B11", "B12")
+S1_BANDS = ("VV", "VH")
+
 
 def _to_numpy(value: Any) -> np.ndarray:
     if hasattr(value, "detach"):
         value = value.detach().cpu().numpy()
     return np.asarray(value)
+
+
+def _open_lmdb(path: Path) -> Any:
+    try:
+        import lmdb
+    except ImportError as exc:
+        raise RebenDatasetError("The lmdb package is required for reBEN LMDB loading.") from exc
+    return lmdb.open(str(path), readonly=True, lock=False, readahead=False, max_readers=1, subdir=path.is_dir())
+
+
+def _load_safetensors_lmdb_value(value: bytes) -> dict[str, np.ndarray]:
+    try:
+        from safetensors.numpy import load as load_safetensors
+    except ImportError as exc:
+        raise RebenDatasetError("safetensors is required for this reBEN LMDB payload format.") from exc
+    try:
+        return {key: np.asarray(array) for key, array in load_safetensors(value).items()}
+    except Exception as exc:
+        raise RebenDatasetError(f"Could not decode LMDB value as safetensors: {type(exc).__name__}: {exc}") from exc
+
+
+def detect_lmdb_payload_format(lmdb_path: str | Path) -> str:
+    path = Path(lmdb_path)
+    if not path.exists():
+        return "missing"
+    try:
+        env = _open_lmdb(path)
+        with env.begin(write=False) as txn:
+            cursor = txn.cursor()
+            if not cursor.first():
+                return "empty"
+            _, value = cursor.item()
+            try:
+                pickle.loads(value)
+                return "pickle_patch_interface"
+            except Exception:
+                pass
+            try:
+                _load_safetensors_lmdb_value(value)
+                return "safetensors"
+            except Exception:
+                pass
+            return "unknown"
+    finally:
+        try:
+            env.close()
+        except Exception:
+            pass
 
 
 def resolve_reben_root_dir(images_lmdb: str | Path) -> tuple[Path, Path, list[str]]:
@@ -130,6 +182,168 @@ def prepare_configilm_compatible_metadata(
         "split_counts": split_counts,
         "csv_format": "single_column_patch_names_headerless",
     }
+
+
+def prepare_lmdb_safetensors_metadata(
+    metadata_parquet: str | Path,
+    *,
+    split: str,
+    max_samples: int | None = None,
+) -> list[dict[str, Any]]:
+    frame = _read_parquet_frame(Path(metadata_parquet))
+    columns = [str(column) for column in frame.columns]
+    if "split" in columns:
+        split_values = frame["split"].map(_normalise_split)
+        frame = frame[split_values == _normalise_split(split)]
+    if max_samples is not None:
+        frame = frame.head(int(max_samples))
+    rows: list[dict[str, Any]] = []
+    for _, row in frame.iterrows():
+        item = row.to_dict()
+        sample_id = item.get("patch_id") or item.get("s2v1_name") or item.get("s2_name") or item.get("s1_name")
+        if not sample_id:
+            continue
+        item["sample_id"] = str(sample_id)
+        item["patch_id"] = str(item.get("patch_id", sample_id))
+        item["split"] = _normalise_split(item.get("split", split))
+        item["country"] = str(item.get("country", ""))
+        rows.append(item)
+    return rows
+
+
+class LmdbSafetensorsRebenDatasetAdapter(DatasetAdapter):
+    """reBEN adapter for LMDB values stored as safetensors bytes."""
+
+    valid_sensor_modes = {"S1", "S2", "S1+S2"}
+
+    def __init__(
+        self,
+        images_lmdb: str | Path,
+        metadata_parquet: str | Path,
+        metadata_snow_cloud_parquet: str | Path | None = None,
+        *,
+        split: str,
+        sensor_mode: str,
+        max_samples: int | None = None,
+        channel_profile: str = "croma",
+    ) -> None:
+        root_dir, lmdb_path, notes = resolve_reben_root_dir(images_lmdb)
+        self.root_dir = root_dir
+        self.images_lmdb = lmdb_path
+        self.metadata_parquet = Path(metadata_parquet)
+        self.metadata_snow_cloud_parquet = Path(metadata_snow_cloud_parquet) if metadata_snow_cloud_parquet else None
+        self.split = split
+        self.sensor_mode = sensor_mode
+        self.max_samples = None if max_samples in (None, 0) else int(max_samples)
+        self.channel_profile = channel_profile
+        self.root_resolution_notes = notes
+        self._rows: list[dict[str, Any]] | None = None
+        self._env: Any | None = None
+        if sensor_mode not in self.valid_sensor_modes:
+            raise ValueError(f"sensor_mode must be one of {sorted(self.valid_sensor_modes)}, got {sensor_mode!r}.")
+
+    def _metadata_rows(self) -> list[dict[str, Any]]:
+        if self._rows is None:
+            self._rows = prepare_lmdb_safetensors_metadata(self.metadata_parquet, split=self.split, max_samples=self.max_samples)
+        return self._rows
+
+    def _lmdb_env(self) -> Any:
+        if self._env is None:
+            if not self.images_lmdb.exists():
+                raise RebenDatasetError(f"LMDB path does not exist: {self.images_lmdb}")
+            self._env = _open_lmdb(self.images_lmdb)
+        return self._env
+
+    def load_metadata(self) -> list[dict[str, Any]]:
+        return [self._normalize_metadata(index, row) for index, row in enumerate(self._metadata_rows())]
+
+    def _normalize_metadata(self, index: int, row: Mapping[str, Any]) -> dict[str, Any]:
+        item = dict(row)
+        sample_id = item.get("sample_id") or item.get("patch_id") or item.get("s2v1_name") or item.get("s1_name") or f"reben_{self.split}_{index:08d}"
+        item["sample_id"] = str(sample_id)
+        item["patch_id"] = str(item.get("patch_id", sample_id))
+        item["split"] = str(item.get("split", self.split))
+        item["country"] = str(item.get("country", ""))
+        item["sensor_mode"] = self.sensor_mode
+        seasonal_snow = item.get("contains_seasonal_snow", item.get("seasonal_snow", ""))
+        cloud_shadow = item.get("contains_cloud_or_shadow", item.get("cloud_or_shadow", ""))
+        if str(seasonal_snow).lower() in {"true", "1", "yes"} or str(cloud_shadow).lower() in {"true", "1", "yes"}:
+            item["cloud_snow_shadow"] = "cloud_snow_shadow"
+        elif seasonal_snow != "" or cloud_shadow != "":
+            item["cloud_snow_shadow"] = "clear"
+        return item
+
+    def _load_key(self, key: str) -> dict[str, np.ndarray]:
+        env = self._lmdb_env()
+        with env.begin(write=False) as txn:
+            value = txn.get(str(key).encode("utf-8"))
+        if value is None:
+            raise RebenDatasetError(f"LMDB key not found: {key}")
+        return _load_safetensors_lmdb_value(value)
+
+    @staticmethod
+    def _stack_bands(payload: Mapping[str, np.ndarray], bands: Sequence[str]) -> np.ndarray:
+        missing = [band for band in bands if band not in payload]
+        if missing:
+            raise RebenDatasetError(f"LMDB payload missing bands: {missing}; available={sorted(payload)}")
+        return np.stack([np.asarray(payload[band], dtype=np.float32) for band in bands], axis=0)
+
+    def load_sample(self, index: int) -> Mapping[str, Any]:
+        row = self._metadata_rows()[index]
+        metadata = self._normalize_metadata(index, row)
+        labels = row.get("labels", [])
+        if isinstance(labels, str):
+            try:
+                labels = json.loads(labels.replace("'", '"'))
+            except Exception:
+                labels = []
+        label_array = np.asarray(labels, dtype=np.int64)
+        if label_array.shape[-1] != 19:
+            raise RebenDatasetError(f"Expected 19-label vector in metadata labels, got shape {label_array.shape}.")
+        s1_key = str(row.get("s1_name", ""))
+        s2_key = str(row.get("s2v1_name", row.get("s2_name", row.get("patch_id", ""))))
+        if self.sensor_mode == "S1":
+            image_payload: Any = self._stack_bands(self._load_key(s1_key), S1_BANDS)
+        elif self.sensor_mode == "S2":
+            bands = S2_10_BANDS if self.channel_profile == "bifold_resnet101" else S2_12_BANDS
+            image_payload = self._stack_bands(self._load_key(s2_key), bands)
+        else:
+            s2_bands = S2_10_BANDS if self.channel_profile == "bifold_resnet101" else S2_12_BANDS
+            if self.channel_profile == "bifold_resnet101":
+                image_payload = np.concatenate([self._stack_bands(self._load_key(s1_key), S1_BANDS), self._stack_bands(self._load_key(s2_key), s2_bands)], axis=0)
+            else:
+                image_payload = {"S1": self._stack_bands(self._load_key(s1_key), S1_BANDS), "S2": self._stack_bands(self._load_key(s2_key), s2_bands)}
+        metadata["label_vector"] = label_array.astype(int).tolist()
+        return {"image": image_payload, "metadata": metadata}
+
+    def get_labels(self, index: int) -> int:
+        raise RebenDatasetError("reBEN is multi-label; use get_label_vector().")
+
+    def get_label_vector(self, index: int) -> np.ndarray:
+        return np.asarray(self.load_sample(index)["metadata"]["label_vector"], dtype=np.int64)
+
+    def get_region(self, index: int) -> str:
+        return str(self.load_sample(index)["metadata"].get("country", ""))
+
+    def get_sensor(self, index: int) -> str:
+        return self.sensor_mode
+
+    def get_group_keys(self, index: int) -> dict[str, str]:
+        row = self.load_sample(index)["metadata"]
+        return {"country": str(row.get("country", "")), "sensor_mode": self.sensor_mode}
+
+    def loader_info(self) -> dict[str, Any]:
+        return {
+            "loader": "LMDB+safetensors",
+            "payload_format": "safetensors",
+            "root_dir": str(self.root_dir),
+            "images_lmdb": str(self.images_lmdb),
+            "metadata_parquet": str(self.metadata_parquet),
+            "split": self.split,
+            "sensor_mode": self.sensor_mode,
+            "channel_profile": self.channel_profile,
+            "root_resolution_notes": self.root_resolution_notes,
+        }
 
 
 def inspect_lmdb_payload(lmdb_path: str | Path, split_csv_path: str | Path | None = None) -> dict[str, Any]:
@@ -305,6 +519,19 @@ def run_configilm_reben_preflight(
             "",
             *[f"- {note}" for note in root_notes],
         ]
+        payload_format = ""
+        lmdb_info = result.get("lmdb_payload_inspection", {})
+        if isinstance(lmdb_info, Mapping):
+            if str(lmdb_info.get("pickle_load_status", "")).startswith("ok"):
+                payload_format = "pickle_patch_interface"
+            elif str(lmdb_info.get("numpy_load_status", "")).startswith("ok"):
+                payload_format = "numpy"
+            else:
+                try:
+                    if detect_lmdb_payload_format(lmdb_path) == "safetensors":
+                        payload_format = "safetensors"
+                except Exception:
+                    payload_format = ""
         if result["status"] == "ok":
             smoke = result["dataset_smoke"]
             lines.extend(
@@ -338,6 +565,16 @@ def run_configilm_reben_preflight(
                 )
             if result.get("traceback"):
                 lines.extend(["", "## Traceback", "", "```text", str(result.get("traceback", "")), "```"])
+        if payload_format == "safetensors":
+            lines.extend(
+                [
+                    "",
+                    "## Payload Format Note",
+                    "",
+                    "This LMDB stores safetensors payloads rather than ConfigILM/BigEarthNetEncoder pickle patch-interface objects.",
+                    "ConfigILM BEN2DataSet cannot read this payload with `pickle.loads`; use the repo's LMDB+safetensors reBEN adapter path.",
+                ]
+            )
         (out / "reben_configilm_preflight_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return result
 

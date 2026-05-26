@@ -15,7 +15,13 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 from rsfm_fairness_audit.io import ensure_dir  # noqa: E402
 from rsfm_fairness_audit.io import write_csv  # noqa: E402
 from rsfm_fairness_audit.adapters.croma import CROMAAdapter  # noqa: E402
-from rsfm_fairness_audit.adapters.reben import ConfigILMRebenDatasetAdapter, check_reben_configilm_dependency_chain  # noqa: E402
+from rsfm_fairness_audit.adapters.reben import (  # noqa: E402
+    ConfigILMRebenDatasetAdapter,
+    LmdbSafetensorsRebenDatasetAdapter,
+    check_reben_configilm_dependency_chain,
+    detect_lmdb_payload_format,
+    resolve_reben_root_dir,
+)
 from rsfm_fairness_audit.reben_sensor_audit import (  # noqa: E402
     REBEN_BIFOLD_RESNET101_IDS,
     REBEN_CROMA_EMBEDDING_KEYS,
@@ -157,6 +163,7 @@ def _write_preflight(args: argparse.Namespace, out: Path) -> None:
         "data_root_exists": _exists(args.data_root),
         "lmdb_root": str(args.lmdb_root or ""),
         "lmdb_root_exists": _exists(args.lmdb_root),
+        "lmdb_payload_format": payload_format,
         "croma_checkpoint": str(args.croma_checkpoint),
         "croma_checkpoint_exists": _exists(args.croma_checkpoint),
         "croma_repo": str(args.croma_repo or ""),
@@ -230,6 +237,14 @@ def _croma_mode_config(mode: str) -> dict[str, object]:
     raise ValueError(f"Unsupported CROMA sensor mode: {mode}")
 
 
+def _dataset_class_for_lmdb(args: argparse.Namespace):
+    _, resolved_lmdb_path, _ = resolve_reben_root_dir(args.lmdb_root)
+    payload_format = detect_lmdb_payload_format(resolved_lmdb_path)
+    if payload_format == "safetensors":
+        return LmdbSafetensorsRebenDatasetAdapter
+    return ConfigILMRebenDatasetAdapter
+
+
 def _run_croma_rows(args: argparse.Namespace, out: Path) -> None:
     if not args.run_croma:
         return
@@ -239,11 +254,12 @@ def _run_croma_rows(args: argparse.Namespace, out: Path) -> None:
     if not args.metadata_snow_cloud_parquet:
         write_reben_blocked_report(out, "--run-croma missing --metadata-snow-cloud-parquet")
         raise ValueError("--run-croma requires --metadata-snow-cloud-parquet.")
+    dataset_class = _dataset_class_for_lmdb(args)
     classes = _class_names(args.class_names_json)
     for mode in ["S1", "S2", "S1+S2"]:
         run_name = f"croma_{mode.lower().replace('+', '_plus_')}"
         print(f"[reben:croma] starting {run_name}")
-        train_dataset = ConfigILMRebenDatasetAdapter(
+        train_dataset = dataset_class(
             args.lmdb_root,
             args.metadata_parquet,
             args.metadata_snow_cloud_parquet,
@@ -251,7 +267,7 @@ def _run_croma_rows(args: argparse.Namespace, out: Path) -> None:
             sensor_mode=mode,
             max_samples=args.max_samples,
         )
-        eval_dataset = ConfigILMRebenDatasetAdapter(
+        eval_dataset = dataset_class(
             args.lmdb_root,
             args.metadata_parquet,
             args.metadata_snow_cloud_parquet,
@@ -310,11 +326,12 @@ def _run_bifold_rows(args: argparse.Namespace, out: Path) -> None:
     if bad:
         write_reben_blocked_report(out, "non-official BIFOLD ResNet101 refs", {"bad_refs": bad})
         raise ValueError(f"Refusing non-official BIFOLD ResNet101 ids: {bad}")
+    dataset_class = _dataset_class_for_lmdb(args)
     classes = _class_names(args.class_names_json)
     for mode in ["S1", "S2", "S1+S2"]:
         run_name = f"bifold_resnet101_{mode.lower().replace('+', '_plus_')}"
         print(f"[reben:bifold] starting {run_name}")
-        eval_dataset = ConfigILMRebenDatasetAdapter(
+        eval_dataset = dataset_class(
             args.lmdb_root,
             args.metadata_parquet,
             args.metadata_snow_cloud_parquet,
@@ -369,3 +386,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    _, resolved_lmdb_path, _ = resolve_reben_root_dir(args.lmdb_root or "")
+    payload_format = detect_lmdb_payload_format(resolved_lmdb_path) if args.lmdb_root else "missing"

@@ -13,6 +13,7 @@ import pytest
 from rsfm_fairness_audit.adapters.croma import CROMAAdapter
 from rsfm_fairness_audit.adapters.reben import (
     ConfigILMRebenDatasetAdapter,
+    LmdbSafetensorsRebenDatasetAdapter,
     import_configilm_reben_dataset_class,
     resolve_reben_root_dir,
 )
@@ -367,6 +368,36 @@ def test_resolve_reben_root_dir_handles_nested_lmdb() -> None:
     assert root_nested == nested_base
     assert lmdb_nested == nested_base / "BigEarthNetEncoded.lmdb"
     assert any("nested" in note for note in notes_nested)
+
+
+def test_lmdb_safetensors_adapter_loads_metadata_and_bands(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = [
+        {
+            "patch_id": "patch_a",
+            "s1_name": "s1_a",
+            "s2v1_name": "s2_a",
+            "split": "train",
+            "country": "DE",
+            "labels": [1] + [0] * 18,
+        }
+    ]
+
+    monkeypatch.setattr("rsfm_fairness_audit.adapters.reben.prepare_lmdb_safetensors_metadata", lambda *args, **kwargs: rows)
+
+    def fake_load_key(self, key: str):
+        if key == "s1_a":
+            return {"VV": np.ones((4, 4), dtype=np.float32), "VH": np.ones((4, 4), dtype=np.float32) * 2}
+        if key == "s2_a":
+            return {band: np.ones((4, 4), dtype=np.float32) * index for index, band in enumerate(("B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B09", "B11", "B12"))}
+        raise KeyError(key)
+
+    monkeypatch.setattr(LmdbSafetensorsRebenDatasetAdapter, "_load_key", fake_load_key)
+    adapter = LmdbSafetensorsRebenDatasetAdapter("lmdb", "meta.parquet", split="train", sensor_mode="S1+S2")
+    sample = adapter.load_sample(0)
+    assert sample["image"]["S1"].shape == (2, 4, 4)
+    assert sample["image"]["S2"].shape == (12, 4, 4)
+    assert sample["metadata"]["label_vector"][0] == 1
+    assert adapter.loader_info()["payload_format"] == "safetensors"
 
 
 def test_bifold_resnet101_runner_with_mock_model() -> None:

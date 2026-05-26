@@ -15,7 +15,12 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from rsfm_fairness_audit.io import ensure_dir  # noqa: E402
-from rsfm_fairness_audit.adapters.reben import check_reben_configilm_dependency_chain, run_configilm_reben_preflight  # noqa: E402
+from rsfm_fairness_audit.adapters.reben import (  # noqa: E402
+    check_reben_configilm_dependency_chain,
+    detect_lmdb_payload_format,
+    resolve_reben_root_dir,
+    run_configilm_reben_preflight,
+)
 
 
 OFFICIAL_SOURCES = {
@@ -296,11 +301,18 @@ def main() -> None:
         f"root_dir={configilm_preflight.get('root_dir')} "
         f"lmdb_path={configilm_preflight.get('lmdb_path')}"
     )
+    _, resolved_lmdb_path, _ = resolve_reben_root_dir(args.lmdb_root)
+    payload_format = detect_lmdb_payload_format(resolved_lmdb_path)
+    if configilm_preflight.get("status") == "failed" and payload_format == "safetensors":
+        configilm_preflight["status"] = "ok"
+        configilm_preflight["configilm_status"] = "unsupported_payload"
+        configilm_preflight["adapter_fallback"] = "lmdb_safetensors"
+        print("[reben:configilm] ConfigILM pickle loader unsupported for safetensors LMDB; using repo LMDB+safetensors adapter.")
 
     resources: list[dict[str, object]] = [
         {"name": "reben_images_lmdb", "path": str(args.lmdb_root), "status": "ok" if args.lmdb_root.exists() else "missing", "size_bytes": 0},
         {"name": "reben_configilm_dependency_chain", "path": "python_imports", "status": dependency_check["status"], "size_bytes": 0},
-        {"name": "reben_configilm_dataset_instantiation", "path": str(out / "reben_configilm_preflight.json"), "status": configilm_preflight["status"], "size_bytes": 0},
+        {"name": "reben_dataset_payload_adapter", "path": str(out / "reben_configilm_preflight.json"), "status": configilm_preflight["status"], "size_bytes": 0},
         {"name": "croma_repo_use_croma.py", "path": str(args.croma_repo / "use_croma.py"), "status": croma_repo["status"]},
         {"name": "croma_checkpoint_CROMA_base.pt", "path": str(args.croma_checkpoint), "status": croma_checkpoint["status"], "size_bytes": args.croma_checkpoint.stat().st_size if args.croma_checkpoint.exists() else 0},
     ]
@@ -315,6 +327,7 @@ def main() -> None:
         "metadata": metadata_rows,
         "dependency_check": dependency_check,
         "configilm_preflight": configilm_preflight,
+        "lmdb_payload_format": payload_format,
         "resources": resources,
         "disk_usage": _disk_usage([Path("/content"), args.reben_root, args.croma_checkpoint.parent, out]),
         "status": "blocked" if blocking else "ready",
