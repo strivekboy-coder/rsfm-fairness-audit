@@ -288,7 +288,7 @@ def main() -> None:
         metadata_snow_cloud_parquet=args.metadata_snow_cloud_parquet,
         output_dir=out,
         split="train",
-        img_size=(14, 120, 120),
+        img_size=(12, 120, 120),
     )
     print(
         "[reben:configilm] "

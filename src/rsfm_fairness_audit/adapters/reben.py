@@ -15,6 +15,16 @@ class RebenDatasetError(RuntimeError):
     """Raised when official BigEarthNet v2.0 / reBEN loading is unavailable or inconsistent."""
 
 
+REBEN_CONFIGILM_IMAGE_SIZES = {
+    ("croma", "S1"): (2, 120, 120),
+    ("croma", "S2"): (12, 120, 120),
+    ("croma", "S1+S2"): (12, 120, 120),
+    ("bifold_resnet101", "S1"): (2, 120, 120),
+    ("bifold_resnet101", "S2"): (10, 120, 120),
+    ("bifold_resnet101", "S1+S2"): (12, 120, 120),
+}
+
+
 def _to_numpy(value: Any) -> np.ndarray:
     if hasattr(value, "detach"):
         value = value.detach().cpu().numpy()
@@ -124,7 +134,7 @@ def instantiate_configilm_ben2_smoke(
     root_dir: str | Path,
     labels_parquet: str | Path,
     split: str = "train",
-    img_size: tuple[int, int, int] = (14, 120, 120),
+    img_size: tuple[int, int, int] = (12, 120, 120),
     max_img_idx: int = 2,
 ) -> dict[str, Any]:
     dataset_class, class_info = import_configilm_reben_dataset_class()
@@ -168,7 +178,7 @@ def run_configilm_reben_preflight(
     metadata_snow_cloud_parquet: str | Path | None = None,
     output_dir: str | Path | None = None,
     split: str = "train",
-    img_size: tuple[int, int, int] = (14, 120, 120),
+    img_size: tuple[int, int, int] = (12, 120, 120),
 ) -> dict[str, Any]:
     root_dir, lmdb_path, root_notes = resolve_reben_root_dir(images_lmdb)
     result: dict[str, Any] = {
@@ -342,6 +352,7 @@ class ConfigILMRebenDatasetAdapter(DatasetAdapter):
         self.max_samples = None if max_samples in (None, 0) else int(max_samples)
         self.channel_profile = channel_profile
         self._dataset = dataset
+        self._s1_dataset: Any | None = None
         self._dataset_class_info: dict[str, str] = {}
         if sensor_mode not in self.valid_sensor_modes:
             raise ValueError(f"sensor_mode must be one of {sorted(self.valid_sensor_modes)}, got {sensor_mode!r}.")
@@ -363,10 +374,13 @@ class ConfigILMRebenDatasetAdapter(DatasetAdapter):
         if self.channel_profile == "bifold_resnet101":
             # BIFOLD v0.2.0 cards use S1=2, S2=10, all=12.
             return {"S1": 2, "S2": 10, "S1+S2": 12}[self.sensor_mode]
-        # CROMA uses S1=2, S2=12, both=14. ConfigILM exposes S2=12 only as
-        # part of the 14-channel S1+S2+60m-original profile, so S2-only loads
-        # 14 and drops the first two SAR channels below.
-        return 2 if self.sensor_mode == "S1" else 14
+        # CROMA uses S1=2 and S2=12. For fusion, ConfigILM is instantiated
+        # separately for the 2-channel SAR and 12-channel optical configs.
+        return 2 if self.sensor_mode == "S1" else 12
+
+    @property
+    def img_size(self) -> tuple[int, int, int]:
+        return REBEN_CONFIGILM_IMAGE_SIZES[(self.channel_profile, self.sensor_mode)]
 
     def _load_official_dataset(self) -> Any:
         if self._dataset is not None:
@@ -397,7 +411,7 @@ class ConfigILMRebenDatasetAdapter(DatasetAdapter):
         kwargs = {
             "root_dir": root_dir,
             "split": self.split,
-            "img_size": (self.bands, 120, 120),
+            "img_size": self.img_size,
             "return_patchname": True,
             "new_label_file": label_file,
         }
@@ -410,6 +424,31 @@ class ConfigILMRebenDatasetAdapter(DatasetAdapter):
             self._dataset = dataset_class(**kwargs)
         return self._dataset
 
+    def _load_s1_dataset_for_fusion(self) -> Any:
+        if self._s1_dataset is not None:
+            return self._s1_dataset
+        if self.sensor_mode != "S1+S2" or self.channel_profile != "croma":
+            return self._load_official_dataset()
+        if self._dataset is not None:
+            return self._dataset
+        for path in [self.images_lmdb, self.metadata_parquet, self.metadata_snow_cloud_parquet]:
+            if not path.exists():
+                raise RebenDatasetError(f"Required reBEN path does not exist: {path}")
+        dataset_class, info = import_configilm_reben_dataset_class()
+        self._dataset_class_info = dict(info)
+        root_dir, _, _ = resolve_reben_root_dir(self.images_lmdb)
+        compat_labels = root_dir / "labels_configilm_compat.parquet"
+        label_file = compat_labels if compat_labels.exists() else self.metadata_parquet
+        self._s1_dataset = dataset_class(
+            root_dir=root_dir,
+            split=self.split,
+            img_size=(2, 120, 120),
+            return_patchname=True,
+            new_label_file=label_file,
+            max_img_idx=self.max_samples,
+        )
+        return self._s1_dataset
+
     def loader_info(self) -> dict[str, Any]:
         return {
             "loader": "ConfigILM",
@@ -419,6 +458,7 @@ class ConfigILMRebenDatasetAdapter(DatasetAdapter):
             "sensor_mode": self.sensor_mode,
             "channel_profile": self.channel_profile,
             "bands": self.bands,
+            "img_size": self.img_size,
         }
 
     def _metadata_for_index(self, index: int) -> dict[str, Any]:
@@ -494,13 +534,24 @@ class ConfigILMRebenDatasetAdapter(DatasetAdapter):
                 raise RebenDatasetError(f"Expected BIFOLD {self.sensor_mode} {expected}-channel image, got {image_array.shape}.")
             image_payload = image_array
         elif self.sensor_mode == "S2":
-            if image_array.shape[0] < 14:
-                raise RebenDatasetError("CROMA S2 path requires ConfigILM 14-channel S1+S2 data so it can drop the first two S1 channels.")
-            image_payload = image_array[2:14]
+            if image_array.shape[0] == 14:
+                image_array = image_array[2:14]
+            if image_array.shape[0] != 12:
+                raise RebenDatasetError(f"CROMA S2 path requires ConfigILM 12-channel S2 data, got {image_array.shape}.")
+            image_payload = image_array
         else:
-            if image_array.shape[0] < 14:
-                raise RebenDatasetError("CROMA both mode requires 14-channel ConfigILM S1+S2 data.")
-            image_payload = {"S1": image_array[:2], "S2": image_array[2:14]}
+            if image_array.shape[0] == 14:
+                image_array = image_array[2:14]
+            if image_array.shape[0] != 12:
+                raise RebenDatasetError(f"CROMA fusion optical branch requires 12-channel S2 data, got {image_array.shape}.")
+            s1_item = self._load_s1_dataset_for_fusion()[index]
+            s1_image = s1_item[0] if isinstance(s1_item, (list, tuple)) else s1_item
+            s1_array = _to_numpy(s1_image).astype(np.float32)
+            if s1_array.shape[0] >= 14:
+                s1_array = s1_array[:2]
+            if s1_array.shape[0] != 2:
+                raise RebenDatasetError(f"CROMA fusion SAR branch requires 2-channel S1 data, got {s1_array.shape}.")
+            image_payload = {"S1": s1_array, "S2": image_array}
         metadata = self._normalize_metadata(index, self._metadata_for_index(index))
         if patch_name:
             metadata["sample_id"] = str(patch_name)

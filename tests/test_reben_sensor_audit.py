@@ -305,7 +305,7 @@ def test_configilm_reben_adapter_uses_ben2_signature(monkeypatch: pytest.MonkeyP
             return 1
 
         def __getitem__(self, index: int):
-            image = np.zeros((14, 16, 16), dtype=np.float32)
+            image = np.zeros((12, 16, 16), dtype=np.float32)
             label = np.zeros(19, dtype=np.float32)
             label[0] = 1.0
             return image, label, "patch_a"
@@ -331,7 +331,7 @@ def test_configilm_reben_adapter_uses_ben2_signature(monkeypatch: pytest.MonkeyP
     sample = adapter.load_sample(0)
     assert captured["root_dir"] == root
     assert captured["split"] == "val"
-    assert captured["img_size"] == (14, 120, 120)
+    assert captured["img_size"] == (12, 120, 120)
     assert captured["return_patchname"] is True
     assert captured["new_label_file"] == labels
     assert captured["max_img_idx"] == 5
