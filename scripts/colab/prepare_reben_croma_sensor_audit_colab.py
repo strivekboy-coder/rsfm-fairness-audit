@@ -188,16 +188,16 @@ def _disk_usage(paths: list[Path]) -> list[dict[str, object]]:
     return rows
 
 
-def _write_blocked_report(path: Path, missing: list[str], args: argparse.Namespace) -> None:
+def _write_blocked_report(path: Path, blocking: list[str], args: argparse.Namespace) -> None:
     lines = [
         "# reBEN / CROMA Preparation Blocked Report",
         "",
         "Preparation could not verify all required resources for the Step 1 smoke/full runner.",
         "",
-        "## Missing Required Resources",
+        "## Blocking Checks",
         "",
     ]
-    lines.extend([f"- `{item}`" for item in missing])
+    lines.extend([f"- {item}" for item in blocking])
     lines.extend(
         [
             "",
@@ -306,7 +306,7 @@ def main() -> None:
     ]
     resources.extend({"name": row["name"], "path": row["path"], "status": row["status"], "size_bytes": row.get("size_bytes", 0)} for row in metadata_rows)
 
-    missing = [str(item["path"]) for item in resources if item["status"] != "ok"]
+    blocking = [f"{item['name']}: {item['status']} (`{item['path']}`)" for item in resources if item["status"] != "ok"]
     payload: dict[str, object] = {
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "official_sources": OFFICIAL_SOURCES,
@@ -317,8 +317,9 @@ def main() -> None:
         "configilm_preflight": configilm_preflight,
         "resources": resources,
         "disk_usage": _disk_usage([Path("/content"), args.reben_root, args.croma_checkpoint.parent, out]),
-        "status": "blocked" if missing else "ready",
-        "missing_required_paths": missing,
+        "status": "blocked" if blocking else "ready",
+        "blocking_checks": blocking,
+        "missing_required_paths": [str(item["path"]) for item in resources if item["status"] == "missing"],
         "guardrails": [
             "Do not use BigEarthNet v1.",
             "Do not use lc-col BigEarthNet as a substitute for reBEN.",
@@ -327,11 +328,11 @@ def main() -> None:
         ],
     }
     (out / "preparation_report.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    _write_preparation_report(out / "preparation_report.md", payload, missing)
-    if missing:
-        _write_blocked_report(out / "blocked_report.md", missing, args)
-    print(json.dumps({"status": payload["status"], "missing_required_paths": missing, "output_dir": str(out)}, indent=2))
-    if missing:
+    _write_preparation_report(out / "preparation_report.md", payload, blocking)
+    if blocking:
+        _write_blocked_report(out / "blocked_report.md", blocking, args)
+    print(json.dumps({"status": payload["status"], "blocking_checks": blocking, "output_dir": str(out)}, indent=2))
+    if blocking:
         raise SystemExit(1)
 
 

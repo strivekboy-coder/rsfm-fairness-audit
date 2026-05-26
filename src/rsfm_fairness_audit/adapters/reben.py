@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import io
 import json
+import pickle
+import traceback
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -129,6 +132,69 @@ def prepare_configilm_compatible_metadata(
     }
 
 
+def inspect_lmdb_payload(lmdb_path: str | Path, split_csv_path: str | Path | None = None) -> dict[str, Any]:
+    """Inspect LMDB structure without scanning or loading the full database."""
+    path = Path(lmdb_path)
+    result: dict[str, Any] = {
+        "path": str(path),
+        "exists": path.exists(),
+        "is_dir": path.is_dir(),
+        "data_mdb_exists": (path / "data.mdb").exists(),
+        "lock_mdb_exists": (path / "lock.mdb").exists(),
+        "data_mdb_size_bytes": (path / "data.mdb").stat().st_size if (path / "data.mdb").exists() else 0,
+        "split_csv_path": str(split_csv_path or ""),
+        "first_split_patch_id": "",
+        "lmdb_stat": {},
+        "first_key": "",
+        "first_value_len": 0,
+        "first_value_prefix_hex": "",
+        "first_value_prefix_ascii": "",
+        "pickle_load_status": "not_attempted",
+        "numpy_load_status": "not_attempted",
+        "error": "",
+    }
+    if split_csv_path and Path(split_csv_path).exists():
+        try:
+            with Path(split_csv_path).open("r", encoding="utf-8") as handle:
+                result["first_split_patch_id"] = handle.readline().strip().split(",")[0]
+        except Exception as exc:
+            result["first_split_patch_id_error"] = f"{type(exc).__name__}: {exc}"
+    if not path.exists():
+        result["error"] = "LMDB path does not exist."
+        return result
+    try:
+        import lmdb
+    except ImportError as exc:
+        result["error"] = f"lmdb package unavailable: {exc}"
+        return result
+    try:
+        env = lmdb.open(str(path), readonly=True, lock=False, readahead=False, max_readers=1, subdir=path.is_dir())
+        with env.begin(write=False) as txn:
+            result["lmdb_stat"] = dict(txn.stat())
+            cursor = txn.cursor()
+            if cursor.first():
+                key, value = cursor.item()
+                result["first_key"] = key.decode("utf-8", errors="replace")
+                result["first_value_len"] = len(value)
+                prefix = value[:32]
+                result["first_value_prefix_hex"] = prefix.hex()
+                result["first_value_prefix_ascii"] = prefix.decode("utf-8", errors="replace")
+                try:
+                    pickle.loads(value)
+                    result["pickle_load_status"] = "ok"
+                except Exception as exc:
+                    result["pickle_load_status"] = f"failed: {type(exc).__name__}: {exc}"
+                try:
+                    np.load(io.BytesIO(value), allow_pickle=False)
+                    result["numpy_load_status"] = "ok"
+                except Exception as exc:
+                    result["numpy_load_status"] = f"failed: {type(exc).__name__}: {exc}"
+        env.close()
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+    return result
+
+
 def instantiate_configilm_ben2_smoke(
     *,
     root_dir: str | Path,
@@ -192,8 +258,10 @@ def run_configilm_reben_preflight(
         "metadata_snow_cloud_exists": bool(metadata_snow_cloud_parquet and Path(metadata_snow_cloud_parquet).exists()),
         "ben2_signature": "",
         "compatibility_files": {},
+        "lmdb_payload_inspection": {},
         "dataset_smoke": {},
         "error": "",
+        "traceback": "",
     }
     try:
         dataset_class, class_info = import_configilm_reben_dataset_class()
@@ -203,6 +271,7 @@ def run_configilm_reben_preflight(
             raise RebenDatasetError(f"Expected ConfigILM LMDB at {lmdb_path}")
         compat = prepare_configilm_compatible_metadata(metadata_parquet, root_dir)
         result["compatibility_files"] = compat
+        result["lmdb_payload_inspection"] = inspect_lmdb_payload(lmdb_path, compat.get("split_csv_files", {}).get(split))
         smoke = instantiate_configilm_ben2_smoke(
             root_dir=root_dir,
             labels_parquet=compat["labels_compat_parquet"],
@@ -215,6 +284,11 @@ def run_configilm_reben_preflight(
     except Exception as exc:
         result["status"] = "failed"
         result["error"] = f"{type(exc).__name__}: {exc}"
+        result["traceback"] = traceback.format_exc()
+        if result.get("compatibility_files") and not result.get("lmdb_payload_inspection"):
+            compat = result["compatibility_files"]
+            if isinstance(compat, Mapping):
+                result["lmdb_payload_inspection"] = inspect_lmdb_payload(lmdb_path, compat.get("split_csv_files", {}).get(split, None))
     if output_dir is not None:
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
@@ -247,6 +321,23 @@ def run_configilm_reben_preflight(
             )
         else:
             lines.extend(["", "## Error", "", str(result.get("error", ""))])
+            lmdb_info = result.get("lmdb_payload_inspection", {})
+            if isinstance(lmdb_info, Mapping) and lmdb_info:
+                lines.extend(
+                    [
+                        "",
+                        "## LMDB Payload Inspection",
+                        "",
+                        f"- data.mdb size bytes: {lmdb_info.get('data_mdb_size_bytes', '')}",
+                        f"- first split patch id: `{lmdb_info.get('first_split_patch_id', '')}`",
+                        f"- first LMDB key: `{lmdb_info.get('first_key', '')}`",
+                        f"- first value prefix ascii: `{lmdb_info.get('first_value_prefix_ascii', '')}`",
+                        f"- pickle load status: {lmdb_info.get('pickle_load_status', '')}",
+                        f"- numpy load status: {lmdb_info.get('numpy_load_status', '')}",
+                    ]
+                )
+            if result.get("traceback"):
+                lines.extend(["", "## Traceback", "", "```text", str(result.get("traceback", "")), "```"])
         (out / "reben_configilm_preflight_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return result
 
