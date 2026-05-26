@@ -128,9 +128,11 @@ class ConfigILMRebenDatasetAdapter(DatasetAdapter):
 
     @property
     def data_dirs(self) -> dict[str, str]:
+        root_dir = self.images_lmdb.parent if self.images_lmdb.name == "BigEarthNetEncoded.lmdb" else self.images_lmdb
         return {
-            "images_lmdb": str(self.images_lmdb),
-            "metadata_parquet": str(self.metadata_parquet),
+            "root_dir": str(root_dir),
+            "images_lmdb": str(root_dir / "BigEarthNetEncoded.lmdb"),
+            "labels_parquet": str(self.metadata_parquet),
             "metadata_snow_cloud_parquet": str(self.metadata_snow_cloud_parquet),
         }
 
@@ -152,17 +154,20 @@ class ConfigILMRebenDatasetAdapter(DatasetAdapter):
                 raise RebenDatasetError(f"Required reBEN path does not exist: {path}")
         dataset_class, info = import_configilm_reben_dataset_class()
         self._dataset_class_info = dict(info)
+        root_dir = self.images_lmdb.parent if self.images_lmdb.name == "BigEarthNetEncoded.lmdb" else self.images_lmdb
         kwargs = {
-            "data_dirs": self.data_dirs,
+            "root_dir": root_dir,
             "split": self.split,
-            "bands": self.bands,
+            "img_size": (self.bands, 120, 120),
+            "return_patchname": True,
+            "new_label_file": self.metadata_parquet,
         }
         if self.max_samples is not None:
-            kwargs["max_len"] = self.max_samples
+            kwargs["max_img_idx"] = self.max_samples
         try:
             self._dataset = dataset_class(**kwargs)
         except TypeError:
-            kwargs.pop("bands", None)
+            kwargs.pop("new_label_file", None)
             self._dataset = dataset_class(**kwargs)
         return self._dataset
 
@@ -222,7 +227,16 @@ class ConfigILMRebenDatasetAdapter(DatasetAdapter):
 
     def load_sample(self, index: int) -> Mapping[str, Any]:
         dataset = self._load_official_dataset()
-        image, label = dataset[index]
+        item = dataset[index]
+        if not isinstance(item, (list, tuple)):
+            raise RebenDatasetError(f"Expected BEN2DataSet item tuple, got {type(item).__name__}.")
+        if len(item) == 3:
+            image, label, patch_name = item
+        elif len(item) == 2:
+            image, label = item
+            patch_name = ""
+        else:
+            raise RebenDatasetError(f"Expected BEN2DataSet item of length 2 or 3, got {len(item)}.")
         image_array = _to_numpy(image).astype(np.float32)
         label_array = _to_numpy(label).astype(np.float32)
         if image_array.ndim != 3:
@@ -249,6 +263,9 @@ class ConfigILMRebenDatasetAdapter(DatasetAdapter):
                 raise RebenDatasetError("CROMA both mode requires 14-channel ConfigILM S1+S2 data.")
             image_payload = {"S1": image_array[:2], "S2": image_array[2:14]}
         metadata = self._normalize_metadata(index, self._metadata_for_index(index))
+        if patch_name:
+            metadata["sample_id"] = str(patch_name)
+            metadata["patch_id"] = str(patch_name)
         metadata["label_vector"] = label_array.astype(int).tolist()
         return {"image": image_payload, "metadata": metadata}
 

@@ -289,6 +289,51 @@ def test_configilm_reben_adapter_splits_s1_s2_channels() -> None:
         bifold_s2.load_sample(0)
 
 
+def test_configilm_reben_adapter_uses_ben2_signature(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeBEN2DataSet:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.metadata = [{"patch_id": "patch_a", "country": "DE", "split": "val"}]
+
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, index: int):
+            image = np.zeros((14, 16, 16), dtype=np.float32)
+            label = np.zeros(19, dtype=np.float32)
+            label[0] = 1.0
+            return image, label, "patch_a"
+
+    tmp_root = Path(".pytest_tmp/test_reben_ben2_signature")
+    tmp_root.mkdir(parents=True, exist_ok=True)
+    root = tmp_root / "root"
+    root.mkdir(exist_ok=True)
+    (root / "BigEarthNetEncoded.lmdb").write_text("", encoding="utf-8")
+    labels = tmp_root / "labels.parquet"
+    snow = tmp_root / "snow.parquet"
+    labels.write_text("", encoding="utf-8")
+    snow.write_text("", encoding="utf-8")
+    monkeypatch.setattr("rsfm_fairness_audit.adapters.reben.import_configilm_reben_dataset_class", lambda: (_FakeBEN2DataSet, {"module": "m", "class": "BEN2DataSet"}))
+    adapter = ConfigILMRebenDatasetAdapter(
+        root / "BigEarthNetEncoded.lmdb",
+        labels,
+        snow,
+        split="val",
+        sensor_mode="S2",
+        max_samples=5,
+    )
+    sample = adapter.load_sample(0)
+    assert captured["root_dir"] == root
+    assert captured["split"] == "val"
+    assert captured["img_size"] == (14, 120, 120)
+    assert captured["return_patchname"] is True
+    assert captured["new_label_file"] == labels
+    assert captured["max_img_idx"] == 5
+    assert sample["metadata"]["patch_id"] == "patch_a"
+
+
 def test_configilm_reben_import_prefers_ben2_dataset(monkeypatch: pytest.MonkeyPatch) -> None:
     class _FakeBEN2DataSet:
         pass
