@@ -52,6 +52,7 @@ REBEN_CLASS_NAMES = (
     "Marine waters",
 )
 REBEN_CLASS_TO_INDEX = {name: index for index, name in enumerate(REBEN_CLASS_NAMES)}
+_LMDB_ENV_CACHE: dict[str, Any] = {}
 
 
 def _to_numpy(value: Any) -> np.ndarray:
@@ -65,7 +66,13 @@ def _open_lmdb(path: Path) -> Any:
         import lmdb
     except ImportError as exc:
         raise RebenDatasetError("The lmdb package is required for reBEN LMDB loading.") from exc
-    return lmdb.open(str(path), readonly=True, lock=False, readahead=False, max_readers=1, subdir=path.is_dir())
+    resolved = str(path.resolve())
+    cached = _LMDB_ENV_CACHE.get(resolved)
+    if cached is not None:
+        return cached
+    env = lmdb.open(str(path), readonly=True, lock=False, readahead=False, max_readers=512, subdir=path.is_dir())
+    _LMDB_ENV_CACHE[resolved] = env
+    return env
 
 
 def _load_safetensors_lmdb_value(value: bytes) -> dict[str, np.ndarray]:

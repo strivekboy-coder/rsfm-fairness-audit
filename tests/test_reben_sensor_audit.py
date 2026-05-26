@@ -14,6 +14,7 @@ from rsfm_fairness_audit.adapters.croma import CROMAAdapter
 from rsfm_fairness_audit.adapters.reben import (
     ConfigILMRebenDatasetAdapter,
     LmdbSafetensorsRebenDatasetAdapter,
+    _LMDB_ENV_CACHE,
     import_configilm_reben_dataset_class,
     reben_labels_to_multihot,
     resolve_reben_root_dir,
@@ -409,6 +410,27 @@ def test_reben_labels_to_multihot_handles_class_names_and_one_hot() -> None:
     one_hot = reben_labels_to_multihot([1] + [0] * 18)
     assert one_hot[0] == 1
     assert int(one_hot.sum()) == 1
+
+
+def test_lmdb_safetensors_adapter_reuses_env_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("lmdb")
+    opened = []
+
+    class _FakeEnv:
+        pass
+
+    def fake_open(path, **kwargs):
+        opened.append((path, kwargs))
+        return _FakeEnv()
+
+    monkeypatch.setattr("lmdb.open", fake_open)
+    _LMDB_ENV_CACHE.clear()
+    a = LmdbSafetensorsRebenDatasetAdapter(".pytest_tmp/reben_cache_test", "meta.parquet", split="train", sensor_mode="S1")
+    b = LmdbSafetensorsRebenDatasetAdapter(".pytest_tmp/reben_cache_test", "meta.parquet", split="val", sensor_mode="S1")
+    assert a._lmdb_env() is b._lmdb_env()
+    assert len(opened) == 1
+    assert opened[0][1]["max_readers"] == 512
+    _LMDB_ENV_CACHE.clear()
 
 
 def test_bifold_resnet101_runner_with_mock_model() -> None:
