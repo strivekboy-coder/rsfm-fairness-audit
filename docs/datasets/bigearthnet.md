@@ -24,6 +24,34 @@ The Colab runner writes both primitives for each completed run: `risk_bce` as th
 
 ## Current Implementation
 
+### 2026-05-27 CROMA smoke and CUDA note
+
+The CROMA-only smoke run has completed for `croma_s1`, `croma_s2`, and
+`croma_s1_plus_s2` on a 256-sample cap. It produced the expected CROMA
+per-mode outputs and package under the Colab smoke output directory.
+
+The official BIFOLD ResNet101 path remains blocked until the public/authorized
+`reben_publication.BigEarthNetv2_0_ImageClassifier` source is available. The
+BIFOLD Hugging Face model repositories expose weights/configs but not the custom
+model code required by the official model cards, and this project must not
+replace that path with torchvision ResNet101.
+
+A CROMA GPU-device bug was found during the full-run attempt: the Colab runtime
+had an A100 and `torch.cuda.is_available()` was true, but the subprocess still
+used 0 MB GPU RAM because the runner did not pass `--device` into
+`CROMAAdapter`. This is now fixed. The runner supports
+`--device auto|cuda|cpu`, passes it into the adapter, and the adapter logs the
+resolved device, GPU name, model parameter device, and input tensor devices at
+the first forward pass. A healthy CUDA run should print a line like:
+
+```text
+[info] CROMA device: requested=auto resolved=cuda gpu=NVIDIA A100... model_parameter_device=cuda:0 input_tensor_devices={'SAR_images': 'cuda:0'}
+```
+
+If this line reports `resolved=cpu` or GPU memory remains at 0 MB during CROMA
+embedding extraction, stop and inspect the device handoff before running the
+full audit.
+
 The Colab workflow is:
 
 Before preparation, install the ConfigILM/reBEN dependency chain without reinstalling torch/CUDA:
@@ -50,7 +78,11 @@ This preparation script downloads/verifies the official CROMA repo/checkpoint an
 
 The ConfigILM loader class used by the current Colab stack is `configilm.extra.DataSets.BEN2_DataSet.BEN2DataSet`. The adapter keeps fallback aliases, but reports the exact class used in `dataset_preflight.json` and per-run `run_metadata_*.json`. `bigearthnet_common` 2.8.x expects `fastcore.dispatch`, so pin `fastcore==1.5.29` if a newer fastcore removes that API. Do not reinstall torch/CUDA for this compatibility fix.
 
-2. Run the smoke or full audit runner:
+2. Run the smoke or full audit runner.
+
+For long full-data CROMA runs, prefer one sensor mode per Colab cell so a later
+mode failure does not waste the earlier mode's wall time. Example S1-only full
+run:
 
 ```bash
 python scripts/colab/run_reben_croma_sensor_mode_audit_colab.py \
@@ -62,14 +94,24 @@ python scripts/colab/run_reben_croma_sensor_mode_audit_colab.py \
   --output-dir /content/outputs/reben_croma_sensor_mode_audit \
   --batch-size 64 \
   --run-croma \
-  --run-bifold \
+  --croma-mode S1 \
+  --device auto \
   --probe-epochs 100 \
   --package
 ```
 
-The runner uses ConfigILM/reBEN for official LMDB/parquet loading. It refuses to silently substitute BigEarthNet v1, BEN-GE pilots, torchvision ResNet101, or single-label BWER.
+Repeat with `--croma-mode S2` and `--croma-mode "S1+S2"` for the other two
+CROMA rows. Omitting `--croma-mode` runs all three modes sequentially.
+
+The runner uses ConfigILM/reBEN-compatible loading or the repo LMDB+safetensors
+adapter when the LMDB payload is safetensors rather than ConfigILM pickle
+payloads. It refuses to silently substitute BigEarthNet v1, BEN-GE pilots,
+torchvision ResNet101, or single-label BWER.
 
 ## Open Items
 
-- Real Colab execution with official LMDB/parquet, CROMA checkpoint/repo, ConfigILM, and official `reben_publication` code is still required.
-- Final six-row result zip is not a local artifact until the Colab run completes and `reben_contract_validation.md` reports no missing artifacts.
+- Full CROMA execution is still required after the smoke run.
+- The final six-row CROMA+BIFOLD package cannot be completed until the official
+  `reben_publication` source path is available. Until then, CROMA-only outputs
+  are valid partial Step 1 evidence and BIFOLD is a documented blocked official
+  reference path.
