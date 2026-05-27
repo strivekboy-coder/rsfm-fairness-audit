@@ -30,6 +30,7 @@ REBEN_CONFIGILM_IMAGE_SIZES = {
 S2_12_BANDS = ("B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B09", "B11", "B12")
 S2_10_BANDS = ("B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B11", "B12")
 S1_BANDS = ("VV", "VH")
+REBEN_TARGET_SIZE = (120, 120)
 REBEN_CLASS_NAMES = (
     "Urban fabric",
     "Industrial or commercial units",
@@ -370,11 +371,32 @@ class LmdbSafetensorsRebenDatasetAdapter(DatasetAdapter):
         raise RebenDatasetError(f"No LMDB key contained expected bands {list(expected_bands)}. Attempts: {' | '.join(errors)}")
 
     @staticmethod
+    def _resize_band(array: np.ndarray, target_shape: tuple[int, int] = REBEN_TARGET_SIZE) -> np.ndarray:
+        arr = np.asarray(array, dtype=np.float32)
+        if arr.shape == target_shape:
+            return arr
+        if arr.ndim != 2:
+            raise RebenDatasetError(f"Expected 2D band array before resize, got shape {arr.shape}.")
+        try:
+            import cv2
+
+            return cv2.resize(arr, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+        except ImportError:
+            try:
+                import torch
+                import torch.nn.functional as F
+            except ImportError as exc:
+                raise RebenDatasetError("Resizing multi-resolution reBEN bands requires cv2 or torch.") from exc
+            tensor = torch.as_tensor(arr[None, None, :, :], dtype=torch.float32)
+            resized = F.interpolate(tensor, size=target_shape, mode="bilinear", align_corners=False)
+            return resized[0, 0].cpu().numpy().astype(np.float32)
+
+    @staticmethod
     def _stack_bands(payload: Mapping[str, np.ndarray], bands: Sequence[str]) -> np.ndarray:
         missing = [band for band in bands if band not in payload]
         if missing:
             raise RebenDatasetError(f"LMDB payload missing bands: {missing}; available={sorted(payload)}")
-        return np.stack([np.asarray(payload[band], dtype=np.float32) for band in bands], axis=0)
+        return np.stack([LmdbSafetensorsRebenDatasetAdapter._resize_band(np.asarray(payload[band], dtype=np.float32)) for band in bands], axis=0)
 
     def load_sample(self, index: int) -> Mapping[str, Any]:
         row = self._metadata_rows()[index]
