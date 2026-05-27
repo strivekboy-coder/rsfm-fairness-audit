@@ -393,5 +393,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    _, resolved_lmdb_path, _ = resolve_reben_root_dir(args.lmdb_root or "")
-    payload_format = detect_lmdb_payload_format(resolved_lmdb_path) if args.lmdb_root else "missing"
