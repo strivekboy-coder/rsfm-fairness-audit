@@ -29,7 +29,7 @@ The Colab workflow is:
 Before preparation, install the ConfigILM/reBEN dependency chain without reinstalling torch/CUDA:
 
 ```bash
-pip install -U --no-deps configilm bigearthnet_patch_interface bigearthnet_common
+pip install -U --no-deps appdirs configilm bigearthnet_patch_interface bigearthnet_common
 pip install --force-reinstall 'fastcore==1.5.29'
 ```
 

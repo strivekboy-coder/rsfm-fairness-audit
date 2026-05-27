@@ -730,6 +730,7 @@ def import_configilm_reben_dataset_class() -> tuple[type[Any], dict[str, str]]:
 def check_reben_configilm_dependency_chain() -> dict[str, Any]:
     """Check imports that commonly fail before the ConfigILM reBEN loader is usable."""
     modules = [
+        "appdirs",
         "fastcore",
         "fastcore.dispatch",
         "bigearthnet_common",
@@ -755,7 +756,7 @@ def check_reben_configilm_dependency_chain() -> dict[str, Any]:
             ok = False
             rows.append({"module": "configilm.extra.DataSets.BEN2_DataSet", "status": "failed", "version": "", "message": f"{type(exc).__name__}: {exc}"})
     install_command = (
-        "pip install -U --no-deps configilm bigearthnet_patch_interface bigearthnet_common "
+        "pip install -U --no-deps appdirs configilm bigearthnet_patch_interface bigearthnet_common "
         "&& pip install --force-reinstall 'fastcore==1.5.29'"
     )
     return {

@@ -33,8 +33,13 @@ def write_csv(path: str | Path, rows: Sequence[Any]) -> None:
         path.write_text("", encoding="utf-8")
         return
     materialized = [asdict(row) if is_dataclass(row) else dict(row) for row in rows]
+    fieldnames: list[str] = []
+    for row in materialized:
+        for key in row:
+            if key not in fieldnames:
+                fieldnames.append(key)
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(materialized[0].keys()))
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(materialized)
 
