@@ -78,7 +78,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bifold-resnet101-s2", default=REQUIRED_BIFOLD_IDS["s2"], help="Official HF id or local official v0.2.0 model folder for S2.")
     parser.add_argument("--bifold-resnet101-all", default=REQUIRED_BIFOLD_IDS["all"], help="Official HF id or local official v0.2.0 model folder for S1+S2.")
     parser.add_argument("--label-expanded-predictions", action="append", type=_parse_run, default=[], help="Optional completed run in name=predictions.csv form for post-hoc BWER.")
-    parser.add_argument("--run-croma", action="store_true", help="Run CROMA frozen encoder + linear multi-label probe rows for S1/S2/S1+S2.")
+    parser.add_argument("--run-croma", action="store_true", help="Run CROMA frozen encoder + linear multi-label probe rows.")
+    parser.add_argument(
+        "--croma-mode",
+        action="append",
+        choices=["S1", "S2", "S1+S2"],
+        help=(
+            "CROMA sensor mode to run. Repeat to run multiple modes. "
+            "Defaults to all modes: S1, S2, and S1+S2. Use one mode per Colab cell "
+            "for long full-data runs."
+        ),
+    )
     parser.add_argument("--run-bifold", action="store_true", help="Run official BIFOLD ResNet101 v0.2.0 inference rows for S1/S2/S1+S2.")
     parser.add_argument("--probe-epochs", type=int, default=100)
     parser.add_argument("--probe-learning-rate", type=float, default=1e-2)
@@ -263,7 +273,9 @@ def _run_croma_rows(args: argparse.Namespace, out: Path) -> None:
         raise ValueError("--run-croma requires --metadata-snow-cloud-parquet.")
     dataset_class = _dataset_class_for_lmdb(args)
     classes = _class_names(args.class_names_json)
-    for mode in ["S1", "S2", "S1+S2"]:
+    modes = args.croma_mode or ["S1", "S2", "S1+S2"]
+    print(f"[reben:croma] requested modes: {', '.join(modes)}")
+    for mode in modes:
         run_name = f"croma_{mode.lower().replace('+', '_plus_')}"
         print(f"[reben:croma] starting {run_name}")
         train_dataset = dataset_class(
