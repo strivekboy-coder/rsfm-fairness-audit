@@ -370,6 +370,7 @@ def _package(out: Path) -> Path:
     archive = out.with_suffix(".zip")
     if archive.exists():
         archive.unlink()
+    print(f"[reben] packaging output directory into {archive}")
     shutil.make_archive(str(archive.with_suffix("")), "zip", root_dir=out)
     return archive
 
@@ -382,7 +383,9 @@ def main() -> None:
     _run_croma_rows(args, out)
     _run_bifold_rows(args, out)
     _run_posthoc_bwer(args.label_expanded_predictions, out)
+    print("[reben] collecting top-level summaries")
     collect_reben_sensor_audit_outputs(out)
+    print("[reben] validating output contract")
     validate_reben_sensor_audit_contract(out)
     if args.package:
         archive = _package(out)

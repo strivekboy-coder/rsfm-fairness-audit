@@ -219,6 +219,7 @@ def train_linear_multilabel_probe(
     batch_size: int = 256,
     seed: int = 42,
     device: str = "auto",
+    log_prefix: str = "[reben:probe]",
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Train a lightweight BCE linear probe on frozen multi-label embeddings."""
     try:
@@ -252,6 +253,11 @@ def train_linear_multilabel_probe(
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     indices = np.arange(x_train.shape[0])
     history: list[dict[str, Any]] = []
+    print(
+        f"{log_prefix} training linear probe "
+        f"samples={x_train.shape[0]} labels={y_train.shape[1]} "
+        f"embedding_dim={x_train.shape[1]} epochs={int(epochs)} device={torch_device}"
+    )
     for epoch in range(1, int(epochs) + 1):
         rng.shuffle(indices)
         losses = []
@@ -266,10 +272,13 @@ def train_linear_multilabel_probe(
             loss.backward()
             optimizer.step()
             losses.append(float(loss.detach().cpu()))
-        history.append({"epoch": epoch, "train_bce_loss": float(np.mean(losses)) if losses else float("nan")})
+        epoch_loss = float(np.mean(losses)) if losses else float("nan")
+        history.append({"epoch": epoch, "train_bce_loss": epoch_loss})
+        print(f"{log_prefix} epoch={epoch}/{int(epochs)} train_bce_loss={epoch_loss:.6f}")
     model.eval()
     with torch.no_grad():
         logits_eval = model(torch.as_tensor(x_eval_norm, dtype=torch.float32, device=torch_device)).detach().cpu().numpy()
+    print(f"{log_prefix} finished linear probe; eval_samples={x_eval.shape[0]}")
     metadata = {
         "probe": "linear_multilabel_bce",
         "epochs": int(epochs),
@@ -325,7 +334,9 @@ def write_run_outputs(
     run_bwer: bool = True,
 ) -> dict[str, Path]:
     output = ensure_dir(output_dir)
+    print(f"[reben:outputs] computing metrics for {run_name}")
     summary, per_class = compute_multilabel_metrics(y_true, y_prob, thresholds, class_names)
+    print(f"[reben:outputs] expanding predictions for {run_name}")
     predictions = expand_predictions_to_label_audit_rows(sample_rows, y_true, y_prob, thresholds, run_labels, class_names)
     artifacts = {
         "aggregate_metrics": output / f"aggregate_metrics_{run_name}.csv",
@@ -339,6 +350,7 @@ def write_run_outputs(
     write_csv(artifacts["per_class_metrics"], [{**row, "run_name": run_name} for row in per_class])
     write_thresholds(artifacts["thresholds"], thresholds, class_names)
     write_thresholds_json(artifacts["thresholds_json"], thresholds, class_names)
+    print(f"[reben:outputs] writing predictions for {run_name}: rows={len(predictions)}")
     write_csv(artifacts["predictions"], predictions)
     metadata = {
         "run_name": run_name,
@@ -359,6 +371,7 @@ def write_run_outputs(
     }
     artifacts["run_metadata"].write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     if run_bwer:
+        print(f"[reben:bwer] running post-hoc BWER for {run_name}")
         bwer_artifacts = run_reben_multilabel_bwer(
             predictions,
             output / "bwer" / run_name,
@@ -378,6 +391,8 @@ def write_run_outputs(
         selective_path = output / "bwer" / run_name / "selective_risk_summary.csv"
         write_csv(selective_path, compute_selective_risk(predictions))
         artifacts["selective_risk_summary"] = selective_path
+        print(f"[reben:bwer] finished post-hoc BWER for {run_name}")
+    print(f"[reben:outputs] finished {run_name}")
     return artifacts
 
 
@@ -419,6 +434,7 @@ def extract_croma_reben_embeddings(
     """Extract frozen CROMA embeddings from a reBEN multi-label dataset adapter."""
     metadata_rows = dataset.load_metadata()
     adapter.load_model()
+    print(f"[reben:croma] extracting embeddings samples={len(metadata_rows)} batch_size={int(batch_size)}")
     embeddings: list[np.ndarray] = []
     labels: list[np.ndarray] = []
     metadata: list[dict[str, Any]] = []
@@ -437,6 +453,7 @@ def extract_croma_reben_embeddings(
         print(f"[reben:croma] embeddings {end}/{len(metadata_rows)}")
     if not embeddings:
         raise ValueError("No reBEN samples available for CROMA embedding extraction.")
+    print(f"[reben:croma] finished embeddings samples={len(metadata_rows)}")
     return np.vstack(embeddings).astype(np.float32), np.vstack(labels).astype(np.int64), metadata
 
 
@@ -602,8 +619,11 @@ def run_croma_reben_frozen_probe(
     run_bwer: bool = True,
 ) -> dict[str, Path]:
     output = ensure_dir(output_dir)
+    print(f"[reben:croma] {run_name}: extracting train embeddings")
     train_embeddings, train_labels, train_metadata = extract_croma_reben_embeddings(train_dataset, croma_adapter, batch_size=batch_size)
+    print(f"[reben:croma] {run_name}: extracting eval embeddings")
     eval_embeddings, eval_labels, eval_metadata = extract_croma_reben_embeddings(eval_dataset, croma_adapter, batch_size=batch_size)
+    print(f"[reben:croma] {run_name}: fitting frozen-embedding linear probe")
     logits_eval, probe_metadata = train_linear_multilabel_probe(
         train_embeddings,
         train_labels,
@@ -614,6 +634,7 @@ def run_croma_reben_frozen_probe(
         batch_size=batch_size,
         seed=seed,
         device=device,
+        log_prefix=f"[reben:probe:{run_name}]",
     )
     # Validation-only threshold policy: for the formal validation eval path,
     # thresholds are selected on the same validation split and must be frozen
@@ -622,6 +643,7 @@ def run_croma_reben_frozen_probe(
     thresholds = select_thresholds_from_validation(eval_labels, y_prob_eval)
     names = list(class_names or default_reben_class_names()[: eval_labels.shape[1]])
     cache_path = output / f"embeddings_{run_name}.npz"
+    print(f"[reben:croma] {run_name}: writing embedding cache {cache_path}")
     np.savez_compressed(
         cache_path,
         train_embeddings=train_embeddings,
@@ -632,6 +654,7 @@ def run_croma_reben_frozen_probe(
         train_sample_ids=np.asarray([str(row.get("sample_id", index)) for index, row in enumerate(train_metadata)]),
         eval_sample_ids=np.asarray([str(row.get("sample_id", index)) for index, row in enumerate(eval_metadata)]),
     )
+    print(f"[reben:croma] {run_name}: writing metrics, predictions, and BWER outputs")
     artifacts = write_run_outputs(
         output,
         run_name=run_name,
@@ -664,6 +687,7 @@ def _read_many(paths: Sequence[Path]) -> list[dict[str, str]]:
 def collect_reben_sensor_audit_outputs(output_dir: str | Path) -> dict[str, Path]:
     """Collect per-run Step 1 outputs into the required top-level package files."""
     output = ensure_dir(output_dir)
+    print(f"[reben:collect] collecting per-run outputs in {output}")
     artifacts = {
         "aggregate_metrics": output / "aggregate_metrics.csv",
         "per_class_metrics": output / "per_class_metrics.csv",
@@ -679,9 +703,12 @@ def collect_reben_sensor_audit_outputs(output_dir: str | Path) -> dict[str, Path
         "sensor_mode_comparison": output / "figures" / "sensor_mode_comparison.png",
         "country_bwer_summary": output / "figures" / "country_bwer_summary.png",
     }
+    print("[reben:collect] writing aggregate_metrics.csv")
     write_csv(artifacts["aggregate_metrics"], _read_many(sorted(output.glob("aggregate_metrics_*.csv"))))
+    print("[reben:collect] writing per_class_metrics.csv")
     write_csv(artifacts["per_class_metrics"], _read_many(sorted(output.glob("per_class_metrics_*.csv"))))
     bwer_dirs = sorted((output / "bwer").glob("*")) if (output / "bwer").exists() else []
+    print(f"[reben:collect] collecting BWER outputs dirs={len(bwer_dirs)}")
     write_csv(artifacts["bwer_summary"], _read_many([path / "bwer_summary.csv" for path in bwer_dirs]))
     write_csv(artifacts["bwer_by_slice"], _read_many([path / "bwer_by_slice.csv" for path in bwer_dirs]))
     write_csv(artifacts["support_sensitivity"], _read_many([path / "support_sensitivity.csv" for path in bwer_dirs]))
@@ -689,8 +716,10 @@ def collect_reben_sensor_audit_outputs(output_dir: str | Path) -> dict[str, Path
     write_csv(artifacts["missing_policy_sensitivity"], _read_many([path / "missing_policy_sensitivity.csv" for path in bwer_dirs]))
     write_csv(artifacts["selective_risk_summary"], _read_many([path / "selective_risk_summary.csv" for path in bwer_dirs]))
     write_csv(artifacts["sensor_mode_summary"], _sensor_mode_cross_run_summary(read_csv_rows(artifacts["aggregate_metrics"]) if artifacts["aggregate_metrics"].exists() else []))
+    print("[reben:collect] writing reports and figures")
     _write_reben_audit_report(artifacts["audit_report"], artifacts["aggregate_metrics"], artifacts["bwer_summary"])
     _plot_reben_figures(artifacts)
+    print("[reben:collect] finished top-level collection")
     return artifacts
 
 
