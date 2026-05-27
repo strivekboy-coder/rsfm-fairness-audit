@@ -29,6 +29,35 @@ class MockCROMAModel:
         ).astype(np.float32)
 
 
+def test_croma_torch_forward_uses_resolved_device() -> None:
+    torch = pytest.importorskip("torch")
+
+    class TorchCROMAModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(1))
+            self.observed_input_device = None
+
+        def forward(self, SAR_images):
+            self.observed_input_device = str(SAR_images.device)
+            return {"SAR_GAP": SAR_images.mean(dim=(2, 3))}
+
+    model = TorchCROMAModel()
+    adapter = CROMAAdapter(input_modality="SAR", embedding_key="SAR_GAP", model=model, image_size=16, device="cpu")
+    adapter.load_model()
+    processed = adapter.preprocess(
+        {
+            "samples": [{"image": np.zeros((2, 16, 16), dtype=np.float32)}],
+            "metadata": [{"sample_id": "x"}],
+        }
+    )
+
+    embeddings = adapter.extract_embeddings(processed)
+
+    assert embeddings.shape == (1, 2)
+    assert model.observed_input_device == str(next(model.parameters()).device)
+
+
 def _write_s2_fixture(root: Path, count: int = 8) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     rows = []

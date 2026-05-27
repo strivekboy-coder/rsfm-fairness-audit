@@ -30,7 +30,7 @@ class CROMAAdapter(ModelAdapter):
         hf_repo_id: str = official_hf_repo,
         hf_checkpoint_filename: str = "CROMA_base.pt",
         allow_hf_download: bool = False,
-        device: str = "cpu",
+        device: str = "auto",
         batch_size: int = 4,
         input_modality: str = "optical",
         expected_bands: int = 12,
@@ -62,6 +62,7 @@ class CROMAAdapter(ModelAdapter):
         self.model_loader = model_loader
         self._torch_device: Any | None = None
         self._logged_profile = False
+        self._logged_device_state = False
 
     @classmethod
     def from_config_file(
@@ -87,7 +88,7 @@ class CROMAAdapter(ModelAdapter):
             hf_repo_id=str(data.get("hf_repo_id", cls.official_hf_repo)),
             hf_checkpoint_filename=str(data.get("hf_checkpoint_filename", "CROMA_base.pt")),
             allow_hf_download=bool(data.get("allow_hf_download", False)),
-            device=str(data.get("device", "cpu")),
+            device=str(data.get("device", "auto")),
             batch_size=int(data.get("batch_size", 4)),
             input_modality=str(data.get("input_modality", "optical")),
             expected_bands=int(data.get("expected_bands", 12)),
@@ -103,10 +104,12 @@ class CROMAAdapter(ModelAdapter):
     def load_model(self) -> None:
         self._validate_config()
         if self.model is not None:
+            self.model = self._move_to_device(self.model)
             self._maybe_eval()
             return
         if self.model_loader is not None:
             self.model = self.model_loader()
+            self.model = self._move_to_device(self.model)
             self._maybe_eval()
             return
         checkpoint_path = self._resolve_checkpoint_path()
@@ -226,6 +229,45 @@ class CROMAAdapter(ModelAdapter):
         if hasattr(self.model, "eval"):
             self.model.eval()
 
+    def _model_parameter_device(self) -> str:
+        if self.model is None or not hasattr(self.model, "parameters"):
+            return "unavailable"
+        try:
+            first_parameter = next(self.model.parameters())
+        except StopIteration:
+            return "no_parameters"
+        except TypeError:
+            return "unavailable"
+        return str(getattr(first_parameter, "device", "unknown"))
+
+    def _gpu_name(self) -> str:
+        try:
+            import torch
+        except ImportError:
+            return "torch_unavailable"
+        if not torch.cuda.is_available():
+            return "cuda_unavailable"
+        try:
+            return str(torch.cuda.get_device_name(self._resolve_device()))
+        except Exception as exc:  # pragma: no cover - hardware/runtime dependent
+            return f"cuda_name_unavailable:{type(exc).__name__}"
+
+    def _log_device_state(self, kwargs: Mapping[str, Any]) -> None:
+        if self._logged_device_state:
+            return
+        input_devices = {
+            key: str(getattr(value, "device", "unknown"))
+            for key, value in kwargs.items()
+            if key.endswith("_images")
+        }
+        print(
+            "[info] CROMA device: "
+            f"requested={self.device} resolved={self._resolve_device()} "
+            f"gpu={self._gpu_name()} model_parameter_device={self._model_parameter_device()} "
+            f"input_tensor_devices={input_devices}"
+        )
+        self._logged_device_state = True
+
     def preprocess(self, batch: Mapping[str, Any]) -> Mapping[str, Any]:
         self._validate_config()
         samples = list(batch["samples"])
@@ -306,7 +348,8 @@ class CROMAAdapter(ModelAdapter):
             kwargs["SAR_images"] = torch.as_tensor(batch["SAR_images"], dtype=torch.float32).to(self._resolve_device())
         if "optical_images" in batch:
             kwargs["optical_images"] = torch.as_tensor(batch["optical_images"], dtype=torch.float32).to(self._resolve_device())
-        with torch.no_grad():
+        self._log_device_state(kwargs)
+        with torch.inference_mode():
             outputs = self.model(**kwargs)
         if not isinstance(outputs, Mapping):
             raise CROMAConfigurationError("Official CROMA model output is expected to be a mapping of embedding tensors.")

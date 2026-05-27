@@ -93,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--probe-epochs", type=int, default=100)
     parser.add_argument("--probe-learning-rate", type=float, default=1e-2)
     parser.add_argument("--probe-weight-decay", type=float, default=1e-4)
-    parser.add_argument("--device", default="auto")
+    parser.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto")
     parser.add_argument("--class-names-json", type=Path, help="Optional JSON list of the 19 reBEN class names.")
     parser.add_argument("--package", action="store_true", help="Zip the output directory after readiness/post-hoc stages.")
     return parser
@@ -299,6 +299,7 @@ def _run_croma_rows(args: argparse.Namespace, out: Path) -> None:
             repo_path=args.croma_repo,
             image_size=120,
             batch_size=args.batch_size,
+            device=args.device,
             **_croma_mode_config(mode),
         )
         run_croma_reben_frozen_probe(
