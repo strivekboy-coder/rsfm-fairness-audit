@@ -121,6 +121,53 @@ def _standardised_country_class(rows: Sequence[Mapping[str, Any]]) -> list[dict[
     ]
 
 
+def _country_class_standardisation_diagnostics(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Pair raw country rows with country | class_label rows to verify balancing."""
+    by_key = {(str(row.get("sensor_mode", "")), _key(row)): row for row in rows}
+    output: list[dict[str, Any]] = []
+    for mode in ("S1", "S2", "S1+S2"):
+        for risk_name in ("risk_bce", "risk_binary_error"):
+            raw = by_key.get((mode, (risk_name, "country", "")))
+            standardised = by_key.get((mode, (risk_name, "country", "class_label")))
+            raw_bwer = _float(raw.get("bwer") if raw else "")
+            std_bwer = _float(standardised.get("bwer") if standardised else "")
+            raw_mean = _float(raw.get("mean_risk") if raw else "")
+            std_mean = _float(standardised.get("mean_risk") if standardised else "")
+            raw_tail = _float(raw.get("tail_risk") if raw else "")
+            std_tail = _float(standardised.get("tail_risk") if standardised else "")
+            output.append(
+                {
+                    "sensor_mode": mode,
+                    "risk_name": risk_name,
+                    "raw_country_row_present": str(raw is not None),
+                    "standardised_country_class_row_present": str(standardised is not None),
+                    "raw_balance_variable": raw.get("balance_variable", "") if raw else "",
+                    "standardised_balance_variable": standardised.get("balance_variable", "") if standardised else "",
+                    "standardised_uses_class_label_balance": str(bool(standardised and str(standardised.get("balance_variable", "")) == "class_label")),
+                    "raw_country_bwer": raw.get("bwer", "") if raw else "",
+                    "standardised_country_class_bwer": standardised.get("bwer", "") if standardised else "",
+                    "bwer_delta_standardised_minus_raw": std_bwer - raw_bwer if not math.isnan(std_bwer) and not math.isnan(raw_bwer) else "",
+                    "bwer_exactly_equal_after_float_parse": str(not math.isnan(std_bwer) and not math.isnan(raw_bwer) and std_bwer == raw_bwer),
+                    "raw_country_mean_risk": raw.get("mean_risk", "") if raw else "",
+                    "standardised_country_class_mean_risk": standardised.get("mean_risk", "") if standardised else "",
+                    "mean_risk_delta_standardised_minus_raw": std_mean - raw_mean if not math.isnan(std_mean) and not math.isnan(raw_mean) else "",
+                    "raw_country_tail_risk": raw.get("tail_risk", "") if raw else "",
+                    "standardised_country_class_tail_risk": standardised.get("tail_risk", "") if standardised else "",
+                    "tail_risk_delta_standardised_minus_raw": std_tail - raw_tail if not math.isnan(std_tail) and not math.isnan(raw_tail) else "",
+                    "raw_country_worst_slice": raw.get("worst_slice", "") if raw else "",
+                    "standardised_country_class_worst_slice": standardised.get("worst_slice", "") if standardised else "",
+                    "raw_country_n_slices_valid": raw.get("n_slices_valid", "") if raw else "",
+                    "standardised_country_class_n_slices_valid": standardised.get("n_slices_valid", "") if standardised else "",
+                    "diagnosis": (
+                        "ok_class_balanced_row_present"
+                        if standardised and str(standardised.get("balance_variable", "")) == "class_label"
+                        else "missing_or_unbalanced_standardised_row"
+                    ),
+                }
+            )
+    return output
+
+
 def _selective_rows(runs: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     for run in runs:
@@ -281,9 +328,20 @@ def _write_findings(
     aggregate_rows: Sequence[Mapping[str, Any]],
     bwer_rows: Sequence[Mapping[str, Any]],
     aggregate_vs_bwer: Sequence[Mapping[str, Any]],
+    standardisation_diagnostics: Sequence[Mapping[str, Any]],
 ) -> None:
     aggregate_mode, aggregate_score = _aggregate_best_mode(aggregate_rows)
     mismatch_count = sum(1 for row in aggregate_vs_bwer if str(row.get("aggregate_best_equals_bwer_best")) == "False")
+    missing_std = [
+        row
+        for row in standardisation_diagnostics
+        if str(row.get("standardised_uses_class_label_balance")) != "True"
+    ]
+    equal_std = [
+        row
+        for row in standardisation_diagnostics
+        if str(row.get("bwer_exactly_equal_after_float_parse")) == "True"
+    ]
     lines = [
         "# reBEN / CROMA Sensor-Mode Comparison",
         "",
@@ -308,6 +366,8 @@ def _write_findings(
         f"- Lowest BCE country | class_label standardised BWER: {_best_summary(bwer_rows, 'risk_bce', 'country', 'class_label')}.",
         f"- Lowest binary-error country Raw-BWER: {_best_summary(bwer_rows, 'risk_binary_error', 'country')}.",
         f"- Aggregate-best and BWER-best differ in {mismatch_count} comparable slice/risk rows.",
+        f"- Country | class_label standardisation rows missing or unbalanced: {len(missing_std)} of {len(standardisation_diagnostics)} checked rows.",
+        f"- Country | class_label BWER exactly equals raw country BWER in {len(equal_std)} of {len(standardisation_diagnostics)} checked rows. Equality can happen empirically, but the diagnostic CSV should be checked before interpreting it.",
         "",
         "These rows can support a cautious sensor-mode risk comparison only after reviewing support diagnostics and the protocol-risk notes above. They do not establish causal fairness claims and should not be presented as a BIFOLD-vs-CROMA model comparison.",
     ]
@@ -325,6 +385,7 @@ def compare_sensor_modes(run_dirs: Mapping[str, Path], output_dir: Path) -> dict
     bce = _filter_bwer(bwer, "risk_bce")
     binary = _filter_bwer(bwer, "risk_binary_error")
     standardised = _standardised_country_class(bwer)
+    standardisation_diagnostics = _country_class_standardisation_diagnostics(bwer)
     selective = _selective_rows(runs)
     tails = _tail_rows(bwer)
     residual = _residual_tail_ratio(bwer)
@@ -336,6 +397,7 @@ def compare_sensor_modes(run_dirs: Mapping[str, Path], output_dir: Path) -> dict
         "bce_bwer_sensor_mode_comparison": output / "bce_bwer_sensor_mode_comparison.csv",
         "binary_error_bwer_sensor_mode_comparison": output / "binary_error_bwer_sensor_mode_comparison.csv",
         "standardised_country_class_bwer_comparison": output / "standardised_country_class_bwer_comparison.csv",
+        "country_class_standardisation_diagnostics": output / "country_class_standardisation_diagnostics.csv",
         "selective_risk_comparison": output / "selective_risk_comparison.csv",
         "worst_tail_slices_by_mode": output / "worst_tail_slices_by_mode.csv",
         "residual_tail_risk_ratio": output / "residual_tail_risk_ratio.csv",
@@ -347,6 +409,7 @@ def compare_sensor_modes(run_dirs: Mapping[str, Path], output_dir: Path) -> dict
     write_csv(artifacts["bce_bwer_sensor_mode_comparison"], bce)
     write_csv(artifacts["binary_error_bwer_sensor_mode_comparison"], binary)
     write_csv(artifacts["standardised_country_class_bwer_comparison"], standardised)
+    write_csv(artifacts["country_class_standardisation_diagnostics"], standardisation_diagnostics)
     write_csv(artifacts["selective_risk_comparison"], selective)
     write_csv(artifacts["worst_tail_slices_by_mode"], tails)
     write_csv(artifacts["residual_tail_risk_ratio"], residual)
@@ -357,6 +420,7 @@ def compare_sensor_modes(run_dirs: Mapping[str, Path], output_dir: Path) -> dict
         aggregate_rows=aggregate,
         bwer_rows=bwer,
         aggregate_vs_bwer=aggregate_vs_bwer,
+        standardisation_diagnostics=standardisation_diagnostics,
     )
     return artifacts
 
