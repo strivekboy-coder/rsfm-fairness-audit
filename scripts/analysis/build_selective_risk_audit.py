@@ -49,6 +49,80 @@ def _first_existing(paths: Sequence[str | Path] | None) -> Path | None:
     return None
 
 
+def _path_tokens(path: Path, extra_tokens: Sequence[str] | None = None) -> list[str]:
+    tokens = [str(token) for token in extra_tokens or [] if str(token)]
+    for part in path.parts:
+        if "reben_croma_sensor_mode_audit" in part:
+            tokens.append(part)
+        elif part in {"croma_s1", "croma_s2", "croma_s1_plus_s2"}:
+            tokens.append(part)
+    output: list[str] = []
+    for token in tokens:
+        if token not in output:
+            output.append(token)
+    return output
+
+
+def _search_roots_for_candidate(path: Path) -> list[Path]:
+    roots: list[Path] = []
+    if path.exists() and path.is_dir():
+        roots.append(path)
+    if path.parent.exists():
+        roots.append(path.parent)
+    else:
+        for ancestor in path.parents:
+            if ancestor.exists() and ancestor != ancestor.parent:
+                roots.append(ancestor)
+                break
+    output: list[Path] = []
+    for root in roots:
+        if root not in output and root.exists() and root.is_dir():
+            output.append(root)
+    return output
+
+
+def _discover_existing_csv(
+    paths: Sequence[str | Path] | None,
+    *,
+    filename: str,
+    match_tokens: Sequence[str] | None = None,
+) -> Path | None:
+    exact = _first_existing(paths)
+    if exact is not None:
+        return exact
+    candidates: list[Path] = []
+    allow_test_dirs = any("test_" in str(Path(value)) or "pytest" in str(Path(value)) for value in paths or [])
+    for value in paths or []:
+        path = Path(value)
+        tokens = _path_tokens(path, match_tokens)
+        for root in _search_roots_for_candidate(path):
+            try:
+                matches = list(root.rglob(filename))
+            except OSError:
+                continue
+            for match in matches:
+                text = str(match)
+                if not allow_test_dirs and any(part.startswith("test_") or part.startswith("pytest") for part in match.parts):
+                    continue
+                required_dir_tokens = [token for token in tokens if "reben_croma_sensor_mode_audit" in token]
+                if required_dir_tokens and not all(token in text for token in required_dir_tokens):
+                    continue
+                if not required_dir_tokens and tokens and not any(token in text for token in tokens):
+                    continue
+                candidates.append(match)
+    if not candidates:
+        return None
+    candidates = sorted(
+        set(candidates),
+        key=lambda item: (
+            len(item.parts),
+            0 if "bwer" not in item.parts else 1,
+            str(item),
+        ),
+    )
+    return candidates[0]
+
+
 def _sensor_mode_alias(value: Any) -> str:
     text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
     aliases = {
@@ -116,12 +190,16 @@ def _availability_rows(registry: Mapping[str, Any]) -> list[dict[str, Any]]:
             "confidence_definition": selective.get("confidence_definition", ""),
             "availability_policy": selective.get("availability", ""),
         }
-        source_summary = _first_existing(selective.get("source_summary_candidates"))
+        source_summary = _discover_existing_csv(
+            selective.get("source_summary_candidates"),
+            filename="selective_risk_comparison.csv",
+            match_tokens=["reben_croma_sensor_mode_audit_croma_comparison"],
+        )
         if source_summary is not None:
             rows.append({**base, "run_id": "comparison_summary", "status": "available", "source_path": str(source_summary), "reason": "existing_selective_summary"})
         for run_id, spec in (selective.get("source_run_summary_candidates") or {}).items():
             paths = spec.get("paths", []) if isinstance(spec, Mapping) else spec
-            table = _first_existing(paths)
+            table = _discover_existing_csv(paths, filename="selective_risk_summary.csv", match_tokens=[str(run_id)])
             rows.append(
                 {
                     **base,
@@ -413,17 +491,23 @@ def build_selective_risk_audit(registry_path: Path, output_dir: Path | None = No
         exp_id = str(exp.get("experiment_id", ""))
         dataset = str(exp.get("dataset", ""))
         axis = str(exp.get("deployment_axis", ""))
-        source_summary = _first_existing(selective.get("source_summary_candidates"))
+        source_summary = _discover_existing_csv(
+            selective.get("source_summary_candidates"),
+            filename="selective_risk_comparison.csv",
+            match_tokens=["reben_croma_sensor_mode_audit_croma_comparison"],
+        )
         if source_summary is not None:
             existing = _read_existing_selective_summary(exp, source_summary)
             summary.extend(existing)
             curve.extend(existing)
             retained.extend([row for row in existing if str(row.get("slice_variable", "")) not in {"all", ""}])
             high_conf.extend([row for row in existing if str(row.get("slice_variable", "")) not in {"all", ""}])
+            if existing:
+                continue
         for run_id, spec in (selective.get("source_run_summary_candidates") or {}).items():
             paths = spec.get("paths", []) if isinstance(spec, Mapping) else spec
             mode = str(spec.get("sensor_mode", "")) if isinstance(spec, Mapping) else ""
-            table = _first_existing(paths)
+            table = _discover_existing_csv(paths, filename="selective_risk_summary.csv", match_tokens=[str(run_id)])
             if table is None:
                 unavailable = _unavailable_row(
                     experiment_id=exp_id,

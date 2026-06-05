@@ -207,9 +207,10 @@ experiments:
 def test_selective_reads_reben_per_run_summaries_when_comparison_missing() -> None:
     pytest.importorskip("matplotlib")
     root = _case_root("reben_selective")
-    s1 = root / "s1"
-    s1.mkdir()
-    (s1 / "selective_risk_summary.csv").write_text(
+    s1_outer = root / "reben_croma_sensor_mode_audit_croma_s1_full"
+    s1_nested = s1_outer / "content" / "outputs" / "reben_croma_sensor_mode_audit_croma_s1_full"
+    s1_nested.mkdir(parents=True)
+    (s1_nested / "selective_risk_summary.csv").write_text(
         "coverage_target,slice_variable,slice_value,confidence_threshold,retained_count,total_count,retained_coverage,abstention_rate,mean_risk\n"
         "0.8,all,all,0.4,80,100,0.8,0.2,0.3\n"
         "0.8,country,DE,0.4,40,50,0.8,0.2,0.2\n"
@@ -235,7 +236,7 @@ experiments:
         croma_s1:
           sensor_mode: S1
           paths:
-            - {s1.as_posix()}/selective_risk_summary.csv
+            - {s1_outer.as_posix()}/selective_risk_summary.csv
         croma_s2:
           sensor_mode: S2
           paths:
