@@ -164,6 +164,29 @@ def _run_id_for_mode(mode: str) -> str:
     return str(mode or "")
 
 
+def _display_label(value: Any) -> str:
+    text = str(value or "").strip()
+    labels = {
+        "croma_s1": "CROMA S1",
+        "croma_s2": "CROMA S2",
+        "croma_s1_plus_s2": "CROMA S1+S2",
+        "resnet50_13band": "ResNet-50",
+        "dofa_scaled10000": "DOFA scaled",
+        "sen1floods11_closure": "Sen1Floods11",
+        "fmow_sentinel_step3": "fMoW-Sentinel",
+        "reben_croma_sensor_mode": "BigEarthNet v2 / reBEN",
+        "event_disaster": "Event/disaster",
+        "geography_location": "Geography/location",
+        "sensor_modality": "Sensor/modality",
+    }
+    return labels.get(text, text.replace("_", " ").strip().title() if text else "")
+
+
+def _shorten(text: Any, max_chars: int = 60) -> str:
+    value = str(text or "")
+    return value if len(value) <= max_chars else value[: max_chars - 1].rstrip() + "…"
+
+
 def _modes_in_selective_summary(path: Path | None) -> set[str]:
     if path is None:
         return set()
@@ -434,16 +457,17 @@ def _configure_matplotlib() -> Any:
     plt.rcParams.update(
         {
             "font.family": "sans-serif",
-            "font.size": 8,
-            "axes.labelsize": 9,
-            "axes.titlesize": 10,
-            "xtick.labelsize": 7,
-            "ytick.labelsize": 7,
-            "legend.fontsize": 7,
-            "figure.dpi": 160,
+            "font.size": 9,
+            "axes.labelsize": 10,
+            "axes.titlesize": 11,
+            "xtick.labelsize": 8,
+            "ytick.labelsize": 8,
+            "legend.fontsize": 8,
+            "figure.dpi": 180,
             "savefig.dpi": 300,
             "axes.spines.top": False,
             "axes.spines.right": False,
+            "figure.autolayout": False,
         }
     )
     return plt
@@ -451,9 +475,9 @@ def _configure_matplotlib() -> Any:
 
 def _save(fig: Any, stem: Path) -> None:
     stem.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(stem.with_suffix(".png"))
-    fig.savefig(stem.with_suffix(".pdf"))
+    fig.tight_layout(pad=1.25)
+    fig.savefig(stem.with_suffix(".png"), dpi=300, bbox_inches="tight")
+    fig.savefig(stem.with_suffix(".pdf"), bbox_inches="tight")
 
 
 def _figures(output: Path, summary: Sequence[Mapping[str, Any]], retained: Sequence[Mapping[str, Any]], caveats: Sequence[Mapping[str, Any]]) -> dict[str, Path]:
@@ -463,7 +487,7 @@ def _figures(output: Path, summary: Sequence[Mapping[str, Any]], retained: Seque
     heat_stem = figures / "retained_coverage_by_slice_heatmap"
     caveat_stem = figures / "claim_support_caveat_matrix"
 
-    fig, ax = plt.subplots(figsize=(6.2, 3.8))
+    fig, ax = plt.subplots(figsize=(6.8, 4.1))
     all_rows = [row for row in summary if str(row.get("slice_variable", "")) == "all" and str(row.get("status", "available")) != "unavailable"]
     for key in sorted({(str(row.get("experiment_id")), str(row.get("run_id", row.get("sensor_mode", "")))) for row in all_rows}):
         items = [row for row in all_rows if (str(row.get("experiment_id")), str(row.get("run_id", row.get("sensor_mode", "")))) == key]
@@ -471,15 +495,15 @@ def _figures(output: Path, summary: Sequence[Mapping[str, Any]], retained: Seque
         y = [_float(row.get("mean_risk")) for row in items]
         pairs = sorted((a, b) for a, b in zip(x, y) if not math.isnan(a) and not math.isnan(b))
         if pairs:
-            ax.plot([a for a, _ in pairs], [b for _, b in pairs], marker="o", label=" / ".join(key))
+            ax.plot([a for a, _ in pairs], [b for _, b in pairs], marker="o", linewidth=1.8, label=" / ".join(_display_label(part) for part in key if part))
     if not ax.lines:
-        ax.text(0.5, 0.5, "No available `slice_variable == all` selective-risk rows.", ha="center", va="center", transform=ax.transAxes)
-    ax.set_title("Selective risk curves (overall retained set only)")
-    ax.set_xlabel("retained coverage")
-    ax.set_ylabel("mean retained risk")
+        ax.text(0.5, 0.5, "No overall selective-risk rows available.", ha="center", va="center", transform=ax.transAxes)
+    ax.set_title("Overall risk under confidence retention", pad=12)
+    ax.set_xlabel("Retained coverage")
+    ax.set_ylabel("Mean retained risk")
     ax.grid(alpha=0.25)
     if ax.lines:
-        ax.legend(frameon=False, fontsize=6)
+        ax.legend(frameon=False, fontsize=8)
     _save(fig, curve_stem)
     plt.close(fig)
 
@@ -498,10 +522,15 @@ def _figures(output: Path, summary: Sequence[Mapping[str, Any]], retained: Seque
         ),
         reverse=True,
     )[:20]
-    fig, ax = plt.subplots(figsize=(8.8, max(4.6, 0.34 * len(slice_rows))))
+    fig, ax = plt.subplots(figsize=(9.8, max(5.0, 0.42 * len(slice_rows))))
     if slice_rows:
         labels = [
-            f"{row.get('run_id', row.get('sensor_mode', ''))} | {row.get('slice_variable')}={row.get('slice_value')} | cov={_float(row.get('coverage_target')):.2g}"
+            _shorten(
+                f"{_display_label(row.get('run_id', row.get('sensor_mode', '')))} | "
+                f"{_display_label(row.get('slice_variable'))}: {row.get('slice_value')} | "
+                f"coverage { _float(row.get('coverage_target')):.2g}",
+                78,
+            )
             for row in slice_rows
         ]
         matrix = [
@@ -513,21 +542,21 @@ def _figures(output: Path, summary: Sequence[Mapping[str, Any]], retained: Seque
         ]
         image = ax.imshow(matrix, aspect="auto", cmap="cividis", vmin=0.0, vmax=max(1.0, max(max(row) for row in matrix)))
         ax.set_yticks(range(len(labels)))
-        ax.set_yticklabels(labels, fontsize=7)
+        ax.set_yticklabels(labels, fontsize=8)
         ax.set_xticks([0, 1])
-        ax.set_xticklabels(["mean risk", "retained coverage"])
-        ax.set_title("Top 20 selective-risk slices")
+        ax.set_xticklabels(["Mean risk", "Retained coverage"])
+        ax.set_title("Highest retained-slice risks", pad=12)
         for y, row_values in enumerate(matrix):
             for x, value in enumerate(row_values):
-                ax.text(x, y, f"{value:.2f}", ha="center", va="center", fontsize=6.5, color="white" if value > 0.55 else "black")
-        fig.colorbar(image, ax=ax, fraction=0.028, pad=0.02, label="value")
+                ax.text(x, y, f"{value:.2f}", ha="center", va="center", fontsize=7.5, color="white" if value > 0.55 else "black")
+        fig.colorbar(image, ax=ax, fraction=0.028, pad=0.02, label="Value")
     else:
         ax.axis("off")
-        ax.text(0.5, 0.5, "No available slice-level selective-risk rows.", ha="center", va="center")
+        ax.text(0.5, 0.5, "No slice-level selective-risk rows available.", ha="center", va="center")
     _save(fig, heat_stem)
     plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=(5.6, 3.0))
+    fig, ax = plt.subplots(figsize=(6.4, 3.4))
     counts: dict[str, int] = {}
     for row in caveats:
         counts[str(row.get("status", row.get("availability_policy", "unknown")))] = counts.get(str(row.get("status", row.get("availability_policy", "unknown"))), 0) + 1
@@ -535,10 +564,10 @@ def _figures(output: Path, summary: Sequence[Mapping[str, Any]], retained: Seque
     values = list(counts.values())
     ax.barh(range(len(labels)), values, color="#D55E00")
     ax.set_yticks(range(len(labels)))
-    ax.set_yticklabels(labels)
+    ax.set_yticklabels([_display_label(label) for label in labels])
     ax.invert_yaxis()
-    ax.set_title("Selective-risk availability and caveats")
-    ax.set_xlabel("count")
+    ax.set_title("Confidence availability and caveats", pad=12)
+    ax.set_xlabel("Count")
     _save(fig, caveat_stem)
     plt.close(fig)
     return {
@@ -756,12 +785,17 @@ def build_selective_risk_audit(registry_path: Path, output_dir: Path | None = No
     write_csv(artifacts["risk_coverage_curve_points"], curve)
     write_csv(artifacts["selective_risk_caveats"], caveats)
     report = [
-        "# Selective Risk Audit v1",
+        "# Selective Risk Audit",
         "",
         "This report uses only existing saved confidence/probability/logit outputs.",
         "Unavailable runs are recorded explicitly; no confidence values are fabricated.",
         "",
         "Selective-risk curves should be interpreted within task and metric family. They do not establish direct numerical equivalence between segmentation IoU-risk, classification error, and multi-label BCE risk.",
+        "",
+        "Figure captions:",
+        "- `selective_risk_curves_cross_dataset` reports overall retained-risk curves only; it should be read as a coverage-risk summary, not as a slice-specific trajectory.",
+        "- `retained_coverage_by_slice_heatmap` shows the highest retained-slice risks among available slice rows, limited to a readable subset.",
+        "- `claim_support_caveat_matrix` summarizes confidence availability and caveat burden.",
     ]
     artifacts["selective_risk_report"].write_text("\n".join(report) + "\n", encoding="utf-8")
     artifacts["selective_risk_audit_report"].write_text("\n".join(report) + "\n", encoding="utf-8")

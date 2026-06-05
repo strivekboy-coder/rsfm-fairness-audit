@@ -146,6 +146,39 @@ def _is_empty_balance(value: Any) -> bool:
     return str(value or "").strip().lower() in {"", "nan", "none", "null"}
 
 
+def _display_label(value: Any) -> str:
+    text = str(value or "").strip()
+    labels = {
+        "prithvi_tl": "Prithvi TL",
+        "vanilla_unet": "Vanilla U-Net",
+        "spectral_mndwi": "MNDWI rule",
+        "s2_resnet34_unet": "S2 ResNet34 U-Net",
+        "resnet50_13band": "ResNet-50",
+        "dofa_scaled10000": "DOFA scaled",
+        "croma_s1": "CROMA S1",
+        "croma_s2": "CROMA S2",
+        "croma_s1_plus_s2": "CROMA S1+S2",
+        "S1": "S1",
+        "S2": "S2",
+        "S1+S2": "S1+S2",
+        "event_disaster": "Event/disaster",
+        "geography_location": "Geography/location",
+        "sensor_modality": "Sensor/modality",
+        "aggregate_iou": "Aggregate IoU",
+        "aggregate_score": "Aggregate score",
+        "macro_ap": "Macro-AP",
+        "iou_risk": "IoU risk",
+        "classification_error": "Classification error",
+        "bce_risk": "BCE risk",
+    }
+    return labels.get(text, text.replace("_", " ").strip().title() if text else "")
+
+
+def _shorten(text: Any, max_chars: int = 46) -> str:
+    value = str(text or "")
+    return value if len(value) <= max_chars else value[: max_chars - 1].rstrip() + "…"
+
+
 def _metric_score_to_risk(score: Any, metric_family: str) -> float:
     value = _float(score)
     if math.isnan(value):
@@ -430,16 +463,17 @@ def _configure_matplotlib() -> Any:
     plt.rcParams.update(
         {
             "font.family": "sans-serif",
-            "font.size": 8,
-            "axes.labelsize": 9,
-            "axes.titlesize": 10,
-            "xtick.labelsize": 7,
-            "ytick.labelsize": 7,
-            "legend.fontsize": 7,
-            "figure.dpi": 160,
+            "font.size": 9,
+            "axes.labelsize": 10,
+            "axes.titlesize": 11,
+            "xtick.labelsize": 8,
+            "ytick.labelsize": 8,
+            "legend.fontsize": 8,
+            "figure.dpi": 180,
             "savefig.dpi": 300,
             "axes.spines.top": False,
             "axes.spines.right": False,
+            "figure.autolayout": False,
         }
     )
     return plt
@@ -447,16 +481,16 @@ def _configure_matplotlib() -> Any:
 
 def _save(fig: Any, path_stem: Path) -> None:
     path_stem.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(path_stem.with_suffix(".png"))
-    fig.savefig(path_stem.with_suffix(".pdf"))
+    fig.tight_layout(pad=1.25)
+    fig.savefig(path_stem.with_suffix(".png"), dpi=300, bbox_inches="tight")
+    fig.savefig(path_stem.with_suffix(".pdf"), bbox_inches="tight")
 
 
 def _barh(ax: Any, labels: Sequence[str], values: Sequence[float], title: str, xlabel: str) -> None:
     y = list(range(len(labels)))
     ax.barh(y, values, color="#0072B2")
     ax.set_yticks(y)
-    ax.set_yticklabels(labels)
+    ax.set_yticklabels([_shorten(label, 62) for label in labels])
     ax.invert_yaxis()
     ax.set_title(title)
     ax.set_xlabel(xlabel)
@@ -486,16 +520,16 @@ def _figures(output: Path, rows: Sequence[Mapping[str, Any]], claims: Sequence[M
     fig, ax = plt.subplots(figsize=(7.2, 2.6))
     ax.axis("off")
     boxes = [
-        ("Average metrics", 0.08, 0.55),
-        ("BWER by slice", 0.35, 0.55),
-        ("Caveats/support", 0.62, 0.55),
-        ("Paper claims", 0.35, 0.18),
+        ("Aggregate performance", 0.10, 0.55),
+        ("Slice-tail risk", 0.36, 0.55),
+        ("Support and caveats", 0.64, 0.55),
+        ("Guarded claims", 0.36, 0.18),
     ]
     for text, x, y in boxes:
         ax.text(x, y, text, ha="center", va="center", bbox={"boxstyle": "round,pad=0.35", "fc": "#F2F2F2", "ec": "#555555"})
     for x0, y0, x1, y1 in [(0.18, 0.55, 0.27, 0.55), (0.45, 0.55, 0.54, 0.55), (0.62, 0.45, 0.45, 0.25), (0.35, 0.45, 0.35, 0.30)]:
         ax.annotate("", xy=(x1, y1), xytext=(x0, y0), arrowprops={"arrowstyle": "->", "lw": 1.2})
-    ax.set_title("BWER-Audit synthesis workflow")
+    ax.set_title("Audit evidence synthesis workflow", pad=12)
     _save(fig, paths["framework_overview"])
     plt.close(fig)
 
@@ -503,8 +537,8 @@ def _figures(output: Path, rows: Sequence[Mapping[str, Any]], claims: Sequence[M
     axis_counts: dict[str, int] = {}
     for row in rows:
         axis_counts[str(row.get("deployment_axis", ""))] = axis_counts.get(str(row.get("deployment_axis", "")), 0) + 1
-    fig, ax = plt.subplots(figsize=(5.4, 3.0))
-    _barh(ax, list(axis_counts), list(axis_counts.values()), "Deployment axes represented", "formal run count")
+    fig, ax = plt.subplots(figsize=(5.8, 3.3))
+    _barh(ax, [_display_label(label) for label in axis_counts], list(axis_counts.values()), "Deployment axes represented", "audited run count")
     _save(fig, paths["deployment_axis_matrix"])
     plt.close(fig)
 
@@ -515,7 +549,7 @@ def _figures(output: Path, rows: Sequence[Mapping[str, Any]], claims: Sequence[M
             continue
         valid_groups.setdefault(str(row.get("experiment_id", "")), []).append(row)
     n_panels = max(1, len(valid_groups))
-    fig, axes = plt.subplots(1, n_panels, figsize=(max(4.0, 3.6 * n_panels), 3.4), squeeze=False)
+    fig, axes = plt.subplots(1, n_panels, figsize=(max(4.4, 4.1 * n_panels), 3.9), squeeze=False)
     palette = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00"]
     if not valid_groups:
         axes[0][0].axis("off")
@@ -525,26 +559,26 @@ def _figures(output: Path, rows: Sequence[Mapping[str, Any]], claims: Sequence[M
             agg = _float(row.get("aggregate_score"))
             bwer = _float(row.get("raw_bwer"))
             ax.scatter(agg, bwer, color=palette[idx % len(palette)], s=52, edgecolor="white", linewidth=0.7)
-            ax.text(agg, bwer, str(row.get("run_id")), fontsize=6.5, ha="left", va="bottom")
+            ax.text(agg, bwer, _display_label(row.get("run_id")), fontsize=7.5, ha="left", va="bottom")
         first = items[0]
-        ax.set_title(f"{first.get('dataset')}\n{first.get('metric_family')}", fontsize=9)
-        ax.set_xlabel(str(first.get("aggregate_metric_name", "aggregate score")))
+        ax.set_title(f"{first.get('dataset')}\n{_display_label(first.get('metric_family'))}", fontsize=10, pad=8)
+        ax.set_xlabel(_display_label(first.get("aggregate_metric_name", "aggregate score")))
         ax.set_ylabel("Raw-BWER")
         ax.grid(alpha=0.22)
     for ax in axes[0][len(valid_groups):]:
         ax.axis("off")
-    fig.suptitle("Average score vs Raw-BWER, faceted by task family", y=1.02, fontsize=10)
+    fig.suptitle("Aggregate performance and slice-tail risk", y=1.04, fontsize=12)
     _save(fig, paths["average_vs_bwer_cross_dataset"])
     plt.close(fig)
 
     # Worst-slice bar plot by run.
     valid_worst = [row for row in rows if not math.isnan(_float(row.get("raw_bwer")))]
     valid_worst = sorted(valid_worst, key=lambda row: _float(row.get("raw_bwer")), reverse=True)
-    fig, ax = plt.subplots(figsize=(7.6, max(2.8, 0.34 * len(valid_worst))))
+    fig, ax = plt.subplots(figsize=(8.2, max(3.1, 0.42 * len(valid_worst))))
     if valid_worst:
-        labels = [f"{row.get('dataset')} | {row.get('run_id')}" for row in valid_worst]
+        labels = [f"{row.get('dataset')} | {_display_label(row.get('run_id'))}" for row in valid_worst]
         values = [_float(row.get("raw_bwer"), 0.0) for row in valid_worst]
-        _barh(ax, labels, values, "Raw-BWER by formal run", "Raw-BWER")
+        _barh(ax, labels, values, "Slice-tail risk across audited runs", "Raw-BWER")
     else:
         ax.axis("off")
         ax.text(0.5, 0.5, "No valid Raw-BWER rows available.", ha="center", va="center")
@@ -553,25 +587,30 @@ def _figures(output: Path, rows: Sequence[Mapping[str, Any]], claims: Sequence[M
 
     # reBEN sensor mode summary.
     reben = [row for row in rows if row.get("experiment_id") == "reben_croma_sensor_mode"]
-    fig, axes = plt.subplots(2, 2, figsize=(7.2, 5.0), squeeze=False)
+    fig, axes = plt.subplots(2, 2, figsize=(7.8, 5.8), squeeze=False)
     metrics = [
         ("aggregate_score", "macro-AP", "higher is better"),
         ("mean_bce_risk", "mean BCE risk", "lower is better"),
         ("raw_bwer", "country Raw-BWER", "lower is better"),
         ("standardised_bwer", "country | class BWER", "lower is better"),
     ]
-    labels = [str(row.get("sensor_mode") or row.get("run_id")) for row in reben]
+    labels = [_display_label(row.get("sensor_mode") or row.get("run_id")) for row in reben]
     for ax, (column, title, subtitle) in zip(axes.ravel(), metrics):
         values = [_float(row.get(column)) for row in reben]
         clean_values = [0.0 if math.isnan(value) else value for value in values]
+        if all(math.isnan(value) for value in values):
+            ax.axis("off")
+            ax.text(0.5, 0.52, "BWER rows not available\nin current inputs", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(f"{title}\n{subtitle}", fontsize=10, pad=8)
+            continue
         ax.bar(labels, clean_values, color=["#0072B2", "#D55E00", "#009E73"][: len(labels)])
         for idx, value in enumerate(values):
             label = "NA" if math.isnan(value) else f"{value:.3f}"
             ax.text(idx, clean_values[idx] + (max(clean_values or [0.0]) * 0.025 + 0.005), label, ha="center", va="bottom", fontsize=7)
-        ax.set_title(f"{title}\n{subtitle}", fontsize=9)
+        ax.set_title(f"{title}\n{subtitle}", fontsize=10, pad=8)
         ax.set_ylim(0, max(clean_values + [0.01]) * 1.22)
         ax.grid(axis="y", alpha=0.22)
-    fig.suptitle("reBEN/CROMA sensor-mode summary", y=1.02, fontsize=10)
+    fig.suptitle("Sensor-mode comparison on BigEarthNet v2 / reBEN", y=1.04, fontsize=12)
     _save(fig, paths["reben_sensor_mode_summary"])
     plt.close(fig)
 
@@ -581,8 +620,8 @@ def _figures(output: Path, rows: Sequence[Mapping[str, Any]], claims: Sequence[M
     for row in claims:
         key = str(row.get("support", ""))
         counts[key] = counts.get(key, 0) + 1
-    fig, ax = plt.subplots(figsize=(5.8, 3.0))
-    _barh(ax, list(counts), list(counts.values()), "Claim support caveat matrix", "claim count")
+    fig, ax = plt.subplots(figsize=(6.4, 3.4))
+    _barh(ax, [_display_label(label) for label in counts], list(counts.values()), "Claim support and caveat burden", "claim count")
     _save(fig, paths["claim_support_caveat_matrix"])
     plt.close(fig)
     return {key: value.with_suffix(".png") for key, value in paths.items()}
@@ -591,7 +630,7 @@ def _figures(output: Path, rows: Sequence[Mapping[str, Any]], claims: Sequence[M
 def _write_reports(output: Path, registry: Mapping[str, Any], run_rows: Sequence[Mapping[str, Any]]) -> None:
     reports = ensure_dir(output / "reports")
     matrix_report = [
-        "# Unified Audit Matrix v1 Report",
+        "# Unified Audit Matrix Report",
         "",
         "This report synthesizes completed BWER-Audit evidence across event/disaster, geography/location, and sensor/modality axes.",
         "",
@@ -636,13 +675,14 @@ def _figure_notes(output: Path) -> None:
     notes = [
         "# Figure Notes",
         "",
-        "- `framework_overview`: supports the synthesis workflow only; it is not result evidence.",
-        "- `deployment_axis_matrix`: shows coverage of event, geography, and sensor axes.",
-        "- `average_vs_bwer_cross_dataset`: shows aggregate-vs-BWER relationships with metric-family caveats; do not compare raw y-values across tasks as equivalent risks.",
-        "- `worst_slice_barplot_by_run`: bar plot of formal-run Raw-BWER; it is intentionally not called a heatmap.",
-        "- `reben_sensor_mode_summary`: CROMA-only sensor-mode comparison across macro-AP, mean BCE risk, country Raw-BWER, and country | class BWER; BIFOLD is blocked.",
-        "- `selective_risk_curves_cross_dataset` and `retained_coverage_by_slice_heatmap` are produced by the selective-risk script. The main selective curve uses `slice_variable == all` only.",
-        "- `claim_support_caveat_matrix`: summarizes claim support categories and caveat burden.",
+        "- `framework_overview`: conceptual map from aggregate performance to slice-tail risk, support diagnostics, caveats, and guarded claims. It is a workflow figure, not empirical evidence.",
+        "- `deployment_axis_matrix`: coverage of the three deployment axes represented in the synthesis: event/disaster, geography/location, and sensor/modality.",
+        "- `average_vs_bwer_cross_dataset`: faceted comparison of aggregate score and Raw-BWER within each task family. The facets are intentionally separated because IoU risk, classification error, and BCE risk are not numerically interchangeable.",
+        "- `worst_slice_barplot_by_run`: Raw-BWER across audited runs. It summarizes tail-risk pressure but should be read together with support diagnostics and caveats.",
+        "- `reben_sensor_mode_summary`: CROMA sensor-mode comparison across macro-AP, mean BCE risk, country Raw-BWER, and country | class BWER. The blocked supervised reference is not included.",
+        "- `selective_risk_curves_cross_dataset`: overall retained-risk curves only; slice-level points are not connected as trajectories.",
+        "- `retained_coverage_by_slice_heatmap`: top retained-slice risks and coverage values, limited to a readable subset of slices.",
+        "- `claim_support_caveat_matrix`: count of claims by support category, intended as a caveat burden summary rather than a result ranking.",
     ]
     (output / "figures" / "figure_notes.md").write_text("\n".join(notes) + "\n", encoding="utf-8")
 
@@ -691,7 +731,7 @@ def build_unified_matrix(registry_path: Path, output_dir: Path | None = None) ->
     write_csv(artifacts["sensitivity_summary"], sensitivity)
     write_csv(artifacts["claim_support_table"], claims)
     findings = [
-        "# Unified Audit Matrix v1",
+        "# Unified Audit Matrix",
         "",
         "Recorded: 2026-06-05.",
         "",
