@@ -1,0 +1,280 @@
+version: unified_audit_matrix_v1
+recorded: "2026-06-05"
+description: >
+  Registry for post-hoc paper-level synthesis across completed BWER-Audit
+  evidence chains. Entries are intentionally declarative so future experiments
+  such as CropHarvest can be added by editing this file.
+
+defaults:
+  output_unified: outputs/unified_audit_matrix_v1
+  output_selective: outputs/selective_risk_audit_v1
+  coverages: [0.7, 0.8, 0.9]
+  tail_fraction: 0.1
+  min_samples_per_slice: 20
+
+experiments:
+  - experiment_id: sen1floods11_closure
+    dataset: Sen1Floods11
+    deployment_axis: event_disaster
+    task_type: segmentation
+    formal_status: formal
+    result_level: formal_result
+    protocol_summary: Native flood segmentation case study; event-level TP/FP/FN/TN aggregation; BWER v2 post-hoc.
+    output_dir_candidates:
+      - /content/outputs/comparisons/sen1floods11_closure
+      - outputs/comparisons/sen1floods11_closure
+    primary_metric_family: iou_risk
+    aggregate_metric_name: aggregate_iou
+    risk_metric_name: 1_minus_iou
+    primary_bwer_slice: event_id
+    standardised_balance: flood_extent_bin
+    formal_runs:
+      - run_id: prithvi_tl
+        model_family: prithvi
+        model_variant: Prithvi-EO-2.0-300M-TL-Sen1Floods11
+        input_mode: s2_6band_image_only
+        split_protocol: standard_split
+        eval_scope: all
+        aggregate_score: null
+        raw_bwer: null
+        standardised_bwer: null
+        tail_slices: Bolivia; Pakistan
+        worst_slice: ""
+        data_source: documented_record
+      - run_id: vanilla_unet
+        model_family: unet
+        model_variant: vanilla_unet
+        input_mode: s2_6band_image_only
+        split_protocol: random_chip_split
+        eval_scope: test
+        aggregate_score: null
+        raw_bwer: null
+        standardised_bwer: null
+        tail_slices: Bolivia; Pakistan
+        worst_slice: ""
+        data_source: documented_record
+      - run_id: spectral_mndwi
+        model_family: spectral_rule
+        model_variant: mndwi_threshold
+        input_mode: s2_6band_image_only
+        split_protocol: standard_split
+        eval_scope: all
+        aggregate_score: null
+        raw_bwer: null
+        standardised_bwer: null
+        tail_slices: India; Paraguay
+        worst_slice: ""
+        data_source: documented_record
+      - run_id: s2_resnet34_unet
+        model_family: unet
+        model_variant: s2_resnet34_unet
+        input_mode: s2_6band_image_only
+        split_protocol: random_chip_split
+        eval_scope: test
+        aggregate_score: 0.789684
+        aggregate_dice: 0.882484
+        raw_bwer: 0.177334
+        standardised_bwer: 0.209538
+        tail_slices: Bolivia; Ghana
+        worst_slice: Ghana
+        best_slice: Mekong
+        data_source: documented_record
+    caveats:
+      - Sen1Floods11 supports event-level deployment-tail-risk evidence for this case study only.
+      - Closure comparison is protocol-aware; Prithvi TL and MNDWI used standard_split/all while U-Net baselines used random_chip_split/test.
+      - Persistent tail events across all four runs were not established.
+    protocol_risks:
+      - Protocol-aware comparison is not a pure architecture-only same-split comparison.
+    support_notes:
+      - Event-level segmentation support uses valid pixels and aggregated TP/FP/FN/TN.
+    claim_support:
+      - claim: Average-vs-BWER ranking reversal can appear in Sen1Floods11 closure.
+        support: supported_protocol_aware
+        caveat: Exact same-split architecture-only comparison is not claimed.
+      - claim: Event tail risk persists across learned models.
+        support: supported_case_study
+        caveat: Universal disaster/flood generalization is not claimed.
+    selective_risk:
+      availability: unavailable
+      confidence_definition: none_saved
+      reason: Existing formal segmentation outputs do not consistently expose saved pixel/chip confidence for post-hoc retention.
+
+  - experiment_id: fmow_sentinel_step3
+    dataset: fMoW-Sentinel
+    deployment_axis: geography_location
+    task_type: single_label_classification
+    formal_status: formal
+    result_level: formal_result
+    protocol_summary: 30k support-aware location-disjoint subset; geography metadata audit-only; 62-class scene classification.
+    output_dir_candidates:
+      - /content/outputs/final_step3
+      - outputs/final_step3
+    comparison_dir_candidates:
+      - /content/outputs/final_step3/comparison_resnet50_vs_dofa_scaled10000
+      - outputs/final_step3/comparison_resnet50_vs_dofa_scaled10000
+    primary_metric_family: classification_error
+    aggregate_metric_name: accuracy
+    risk_metric_name: error_rate
+    primary_bwer_slice: country
+    standardised_balance: class_label
+    formal_runs:
+      - run_id: resnet50_13band
+        model_family: resnet
+        model_variant: resnet50_13band_from_scratch
+        input_mode: s2_13band_image_only
+        split_protocol: location_disjoint
+        eval_scope: val
+        aggregate_score: 0.200022
+        balanced_accuracy: 0.184051
+        macro_f1: 0.172450
+        top5_accuracy: 0.451753
+        raw_bwer: 0.173612
+        standardised_bwer: 0.142348
+        raw_bwer_slice: country
+        standardised_bwer_slice: country
+        worst_slice: UGA
+        data_source: documented_record
+      - run_id: dofa_scaled10000
+        model_family: dofa
+        model_variant: dofa_vit_base
+        input_mode: s2_13band_image_only
+        split_protocol: location_disjoint
+        eval_scope: val
+        aggregate_score: 0.177686
+        balanced_accuracy: 0.179074
+        macro_f1: 0.168659
+        top5_accuracy: null
+        raw_bwer: 0.161415
+        standardised_bwer: 0.126978
+        raw_bwer_slice: country
+        standardised_bwer_slice: country
+        worst_slice: UGA
+        data_source: documented_record
+    sanity_runs:
+      - run_id: resnet50_random_split_sanity
+        result_level: sanity
+        aggregate_score: 0.711889
+        raw_bwer: 0.251748
+        standardised_bwer: 0.257785
+      - run_id: dofa_random_split_sanity
+        result_level: sanity
+        aggregate_score: 0.384333
+        raw_bwer: 0.205189
+        standardised_bwer: 0.176990
+    caveats:
+      - The dataset is a 30k support-aware location-disjoint audit subset, not a full fMoW-Sentinel benchmark.
+      - Geography metadata is location-level enrichment and audit-only, not model input.
+      - Country x class is diagnostic/support-filtered due to sparse support.
+      - Unscaled DOFA is invalid/debug only.
+    protocol_risks:
+      - Location-level metadata enrichment is not image-level exact geography join.
+      - DOFA preprocessing is sensitive to input scaling; formal DOFA uses input_scale=10000.
+    support_notes:
+      - Primary formal slices: continent, un_region, region, latitude_band, season, category.
+      - Country-level BWER should use support thresholds such as validation support >= 20 or >= 30.
+    claim_support:
+      - claim: Location-disjoint protocol is meaningfully harder than random split.
+        support: supported_by_sanity
+        caveat: Random split is diagnostic only, not formal deployment protocol.
+      - claim: Aggregate ranking differs from some geography BWER rankings.
+        support: supported
+        caveat: Do not claim DOFA is universally fairer.
+    selective_risk:
+      availability: available_if_prediction_tables_present
+      confidence_definition: max_probability
+      risk_column: risk
+      confidence_column: confidence
+      slice_columns: [country, region, latitude_band, season, category]
+      prediction_table_candidates:
+        resnet50_13band:
+          - /content/outputs/final_step3/resnet50_30k_location_disjoint_patched_metadata/audit_table.csv
+          - /content/outputs/final_step3/resnet50_30k_location_disjoint_patched_metadata/predictions.csv
+          - outputs/final_step3/resnet50_30k_location_disjoint_patched_metadata/audit_table.csv
+        dofa_scaled10000:
+          - /content/outputs/final_step3/dofa_scaled10000_30k_location_disjoint/audit_table.csv
+          - /content/outputs/final_step3/dofa_scaled10000_30k_location_disjoint/predictions.csv
+          - outputs/final_step3/dofa_scaled10000_30k_location_disjoint/audit_table.csv
+
+  - experiment_id: reben_croma_sensor_mode
+    dataset: BigEarthNet v2 / reBEN
+    deployment_axis: sensor_modality
+    task_type: multi_label_classification
+    formal_status: formal_partial
+    result_level: formal_result
+    protocol_summary: CROMA frozen encoder plus linear multi-label probe over S1-only, S2-only, and S1+S2 sensor modes.
+    output_dir_candidates:
+      - /content/outputs/reben_croma_sensor_mode_audit_croma_comparison
+      - outputs/reben_croma_sensor_mode_audit_croma_comparison
+    primary_metric_family: bce_risk
+    aggregate_metric_name: macro_ap
+    risk_metric_name: labelwise_bce
+    primary_bwer_slice: country
+    standardised_balance: class_label
+    formal_runs:
+      - run_id: croma_s1
+        model_family: croma
+        model_variant: croma_base
+        sensor_mode: S1
+        input_mode: s1_image_only
+        split_protocol: official_split
+        eval_scope: validation
+        aggregate_score: 0.495758
+        micro_ap: 0.649458
+        macro_f1: 0.519092
+        micro_f1: 0.614029
+        mean_bce_risk: 0.320755
+        data_source: documented_record
+      - run_id: croma_s2
+        model_family: croma
+        model_variant: croma_base
+        sensor_mode: S2
+        input_mode: s2_image_only
+        split_protocol: official_split
+        eval_scope: validation
+        aggregate_score: 0.581786
+        micro_ap: 0.724353
+        macro_f1: 0.575545
+        micro_f1: 0.656400
+        mean_bce_risk: 0.281947
+        data_source: documented_record
+      - run_id: croma_s1_plus_s2
+        model_family: croma
+        model_variant: croma_base
+        sensor_mode: S1+S2
+        input_mode: s1_s2_fusion
+        split_protocol: official_split
+        eval_scope: validation
+        aggregate_score: 0.608008
+        macro_f1: 0.595040
+        mean_bce_risk: 0.261446
+        data_source: documented_record
+    caveats:
+      - BIFOLD ResNet101 supervised reference is blocked because official reben_publication code is unavailable.
+      - Sensor mode is a cross-run protocol condition, not a sample-level slice.
+      - HF LMDB source is unofficial preconverted safetensors data.
+      - Cloud/snow rows should not support formal divergence claims when only one valid slice is available.
+      - Country | class_label standardised BWER can coincide with raw country BWER under label-expanded multi-label schema.
+    protocol_risks:
+      - Current LMDB source is hackelle/BigEarthNetV2-LMDB from Hugging Face, not official ConfigILM pickle-LMDB.
+      - Direct LMDB + safetensors loader is protocol-risk relative to official raw-data-to-LMDB reproduction.
+      - No torchvision ResNet101 substitute was used for blocked BIFOLD.
+    support_notes:
+      - BWER is interpreted over class, country, country x class, and cloud/snow slices within each run.
+      - BCE-BWER and binary-error BWER are reported separately.
+    claim_support:
+      - claim: Fusion improves aggregate performance and broad probability-aware tail risk.
+        support: supported_croma_only
+        caveat: CROMA-only; BIFOLD reference blocked.
+      - claim: Sensor-mode preference can change by risk primitive and slice definition.
+        support: supported_croma_only
+        caveat: Mainly binary-error BWER and country x class interaction rows.
+    selective_risk:
+      availability: available
+      confidence_definition: label_probability_confidence
+      source_summary_candidates:
+        - /content/outputs/reben_croma_sensor_mode_audit_croma_comparison/selective_risk_comparison.csv
+        - outputs/reben_croma_sensor_mode_audit_croma_comparison/selective_risk_comparison.csv
+      risk_column: risk_bce
+      confidence_column: confidence
+      slice_columns: [country, class_label]
+

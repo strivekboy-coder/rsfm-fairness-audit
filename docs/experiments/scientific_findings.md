@@ -597,3 +597,101 @@ previews, while small or functional classes may be difficult for human/GPT RGB
 preview inspection. Resizing normalizes model input shape but does not recover
 missing context. This is dataset/protocol interpretability support, not a
 fairness main finding.
+
+## BigEarthNet v2 / reBEN CROMA Sensor-Mode Audit
+
+Recorded: 2026-05-27.
+
+Current status:
+- Full CROMA-only sensor-mode runs on BigEarthNet v2 / reBEN are completed for
+  S1-only, S2-only, and S1+S2 fusion.
+- Task: BigEarthNet v2 / reBEN 19-label multi-label scene classification.
+- Split: official split; evaluation is on the validation split.
+- Model/protocol: CROMA frozen encoder plus linear multi-label probe.
+- Sensor modes are cross-run conditions, not sample-level metadata slices.
+
+Completed output directories:
+
+```text
+/content/outputs/reben_croma_sensor_mode_audit_croma_s1_full
+/content/outputs/reben_croma_sensor_mode_audit_croma_s2_full
+/content/outputs/reben_croma_sensor_mode_audit_croma_s1_plus_s2_full
+/content/outputs/reben_croma_sensor_mode_audit_croma_comparison
+```
+
+Drive archive target:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/reben_croma_sensor_mode_audit/
+```
+
+Data and protocol caveats:
+- The current LMDB source is `hackelle/BigEarthNetV2-LMDB` from Hugging Face.
+- This is an unofficial preconverted safetensors-style LMDB, not the official
+  ConfigILM pickle-LMDB.
+- The repo uses a direct LMDB + safetensors loader for this data source.
+- This is protocol-risk relative to an official ConfigILM-compatible LMDB or
+  an official raw-data-to-LMDB reproduction.
+- BIFOLD ResNet101 supervised reference remains blocked because the official
+  `reben_publication` code is unavailable in the current Colab environment.
+- No torchvision ResNet101 substitute was used.
+
+Aggregate validation metrics:
+
+| mode | macro_ap | micro_ap | macro_f1 | micro_f1 | mean_bce_risk |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| S1 | 0.495758 | 0.649458 | 0.519092 | 0.614029 | 0.320755 |
+| S2 | 0.581786 | 0.724353 | 0.575545 | 0.656400 | 0.281947 |
+| S1+S2 | 0.608008 |  | 0.595040 |  | 0.261446 |
+
+Aggregate ranking:
+- Best macro-AP: S1+S2.
+- Best macro-F1: S1+S2.
+- Lowest mean BCE risk: S1+S2.
+
+BWER comparison observations:
+- BCE-BWER and binary-error BWER are reported separately.
+- Broad BCE-BWER generally favors S1+S2.
+- Binary-error BWER and country x class interaction risk show cases where
+  aggregate-best and BWER-best differ.
+- `aggregate_best_vs_bwer_best.csv` reports aggregate-best and BWER-best differ
+  in several comparable slice/risk rows.
+- `cloud_snow_shadow` rows should not be used as formal divergence evidence
+  when only one valid slice is available.
+- Country | class_label standardised BWER was verified to use
+  `balance_variable == class_label` correctly.
+- In the label-expanded multi-label audit table, country Raw-BWER and
+  country | class_label standardised BWER can coincide because each sample
+  contributes one row per class label. This is treated as an expected schema
+  effect, not a comparison bug.
+
+Generated comparison files:
+- `aggregate_sensor_mode_comparison.csv`.
+- `bce_bwer_sensor_mode_comparison.csv`.
+- `binary_error_bwer_sensor_mode_comparison.csv`.
+- `standardised_country_class_bwer_comparison.csv`.
+- `selective_risk_comparison.csv`.
+- `worst_tail_slices_by_mode.csv`.
+- `residual_tail_risk_ratio.csv`.
+- `risk_reduction_gap.csv`.
+- `aggregate_best_vs_bwer_best.csv`.
+- `scientific_findings_reben_croma.md`.
+
+Current interpretation:
+- The strongest dramatic result, "S1+S2 aggregate best but broad BCE-BWER
+  worse", did not appear.
+- Supported result: S1+S2 fusion improves aggregate performance and broad
+  probability-aware tail risk, but residual class, country, and country x class
+  tail risks remain.
+- Sensor-mode preference can change depending on risk primitive and slice
+  definition, especially for binary-error BWER and country x class interaction
+  risk.
+- This is a sensor/modality deployment-risk case study, not a BIFOLD-vs-CROMA
+  comparison.
+
+Recommended next action:
+- Do not continue debugging reBEN unless file integrity checks fail.
+- Archive all three CROMA full zips and the comparison zip to Drive.
+- Treat reBEN/CROMA as the sensor/modality audit case: fusion helps aggregate
+  metrics and broad BCE-BWER, while residual tail risk and
+  risk-primitive-dependent sensor-mode preference remain.

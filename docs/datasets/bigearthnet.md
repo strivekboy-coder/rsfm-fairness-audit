@@ -24,17 +24,45 @@ The Colab runner writes both primitives for each completed run: `risk_bce` as th
 
 ## Current Implementation
 
-### 2026-05-27 CROMA smoke and CUDA note
+### 2026-05-27 CROMA smoke, full runs, and CUDA note
 
 The CROMA-only smoke run has completed for `croma_s1`, `croma_s2`, and
 `croma_s1_plus_s2` on a 256-sample cap. It produced the expected CROMA
 per-mode outputs and package under the Colab smoke output directory.
+
+The CROMA-only full sensor-mode audit is also completed for:
+
+- `croma_s1`: S1-only.
+- `croma_s2`: S2-only.
+- `croma_s1_plus_s2`: S1+S2 fusion.
+
+Completed Colab output directories:
+
+```text
+/content/outputs/reben_croma_sensor_mode_audit_croma_s1_full
+/content/outputs/reben_croma_sensor_mode_audit_croma_s2_full
+/content/outputs/reben_croma_sensor_mode_audit_croma_s1_plus_s2_full
+/content/outputs/reben_croma_sensor_mode_audit_croma_comparison
+```
+
+Drive archive target:
+
+```text
+/content/drive/MyDrive/rsfm_fairness_audit/outputs/reben_croma_sensor_mode_audit/
+```
 
 The official BIFOLD ResNet101 path remains blocked until the public/authorized
 `reben_publication.BigEarthNetv2_0_ImageClassifier` source is available. The
 BIFOLD Hugging Face model repositories expose weights/configs but not the custom
 model code required by the official model cards, and this project must not
 replace that path with torchvision ResNet101.
+
+The current LMDB source used for the completed CROMA full runs is
+`hackelle/BigEarthNetV2-LMDB` from Hugging Face. It is an unofficial
+preconverted safetensors-style LMDB, not the official ConfigILM pickle-LMDB.
+The repo therefore uses a direct LMDB + safetensors loader for this source. This
+is recorded as protocol-risk relative to an official ConfigILM-compatible LMDB
+or an official raw-data-to-LMDB reproduction.
 
 A CROMA GPU-device bug was found during the full-run attempt: the Colab runtime
 had an A100 and `torch.cuda.is_available()` was true, but the subprocess still
@@ -110,7 +138,6 @@ torchvision ResNet101, or single-label BWER.
 
 ## Open Items
 
-- Full CROMA execution is still required after the smoke run.
 - The final six-row CROMA+BIFOLD package cannot be completed until the official
   `reben_publication` source path is available. Until then, CROMA-only outputs
   are valid partial Step 1 evidence and BIFOLD is a documented blocked official
