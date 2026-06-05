@@ -139,8 +139,9 @@ def test_selective_risk_from_tiny_prediction_table_and_figures() -> None:
 def test_reben_unified_reads_bwer_and_mean_bce_risk_from_completed_outputs() -> None:
     pytest.importorskip("matplotlib")
     root = _case_root("reben")
-    comparison = root / "comparison"
-    comparison.mkdir()
+    comparison_outer = root / "reben_croma_sensor_mode_audit_croma_comparison"
+    comparison = comparison_outer / "content" / "outputs" / "reben_croma_sensor_mode_audit_croma_comparison"
+    comparison.mkdir(parents=True)
     (comparison / "aggregate_sensor_mode_comparison.csv").write_text(
         "sensor_mode,macro_ap,micro_ap,macro_f1,micro_f1,mean_bce_risk\n"
         "S1,0.4,0.5,0.3,0.4,0.6\n"
@@ -150,11 +151,11 @@ def test_reben_unified_reads_bwer_and_mean_bce_risk_from_completed_outputs() -> 
     )
     (comparison / "bce_bwer_sensor_mode_comparison.csv").write_text(
         "sensor_mode,risk_name,slice_variable,balance_variable,bwer,worst_slice,tail_slices\n"
-        "S1,risk_bce,country,,0.2,FR,FR\n"
+        "S1,risk_bce,country,nan,0.2,FR,FR\n"
         "S1,risk_bce,country,class_label,0.21,FR,FR\n"
-        "S2,risk_bce,country,,0.15,FR,FR\n"
+        "S2,risk_bce,country,nan,0.15,FR,FR\n"
         "S2,risk_bce,country,class_label,0.16,FR,FR\n"
-        "S1+S2,risk_bce,country,,0.1,FR,FR\n"
+        "S1+S2,risk_bce,country,nan,0.1,FR,FR\n"
         "S1+S2,risk_bce,country,class_label,0.11,FR,FR\n",
         encoding="utf-8",
     )
@@ -173,7 +174,7 @@ experiments:
     result_level: formal_result
     protocol_summary: toy
     output_dir_candidates:
-      - {comparison.as_posix()}
+      - {comparison_outer.as_posix()}
     primary_metric_family: bce_risk
     aggregate_metric_name: macro_ap
     risk_metric_name: labelwise_bce

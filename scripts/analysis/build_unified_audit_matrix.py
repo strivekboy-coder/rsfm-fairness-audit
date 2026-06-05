@@ -49,6 +49,70 @@ def _first_existing(paths: Sequence[str | Path] | None) -> Path | None:
     return None
 
 
+def _path_tokens(path: Path, extra_tokens: Sequence[str] | None = None) -> list[str]:
+    tokens = [str(token) for token in extra_tokens or [] if str(token)]
+    for part in path.parts:
+        if "reben_croma_sensor_mode_audit" in part:
+            tokens.append(part)
+    output: list[str] = []
+    for token in tokens:
+        if token not in output:
+            output.append(token)
+    return output
+
+
+def _search_roots_for_candidate(path: Path) -> list[Path]:
+    roots: list[Path] = []
+    if path.exists() and path.is_dir():
+        roots.append(path)
+    if path.parent.exists():
+        roots.append(path.parent)
+    else:
+        for ancestor in path.parents:
+            if ancestor.exists() and ancestor != ancestor.parent:
+                roots.append(ancestor)
+                break
+    output: list[Path] = []
+    for root in roots:
+        if root not in output and root.exists() and root.is_dir():
+            output.append(root)
+    return output
+
+
+def _discover_existing_csv(
+    paths: Sequence[str | Path] | None,
+    *,
+    filename: str,
+    match_tokens: Sequence[str] | None = None,
+) -> Path | None:
+    exact = _first_existing(paths)
+    if exact is not None and exact.is_file():
+        return exact
+    candidates: list[Path] = []
+    allow_test_dirs = any("test_" in str(Path(value)) or "pytest" in str(Path(value)) for value in paths or [])
+    for value in paths or []:
+        path = Path(value)
+        tokens = _path_tokens(path, match_tokens)
+        for root in _search_roots_for_candidate(path):
+            try:
+                matches = list(root.rglob(filename))
+            except OSError:
+                continue
+            for match in matches:
+                text = str(match)
+                if not allow_test_dirs and any(part.startswith("test_") or part.startswith("pytest") for part in match.parts):
+                    continue
+                required_dir_tokens = [token for token in tokens if "reben_croma_sensor_mode_audit" in token]
+                if required_dir_tokens and not all(token in text for token in required_dir_tokens):
+                    continue
+                if not required_dir_tokens and tokens and not any(token in text for token in tokens):
+                    continue
+                candidates.append(match)
+    if not candidates:
+        return None
+    return sorted(set(candidates), key=lambda item: (len(item.parts), str(item)))[0]
+
+
 def _row_value(row: Mapping[str, Any] | None, names: Sequence[str], default: Any = "") -> Any:
     if not row:
         return default
@@ -76,6 +140,10 @@ def _sensor_mode_alias(value: Any) -> str:
         "fusion": "S1+S2",
     }
     return aliases.get(text, str(value or "").strip())
+
+
+def _is_empty_balance(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"", "nan", "none", "null"}
 
 
 def _metric_score_to_risk(score: Any, metric_family: str) -> float:
@@ -169,19 +237,30 @@ def _enrich_rows_from_available_outputs(registry: Mapping[str, Any], rows: list[
             break
     if not reben_exp:
         return rows
-    output_dir = _first_existing(reben_exp.get("output_dir_candidates"))
-    if output_dir is None:
+    output_candidates = reben_exp.get("output_dir_candidates") or []
+    aggregate_path = _discover_existing_csv(
+        output_candidates,
+        filename="aggregate_sensor_mode_comparison.csv",
+        match_tokens=["reben_croma_sensor_mode_audit_croma_comparison"],
+    )
+    if aggregate_path is None or not aggregate_path.exists():
         return rows
-    aggregate_path = output_dir / "aggregate_sensor_mode_comparison.csv"
-    bce_path = output_dir / "bce_bwer_sensor_mode_comparison.csv"
-    binary_path = output_dir / "binary_error_bwer_sensor_mode_comparison.csv"
-    if not aggregate_path.exists():
-        return rows
+    comparison_dir = aggregate_path.parent
+    bce_path = _discover_existing_csv(
+        [comparison_dir / "bce_bwer_sensor_mode_comparison.csv", *output_candidates],
+        filename="bce_bwer_sensor_mode_comparison.csv",
+        match_tokens=["reben_croma_sensor_mode_audit_croma_comparison"],
+    )
+    binary_path = _discover_existing_csv(
+        [comparison_dir / "binary_error_bwer_sensor_mode_comparison.csv", *output_candidates],
+        filename="binary_error_bwer_sensor_mode_comparison.csv",
+        match_tokens=["reben_croma_sensor_mode_audit_croma_comparison"],
+    )
     aggregate_rows = read_csv_rows(aggregate_path)
     bwer_rows = []
-    if bce_path.exists():
+    if bce_path and bce_path.exists():
         bwer_rows.extend(read_csv_rows(bce_path))
-    if binary_path.exists():
+    if binary_path and binary_path.exists():
         bwer_rows.extend(read_csv_rows(binary_path))
     by_mode = {_sensor_mode_alias(row.get("sensor_mode", row.get("run_name", ""))): row for row in aggregate_rows}
     bwer_by_mode = {
@@ -189,7 +268,7 @@ def _enrich_rows_from_available_outputs(registry: Mapping[str, Any], rows: list[
         for row in bwer_rows
         if str(_row_value(row, ["risk_name", "risk_metric", "risk_column"], "")).strip() in {"risk_bce", "bce", "labelwise_bce"}
         and str(_row_value(row, ["slice_variable", "slice", "slice_name"], "")).strip() == "country"
-        and str(_row_value(row, ["balance_variable", "balance", "standardised_balance"], "")).strip() == ""
+        and _is_empty_balance(_row_value(row, ["balance_variable", "balance", "standardised_balance"], ""))
     }
     std_by_mode = {
         _sensor_mode_alias(row.get("sensor_mode", row.get("run_name", ""))): row
