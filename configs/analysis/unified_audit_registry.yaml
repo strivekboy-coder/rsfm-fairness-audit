@@ -21,7 +21,9 @@ experiments:
     result_level: formal_result
     protocol_summary: Native flood segmentation case study; event-level TP/FP/FN/TN aggregation; BWER v2 post-hoc.
     output_dir_candidates:
+      - /content/outputs/sen1floods11_closure
       - /content/outputs/comparisons/sen1floods11_closure
+      - outputs/sen1floods11_closure
       - outputs/comparisons/sen1floods11_closure
     primary_metric_family: iou_risk
     aggregate_metric_name: aggregate_iou

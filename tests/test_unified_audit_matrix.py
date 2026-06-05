@@ -205,6 +205,61 @@ experiments:
     assert rows["S1+S2"]["standardised_bwer"] == "0.11"
 
 
+def test_sen1floods11_unified_reads_closure_csv_metrics() -> None:
+    pytest.importorskip("matplotlib")
+    root = _case_root("sen1")
+    closure_outer = root / "sen1floods11_closure"
+    closure = closure_outer / "content" / "outputs" / "sen1floods11_closure"
+    closure.mkdir(parents=True)
+    (closure / "closure_comparison_summary.csv").write_text(
+        "run_name,aggregate_iou,aggregate_dice,raw_bwer_event_id,standardised_bwer_event_id_flood_extent_bin,worst_event,best_event,tail_events\n"
+        "prithvi_tl,0.90,0.95,0.10,0.20,Bolivia,Mekong,Bolivia;Pakistan\n"
+        "vanilla_unet,0.70,0.82,0.30,0.40,Somalia,Mekong,Somalia;Ghana\n"
+        "spectral_mndwi,0.50,0.67,0.20,0.05,India,Mekong,India;Paraguay\n"
+        "s2_resnet34_unet,0.80,0.88,0.18,0.21,Ghana,Mekong,Bolivia;Ghana\n",
+        encoding="utf-8",
+    )
+    registry = root / "registry.yaml"
+    registry.write_text(
+        f"""
+version: test
+defaults:
+  output_unified: {root.as_posix()}/unified
+experiments:
+  - experiment_id: sen1floods11_closure
+    dataset: Sen1Floods11
+    deployment_axis: event_disaster
+    task_type: segmentation
+    formal_status: formal
+    result_level: formal_result
+    protocol_summary: toy
+    output_dir_candidates:
+      - {closure_outer.as_posix()}
+    primary_metric_family: iou_risk
+    aggregate_metric_name: aggregate_iou
+    risk_metric_name: 1_minus_iou
+    primary_bwer_slice: event_id
+    standardised_balance: flood_extent_bin
+    formal_runs:
+      - run_id: prithvi_tl
+      - run_id: vanilla_unet
+      - run_id: spectral_mndwi
+      - run_id: s2_resnet34_unet
+""",
+        encoding="utf-8",
+    )
+
+    artifacts = build_unified_matrix(registry, root / "unified")
+    rows = {row["run_id"]: row for row in read_csv_rows(artifacts["unified_main_results_table"])}
+    assert rows["prithvi_tl"]["aggregate_score"] == "0.90"
+    assert rows["vanilla_unet"]["raw_bwer"] == "0.30"
+    assert rows["spectral_mndwi"]["standardised_bwer"] == "0.05"
+    assert rows["s2_resnet34_unet"]["aggregate_dice"] == "0.88"
+    assert rows["prithvi_tl"]["metric_availability_note"] == ""
+    average_rows = read_csv_rows(artifacts["average_vs_bwer_cross_dataset"])
+    assert {row["run_id"] for row in average_rows} == {"prithvi_tl", "vanilla_unet", "spectral_mndwi", "s2_resnet34_unet"}
+
+
 def test_selective_reads_reben_per_run_summaries_when_comparison_missing() -> None:
     pytest.importorskip("matplotlib")
     root = _case_root("reben_selective")

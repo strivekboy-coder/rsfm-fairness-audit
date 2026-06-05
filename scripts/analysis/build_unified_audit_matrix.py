@@ -54,6 +54,8 @@ def _path_tokens(path: Path, extra_tokens: Sequence[str] | None = None) -> list[
     for part in path.parts:
         if "reben_croma_sensor_mode_audit" in part:
             tokens.append(part)
+        if "sen1floods11_closure" in part:
+            tokens.append(part)
     output: list[str] = []
     for token in tokens:
         if token not in output:
@@ -102,7 +104,11 @@ def _discover_existing_csv(
                 text = str(match)
                 if not allow_test_dirs and any(part.startswith("test_") or part.startswith("pytest") for part in match.parts):
                     continue
-                required_dir_tokens = [token for token in tokens if "reben_croma_sensor_mode_audit" in token]
+                required_dir_tokens = [
+                    token
+                    for token in tokens
+                    if "reben_croma_sensor_mode_audit" in token or "sen1floods11_closure" in token
+                ]
                 if required_dir_tokens and not all(token in text for token in required_dir_tokens):
                     continue
                 if not required_dir_tokens and tokens and not any(token in text for token in tokens):
@@ -140,6 +146,25 @@ def _sensor_mode_alias(value: Any) -> str:
         "fusion": "S1+S2",
     }
     return aliases.get(text, str(value or "").strip())
+
+
+def _normalized_key(value: Any) -> str:
+    return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
+
+
+def _sen1_run_alias(value: Any) -> str:
+    key = _normalized_key(value)
+    if not key:
+        return ""
+    if "resnet34" in key or "albunet" in key:
+        return "s2_resnet34_unet"
+    if "prithvi" in key:
+        return "prithvi_tl"
+    if "spectral" in key or "mndwi" in key:
+        return "spectral_mndwi"
+    if "vanilla" in key or key.startswith("unet") or key in {"unet", "vanillaunet"}:
+        return "vanilla_unet"
+    return key
 
 
 def _is_empty_balance(value: Any) -> bool:
@@ -261,8 +286,105 @@ def _registry_run_rows(registry: Mapping[str, Any]) -> list[dict[str, Any]]:
     return _enrich_rows_from_available_outputs(registry, rows)
 
 
+def _merge_sen1_closure_rows(
+    summary_rows: Sequence[Mapping[str, Any]],
+    average_rows: Sequence[Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for source_row in summary_rows:
+        alias = _sen1_run_alias(source_row.get("run_name", source_row.get("model", "")))
+        if not alias:
+            continue
+        merged.setdefault(alias, {}).update(dict(source_row))
+    for source_row in average_rows:
+        alias = _sen1_run_alias(source_row.get("run_name", source_row.get("model_label", "")))
+        if not alias:
+            continue
+        row = merged.setdefault(alias, {})
+        for target, names in {
+            "aggregate_iou": ["aggregate_iou", "average_score"],
+            "raw_bwer_event_id": ["raw_bwer_event_id", "raw_bwer"],
+            "standardised_bwer_event_id_flood_extent_bin": [
+                "standardised_bwer_event_id_flood_extent_bin",
+                "standardised_bwer",
+            ],
+        }.items():
+            value = _row_value(source_row, names, "")
+            if value not in {"", None}:
+                row[target] = value
+    return merged
+
+
+def _enrich_sen1floods11_rows(registry: Mapping[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sen1_exp = next((exp for exp in registry.get("experiments", []) if exp.get("experiment_id") == "sen1floods11_closure"), None)
+    if not sen1_exp:
+        return rows
+    output_candidates = sen1_exp.get("output_dir_candidates") or []
+    summary_path = _discover_existing_csv(
+        [*(Path(value) / "closure_comparison_summary.csv" for value in output_candidates), *output_candidates],
+        filename="closure_comparison_summary.csv",
+        match_tokens=["sen1floods11_closure"],
+    ) or _discover_existing_csv(
+        [*(Path(value) / "comparison_summary.csv" for value in output_candidates), *output_candidates],
+        filename="comparison_summary.csv",
+        match_tokens=["sen1floods11_closure"],
+    )
+    average_path = _discover_existing_csv(
+        [*(Path(value) / "closure_average_vs_bwer.csv" for value in output_candidates), *output_candidates],
+        filename="closure_average_vs_bwer.csv",
+        match_tokens=["sen1floods11_closure"],
+    ) or _discover_existing_csv(
+        [*(Path(value) / "average_vs_bwer.csv" for value in output_candidates), *output_candidates],
+        filename="average_vs_bwer.csv",
+        match_tokens=["sen1floods11_closure"],
+    )
+    if summary_path is None and average_path is None:
+        return rows
+    summary_rows = read_csv_rows(summary_path) if summary_path and summary_path.exists() else []
+    average_rows = read_csv_rows(average_path) if average_path and average_path.exists() else []
+    by_run = _merge_sen1_closure_rows(summary_rows, average_rows)
+    source_parts = [str(path) for path in (summary_path, average_path) if path]
+    source_note = "file_read:" + ";".join(source_parts)
+    for row in rows:
+        if row.get("experiment_id") != "sen1floods11_closure":
+            continue
+        source = by_run.get(_sen1_run_alias(row.get("run_id", "")))
+        if not source:
+            row["metric_availability_note"] = "No matching Sen1Floods11 closure CSV row found for this run."
+            continue
+        aggregate_iou = _row_value(source, ["aggregate_iou", "average_score"], "")
+        raw_bwer = _row_value(source, ["raw_bwer_event_id", "raw_bwer"], "")
+        standardised_bwer = _row_value(
+            source,
+            ["standardised_bwer_event_id_flood_extent_bin", "standardised_bwer"],
+            "",
+        )
+        aggregate_risk = _metric_score_to_risk(aggregate_iou, "iou_risk")
+        row["aggregate_score"] = aggregate_iou or row.get("aggregate_score", "")
+        row["aggregate_risk"] = aggregate_risk if not math.isnan(aggregate_risk) else row.get("aggregate_risk", "")
+        row["aggregate_dice"] = _row_value(source, ["aggregate_dice"], row.get("aggregate_dice", ""))
+        row["raw_bwer"] = raw_bwer or row.get("raw_bwer", "")
+        row["standardised_bwer"] = standardised_bwer or row.get("standardised_bwer", "")
+        row["worst_slice"] = _row_value(source, ["worst_event", "worst_slice"], row.get("worst_slice", ""))
+        row["best_slice"] = _row_value(source, ["best_event", "best_slice"], row.get("best_slice", ""))
+        row["tail_slices"] = _row_value(source, ["tail_events", "tail_slices"], row.get("tail_slices", ""))
+        row["data_source"] = source_note
+        missing = [
+            name
+            for name, value in (
+                ("aggregate_iou", aggregate_iou),
+                ("raw_bwer_event_id", raw_bwer),
+                ("standardised_bwer_event_id_flood_extent_bin", standardised_bwer),
+            )
+            if value in {"", None}
+        ]
+        row["metric_availability_note"] = "" if not missing else "Missing in Sen1Floods11 closure CSV: " + "; ".join(missing)
+    return rows
+
+
 def _enrich_rows_from_available_outputs(registry: Mapping[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Use completed output CSVs when present, while keeping registry records as fallback."""
+    rows = _enrich_sen1floods11_rows(registry, rows)
     reben_exp = None
     for exp in registry.get("experiments", []):
         if exp.get("experiment_id") == "reben_croma_sensor_mode":
