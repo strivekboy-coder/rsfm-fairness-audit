@@ -49,6 +49,35 @@ def _first_existing(paths: Sequence[str | Path] | None) -> Path | None:
     return None
 
 
+def _row_value(row: Mapping[str, Any] | None, names: Sequence[str], default: Any = "") -> Any:
+    if not row:
+        return default
+    for name in names:
+        value = row.get(name)
+        if value not in {None, ""}:
+            return value
+    return default
+
+
+def _sensor_mode_alias(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    text = text.replace("-", "_").replace(" ", "_")
+    aliases = {
+        "s1": "S1",
+        "croma_s1": "S1",
+        "sar": "S1",
+        "s2": "S2",
+        "croma_s2": "S2",
+        "optical": "S2",
+        "s1+s2": "S1+S2",
+        "s1_plus_s2": "S1+S2",
+        "croma_s1_plus_s2": "S1+S2",
+        "both": "S1+S2",
+        "fusion": "S1+S2",
+    }
+    return aliases.get(text, str(value or "").strip())
+
+
 def _metric_score_to_risk(score: Any, metric_family: str) -> float:
     value = _float(score)
     if math.isnan(value):
@@ -89,6 +118,9 @@ def _registry_run_rows(registry: Mapping[str, Any]) -> list[dict[str, Any]]:
         metric_family = str(exp.get("primary_metric_family", ""))
         for run in exp.get("formal_runs", []):
             aggregate_score = _float(run.get("aggregate_score"))
+            aggregate_risk = _metric_score_to_risk(aggregate_score, metric_family)
+            if metric_family == "bce_risk" and not math.isnan(_float(run.get("mean_bce_risk"))):
+                aggregate_risk = _float(run.get("mean_bce_risk"))
             row = {
                 "experiment_id": exp.get("experiment_id", ""),
                 "dataset": exp.get("dataset", ""),
@@ -106,7 +138,7 @@ def _registry_run_rows(registry: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "metric_family": metric_family,
                 "aggregate_metric_name": exp.get("aggregate_metric_name", ""),
                 "aggregate_score": aggregate_score if not math.isnan(aggregate_score) else "",
-                "aggregate_risk": _metric_score_to_risk(aggregate_score, metric_family),
+                "aggregate_risk": aggregate_risk,
                 "risk_metric_name": exp.get("risk_metric_name", ""),
                 "raw_bwer_slice": run.get("raw_bwer_slice", exp.get("primary_bwer_slice", "")),
                 "raw_bwer": run.get("raw_bwer", ""),
@@ -138,46 +170,51 @@ def _enrich_rows_from_available_outputs(registry: Mapping[str, Any], rows: list[
         return rows
     aggregate_path = output_dir / "aggregate_sensor_mode_comparison.csv"
     bce_path = output_dir / "bce_bwer_sensor_mode_comparison.csv"
+    binary_path = output_dir / "binary_error_bwer_sensor_mode_comparison.csv"
     if not aggregate_path.exists():
         return rows
     aggregate_rows = read_csv_rows(aggregate_path)
-    bwer_rows = read_csv_rows(bce_path) if bce_path.exists() else []
-    by_mode = {str(row.get("sensor_mode", "")): row for row in aggregate_rows}
+    bwer_rows = []
+    if bce_path.exists():
+        bwer_rows.extend(read_csv_rows(bce_path))
+    if binary_path.exists():
+        bwer_rows.extend(read_csv_rows(binary_path))
+    by_mode = {_sensor_mode_alias(row.get("sensor_mode", row.get("run_name", ""))): row for row in aggregate_rows}
     bwer_by_mode = {
-        str(row.get("sensor_mode", "")): row
+        _sensor_mode_alias(row.get("sensor_mode", row.get("run_name", ""))): row
         for row in bwer_rows
-        if str(row.get("risk_name", "")) == "risk_bce"
-        and str(row.get("slice_variable", "")) == "country"
-        and str(row.get("balance_variable", "")) == ""
+        if str(_row_value(row, ["risk_name", "risk_metric", "risk_column"], "")).strip() in {"risk_bce", "bce", "labelwise_bce"}
+        and str(_row_value(row, ["slice_variable", "slice", "slice_name"], "")).strip() == "country"
+        and str(_row_value(row, ["balance_variable", "balance", "standardised_balance"], "")).strip() == ""
     }
     std_by_mode = {
-        str(row.get("sensor_mode", "")): row
+        _sensor_mode_alias(row.get("sensor_mode", row.get("run_name", ""))): row
         for row in bwer_rows
-        if str(row.get("risk_name", "")) == "risk_bce"
-        and str(row.get("slice_variable", "")) == "country"
-        and str(row.get("balance_variable", "")) == "class_label"
+        if str(_row_value(row, ["risk_name", "risk_metric", "risk_column"], "")).strip() in {"risk_bce", "bce", "labelwise_bce"}
+        and str(_row_value(row, ["slice_variable", "slice", "slice_name"], "")).strip() == "country"
+        and str(_row_value(row, ["balance_variable", "balance", "standardised_balance"], "")).strip() == "class_label"
     }
     for row in rows:
         if row.get("experiment_id") != "reben_croma_sensor_mode":
             continue
-        mode = str(row.get("sensor_mode", ""))
+        mode = _sensor_mode_alias(row.get("sensor_mode", row.get("run_id", "")))
         aggregate = by_mode.get(mode)
         if aggregate:
-            row["aggregate_score"] = aggregate.get("macro_ap", row.get("aggregate_score", ""))
-            row["micro_ap"] = aggregate.get("micro_ap", row.get("micro_ap", ""))
-            row["macro_f1"] = aggregate.get("macro_f1", row.get("macro_f1", ""))
-            row["micro_f1"] = aggregate.get("micro_f1", row.get("micro_f1", ""))
-            row["mean_bce_risk"] = aggregate.get("mean_bce_risk", row.get("mean_bce_risk", ""))
+            row["aggregate_score"] = _row_value(aggregate, ["macro_ap", "aggregate_score"], row.get("aggregate_score", ""))
+            row["micro_ap"] = _row_value(aggregate, ["micro_ap"], row.get("micro_ap", ""))
+            row["macro_f1"] = _row_value(aggregate, ["macro_f1"], row.get("macro_f1", ""))
+            row["micro_f1"] = _row_value(aggregate, ["micro_f1"], row.get("micro_f1", ""))
+            row["mean_bce_risk"] = _row_value(aggregate, ["mean_bce_risk", "aggregate_risk", "mean_risk"], row.get("mean_bce_risk", ""))
             row["data_source"] = f"file_read:{aggregate_path}"
         bwer = bwer_by_mode.get(mode)
         if bwer:
-            row["raw_bwer"] = bwer.get("bwer", row.get("raw_bwer", ""))
-            row["worst_slice"] = bwer.get("worst_slice", row.get("worst_slice", ""))
-            row["tail_slices"] = bwer.get("tail_slices", row.get("tail_slices", ""))
+            row["raw_bwer"] = _row_value(bwer, ["bwer", "raw_bwer", "cross_run_mode_bwer"], row.get("raw_bwer", ""))
+            row["worst_slice"] = _row_value(bwer, ["worst_slice"], row.get("worst_slice", ""))
+            row["tail_slices"] = _row_value(bwer, ["tail_slices"], row.get("tail_slices", ""))
             row["raw_bwer_slice"] = "country"
         std = std_by_mode.get(mode)
         if std:
-            row["standardised_bwer"] = std.get("bwer", row.get("standardised_bwer", ""))
+            row["standardised_bwer"] = _row_value(std, ["bwer", "standardised_bwer", "cross_run_mode_bwer"], row.get("standardised_bwer", ""))
         if row.get("metric_family") == "bce_risk":
             row["aggregate_risk"] = row.get("mean_bce_risk", row.get("aggregate_risk", ""))
     return rows

@@ -49,6 +49,61 @@ def _first_existing(paths: Sequence[str | Path] | None) -> Path | None:
     return None
 
 
+def _sensor_mode_alias(value: Any) -> str:
+    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "s1": "S1",
+        "croma_s1": "S1",
+        "s2": "S2",
+        "croma_s2": "S2",
+        "s1+s2": "S1+S2",
+        "s1_plus_s2": "S1+S2",
+        "croma_s1_plus_s2": "S1+S2",
+    }
+    return aliases.get(text, str(value or "").strip())
+
+
+def _run_id_for_mode(mode: str) -> str:
+    canonical = _sensor_mode_alias(mode)
+    if canonical == "S1":
+        return "croma_s1"
+    if canonical == "S2":
+        return "croma_s2"
+    if canonical == "S1+S2":
+        return "croma_s1_plus_s2"
+    return str(mode or "")
+
+
+def _unavailable_row(
+    *,
+    experiment_id: str,
+    dataset: str,
+    deployment_axis: str,
+    run_id: str,
+    reason: str,
+    source_path: str = "",
+) -> dict[str, Any]:
+    return {
+        "experiment_id": experiment_id,
+        "dataset": dataset,
+        "deployment_axis": deployment_axis,
+        "run_id": run_id,
+        "sensor_mode": "",
+        "coverage_target": "",
+        "slice_variable": "unavailable",
+        "slice_value": "unavailable",
+        "confidence_threshold": "",
+        "retained_count": "",
+        "total_count": "",
+        "retained_coverage": "",
+        "abstention_rate": "",
+        "mean_risk": "",
+        "status": "unavailable",
+        "reason": reason,
+        "source_path": source_path,
+    }
+
+
 def _availability_rows(registry: Mapping[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for exp in registry.get("experiments", []):
@@ -64,7 +119,18 @@ def _availability_rows(registry: Mapping[str, Any]) -> list[dict[str, Any]]:
         source_summary = _first_existing(selective.get("source_summary_candidates"))
         if source_summary is not None:
             rows.append({**base, "run_id": "comparison_summary", "status": "available", "source_path": str(source_summary), "reason": "existing_selective_summary"})
-            continue
+        for run_id, spec in (selective.get("source_run_summary_candidates") or {}).items():
+            paths = spec.get("paths", []) if isinstance(spec, Mapping) else spec
+            table = _first_existing(paths)
+            rows.append(
+                {
+                    **base,
+                    "run_id": run_id,
+                    "status": "available" if table else "unavailable_missing_selective_summary",
+                    "source_path": str(table or ""),
+                    "reason": "existing_per_run_selective_summary" if table else "no per-run selective risk summary found at registry candidates",
+                }
+            )
         prediction_map = selective.get("prediction_table_candidates") or {}
         if prediction_map:
             for run_id, paths in prediction_map.items():
@@ -78,7 +144,7 @@ def _availability_rows(registry: Mapping[str, Any]) -> list[dict[str, Any]]:
                         "reason": "prediction_table_with_confidence" if table else "no existing prediction/audit table found at registry candidates",
                     }
                 )
-        else:
+        if not source_summary and not selective.get("source_run_summary_candidates") and not prediction_map:
             rows.append({**base, "run_id": "", "status": selective.get("availability", "unavailable"), "source_path": "", "reason": selective.get("reason", "")})
     return rows
 
@@ -212,16 +278,27 @@ def _simple_bwer(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return output
 
 
-def _read_existing_selective_summary(exp: Mapping[str, Any], path: Path) -> list[dict[str, Any]]:
+def _read_existing_selective_summary(
+    exp: Mapping[str, Any],
+    path: Path,
+    *,
+    run_id: str = "",
+    sensor_mode: str = "",
+) -> list[dict[str, Any]]:
     rows = read_csv_rows(path)
     output = []
     for row in rows:
+        mode = _sensor_mode_alias(row.get("sensor_mode", sensor_mode))
+        resolved_run_id = str(row.get("run_id", row.get("run_name", run_id or _run_id_for_mode(mode))))
         output.append(
             {
                 "experiment_id": exp.get("experiment_id", ""),
                 "dataset": exp.get("dataset", ""),
                 "deployment_axis": exp.get("deployment_axis", ""),
                 **dict(row),
+                "run_id": resolved_run_id,
+                "sensor_mode": mode,
+                "status": row.get("status", "available"),
                 "source_path": str(path),
             }
         )
@@ -333,6 +410,9 @@ def build_selective_risk_audit(registry_path: Path, output_dir: Path | None = No
 
     for exp in registry.get("experiments", []):
         selective = exp.get("selective_risk", {}) or {}
+        exp_id = str(exp.get("experiment_id", ""))
+        dataset = str(exp.get("dataset", ""))
+        axis = str(exp.get("deployment_axis", ""))
         source_summary = _first_existing(selective.get("source_summary_candidates"))
         if source_summary is not None:
             existing = _read_existing_selective_summary(exp, source_summary)
@@ -340,10 +420,38 @@ def build_selective_risk_audit(registry_path: Path, output_dir: Path | None = No
             curve.extend(existing)
             retained.extend([row for row in existing if str(row.get("slice_variable", "")) not in {"all", ""}])
             high_conf.extend([row for row in existing if str(row.get("slice_variable", "")) not in {"all", ""}])
-            continue
+        for run_id, spec in (selective.get("source_run_summary_candidates") or {}).items():
+            paths = spec.get("paths", []) if isinstance(spec, Mapping) else spec
+            mode = str(spec.get("sensor_mode", "")) if isinstance(spec, Mapping) else ""
+            table = _first_existing(paths)
+            if table is None:
+                unavailable = _unavailable_row(
+                    experiment_id=exp_id,
+                    dataset=dataset,
+                    deployment_axis=axis,
+                    run_id=str(run_id),
+                    reason="no existing per-run selective_risk_summary.csv found at registry candidates",
+                )
+                summary.append(unavailable)
+                curve.append(unavailable)
+                continue
+            existing = _read_existing_selective_summary(exp, table, run_id=str(run_id), sensor_mode=mode)
+            summary.extend(existing)
+            curve.extend(existing)
+            retained.extend([row for row in existing if str(row.get("slice_variable", "")) not in {"all", "", "unavailable"}])
+            high_conf.extend([row for row in existing if str(row.get("slice_variable", "")) not in {"all", "", "unavailable"}])
         for run_id, paths in (selective.get("prediction_table_candidates") or {}).items():
             table = _first_existing(paths)
             if table is None:
+                unavailable = _unavailable_row(
+                    experiment_id=exp_id,
+                    dataset=dataset,
+                    deployment_axis=axis,
+                    run_id=str(run_id),
+                    reason="no existing prediction/audit table found at registry candidates",
+                )
+                summary.append(unavailable)
+                curve.append(unavailable)
                 continue
             rows = read_csv_rows(table)
             s, r, h, c = _compute_selective_from_prediction_table(
@@ -361,6 +469,17 @@ def build_selective_risk_audit(registry_path: Path, output_dir: Path | None = No
             retained.extend(r)
             high_conf.extend(h)
             curve.extend(c)
+            if not s:
+                unavailable = _unavailable_row(
+                    experiment_id=exp_id,
+                    dataset=dataset,
+                    deployment_axis=axis,
+                    run_id=str(run_id),
+                    reason="prediction/audit table exists but confidence/risk columns were not usable",
+                    source_path=str(table),
+                )
+                summary.append(unavailable)
+                curve.append(unavailable)
 
     caveats = []
     for row in availability:
@@ -368,7 +487,93 @@ def build_selective_risk_audit(registry_path: Path, output_dir: Path | None = No
             caveats.append({**row, "caveat": "Selective risk unavailable; no confidence/probability/logit table is used or fabricated."})
         else:
             caveats.append({**row, "caveat": "Selective risk uses existing saved confidence/probability outputs only."})
+    if not summary:
+        summary = [
+            _unavailable_row(
+                experiment_id=str(row.get("experiment_id", "")),
+                dataset=str(row.get("dataset", "")),
+                deployment_axis=str(row.get("deployment_axis", "")),
+                run_id=str(row.get("run_id", "")),
+                reason=str(row.get("reason", "no existing confidence/probability/logit output found")),
+                source_path=str(row.get("source_path", "")),
+            )
+            for row in availability
+        ] or [
+            _unavailable_row(
+                experiment_id="",
+                dataset="",
+                deployment_axis="",
+                run_id="",
+                reason="no selective risk registry entries were available",
+            )
+        ]
     selective_bwer = _simple_bwer(retained)
+    if not retained:
+        retained = [
+            {
+                "experiment_id": row.get("experiment_id", ""),
+                "dataset": row.get("dataset", ""),
+                "deployment_axis": row.get("deployment_axis", ""),
+                "run_id": row.get("run_id", ""),
+                "coverage_target": "",
+                "slice_variable": "unavailable",
+                "slice_value": "unavailable",
+                "retained_count": "",
+                "total_count": "",
+                "retained_coverage": "",
+                "mean_risk": "",
+                "status": "unavailable",
+                "reason": row.get("reason", "no retained slice rows available"),
+            }
+            for row in summary
+            if str(row.get("status", "")) == "unavailable"
+        ] or [
+            {
+                "experiment_id": "",
+                "dataset": "",
+                "deployment_axis": "",
+                "run_id": "",
+                "coverage_target": "",
+                "slice_variable": "unavailable",
+                "slice_value": "unavailable",
+                "retained_count": "",
+                "total_count": "",
+                "retained_coverage": "",
+                "mean_risk": "",
+                "status": "unavailable",
+                "reason": "no selective risk rows available",
+            }
+        ]
+    if not high_conf:
+        high_conf = [{**dict(row), "high_confidence_error": row.get("mean_risk", "")} for row in retained]
+    if not selective_bwer:
+        selective_bwer = [
+            {
+                "experiment_id": row.get("experiment_id", ""),
+                "run_id": row.get("run_id", ""),
+                "coverage_target": row.get("coverage_target", ""),
+                "slice_variable": row.get("slice_variable", "unavailable"),
+                "mean_slice_risk": "",
+                "worst_slice_risk": "",
+                "selective_bwer_proxy": "",
+                "status": "unavailable",
+                "note": row.get("reason", "Selective BWER unavailable because no retained slice support rows were available."),
+            }
+            for row in summary
+            if str(row.get("status", "")) == "unavailable"
+        ] or [
+            {
+                "experiment_id": "",
+                "run_id": "",
+                "coverage_target": "",
+                "slice_variable": "unavailable",
+                "mean_slice_risk": "",
+                "worst_slice_risk": "",
+                "selective_bwer_proxy": "",
+                "status": "unavailable",
+                "note": "Selective BWER unavailable because no retained slice support rows were available.",
+            }
+        ]
 
     artifacts = {
         "confidence_availability_audit": output / "confidence_availability_audit.csv",

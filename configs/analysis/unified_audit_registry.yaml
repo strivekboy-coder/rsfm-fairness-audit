@@ -274,7 +274,28 @@ experiments:
       source_summary_candidates:
         - /content/outputs/reben_croma_sensor_mode_audit_croma_comparison/selective_risk_comparison.csv
         - outputs/reben_croma_sensor_mode_audit_croma_comparison/selective_risk_comparison.csv
+      source_run_summary_candidates:
+        croma_s1:
+          sensor_mode: S1
+          paths:
+            - /content/outputs/reben_croma_sensor_mode_audit_croma_s1_full/selective_risk_summary.csv
+            - /content/outputs/reben_croma_sensor_mode_audit_croma_s1_full/bwer/croma_s1/selective_risk_summary.csv
+            - outputs/reben_croma_sensor_mode_audit_croma_s1_full/selective_risk_summary.csv
+            - outputs/reben_croma_sensor_mode_audit_croma_s1_full/bwer/croma_s1/selective_risk_summary.csv
+        croma_s2:
+          sensor_mode: S2
+          paths:
+            - /content/outputs/reben_croma_sensor_mode_audit_croma_s2_full/selective_risk_summary.csv
+            - /content/outputs/reben_croma_sensor_mode_audit_croma_s2_full/bwer/croma_s2/selective_risk_summary.csv
+            - outputs/reben_croma_sensor_mode_audit_croma_s2_full/selective_risk_summary.csv
+            - outputs/reben_croma_sensor_mode_audit_croma_s2_full/bwer/croma_s2/selective_risk_summary.csv
+        croma_s1_plus_s2:
+          sensor_mode: S1+S2
+          paths:
+            - /content/outputs/reben_croma_sensor_mode_audit_croma_s1_plus_s2_full/selective_risk_summary.csv
+            - /content/outputs/reben_croma_sensor_mode_audit_croma_s1_plus_s2_full/bwer/croma_s1_plus_s2/selective_risk_summary.csv
+            - outputs/reben_croma_sensor_mode_audit_croma_s1_plus_s2_full/selective_risk_summary.csv
+            - outputs/reben_croma_sensor_mode_audit_croma_s1_plus_s2_full/bwer/croma_s1_plus_s2/selective_risk_summary.csv
       risk_column: risk_bce
       confidence_column: confidence
       slice_columns: [country, class_label]
-
