@@ -49,6 +49,22 @@ def _first_existing(paths: Sequence[str | Path] | None) -> Path | None:
     return None
 
 
+def _normalize_source_path(path: str | Path) -> str:
+    text = str(path)
+    replacements = {
+        "/content/outputs/content/outputs/": "/content/outputs/",
+        "\\content\\outputs\\content\\outputs\\": "\\content\\outputs\\",
+    }
+    changed = True
+    while changed:
+        changed = False
+        for old, new in replacements.items():
+            if old in text:
+                text = text.replace(old, new)
+                changed = True
+    return text
+
+
 def _path_tokens(path: Path, extra_tokens: Sequence[str] | None = None) -> list[str]:
     tokens = [str(token) for token in extra_tokens or [] if str(token)]
     for part in path.parts:
@@ -148,6 +164,23 @@ def _run_id_for_mode(mode: str) -> str:
     return str(mode or "")
 
 
+def _modes_in_selective_summary(path: Path | None) -> set[str]:
+    if path is None:
+        return set()
+    modes: set[str] = set()
+    try:
+        rows = read_csv_rows(path)
+    except Exception:
+        return modes
+    for row in rows:
+        mode = _sensor_mode_alias(row.get("sensor_mode", row.get("run_name", "")))
+        if not mode:
+            mode = _sensor_mode_alias(row.get("run_id", ""))
+        if mode:
+            modes.add(mode)
+    return modes
+
+
 def _unavailable_row(
     *,
     experiment_id: str,
@@ -174,7 +207,7 @@ def _unavailable_row(
         "mean_risk": "",
         "status": "unavailable",
         "reason": reason,
-        "source_path": source_path,
+        "source_path": _normalize_source_path(source_path),
     }
 
 
@@ -196,17 +229,26 @@ def _availability_rows(registry: Mapping[str, Any]) -> list[dict[str, Any]]:
             match_tokens=["reben_croma_sensor_mode_audit_croma_comparison"],
         )
         if source_summary is not None:
-            rows.append({**base, "run_id": "comparison_summary", "status": "available", "source_path": str(source_summary), "reason": "existing_selective_summary"})
+            rows.append({**base, "run_id": "comparison_summary", "status": "available", "source_path": _normalize_source_path(source_summary), "reason": "existing_selective_summary"})
+        source_summary_modes = _modes_in_selective_summary(source_summary)
         for run_id, spec in (selective.get("source_run_summary_candidates") or {}).items():
             paths = spec.get("paths", []) if isinstance(spec, Mapping) else spec
+            mode = _sensor_mode_alias(spec.get("sensor_mode", "")) if isinstance(spec, Mapping) else ""
             table = _discover_existing_csv(paths, filename="selective_risk_summary.csv", match_tokens=[str(run_id)])
+            source_path = table
+            status = "available" if table else "unavailable_missing_selective_summary"
+            reason = "existing_per_run_selective_summary" if table else "no per-run selective risk summary found at registry candidates"
+            if table is None and mode in source_summary_modes and source_summary is not None:
+                source_path = source_summary
+                status = "available"
+                reason = "existing_comparison_selective_summary_contains_run"
             rows.append(
                 {
                     **base,
                     "run_id": run_id,
-                    "status": "available" if table else "unavailable_missing_selective_summary",
-                    "source_path": str(table or ""),
-                    "reason": "existing_per_run_selective_summary" if table else "no per-run selective risk summary found at registry candidates",
+                    "status": status,
+                    "source_path": _normalize_source_path(source_path or ""),
+                    "reason": reason,
                 }
             )
         prediction_map = selective.get("prediction_table_candidates") or {}
@@ -218,7 +260,7 @@ def _availability_rows(registry: Mapping[str, Any]) -> list[dict[str, Any]]:
                         **base,
                         "run_id": run_id,
                         "status": "available" if table else "unavailable_missing_prediction_table",
-                        "source_path": str(table or ""),
+                        "source_path": _normalize_source_path(table or ""),
                         "reason": "prediction_table_with_confidence" if table else "no existing prediction/audit table found at registry candidates",
                     }
                 )
@@ -377,7 +419,7 @@ def _read_existing_selective_summary(
                 "run_id": resolved_run_id,
                 "sensor_mode": mode,
                 "status": row.get("status", "available"),
-                "source_path": str(path),
+                "source_path": _normalize_source_path(path),
             }
         )
     return output
@@ -421,15 +463,18 @@ def _figures(output: Path, summary: Sequence[Mapping[str, Any]], retained: Seque
     heat_stem = figures / "retained_coverage_by_slice_heatmap"
     caveat_stem = figures / "claim_support_caveat_matrix"
 
-    fig, ax = plt.subplots(figsize=(5.8, 3.4))
-    for key in sorted({(str(row.get("experiment_id")), str(row.get("run_id", row.get("sensor_mode", "")))) for row in summary}):
-        items = [row for row in summary if (str(row.get("experiment_id")), str(row.get("run_id", row.get("sensor_mode", "")))) == key]
+    fig, ax = plt.subplots(figsize=(6.2, 3.8))
+    all_rows = [row for row in summary if str(row.get("slice_variable", "")) == "all" and str(row.get("status", "available")) != "unavailable"]
+    for key in sorted({(str(row.get("experiment_id")), str(row.get("run_id", row.get("sensor_mode", "")))) for row in all_rows}):
+        items = [row for row in all_rows if (str(row.get("experiment_id")), str(row.get("run_id", row.get("sensor_mode", "")))) == key]
         x = [_float(row.get("retained_coverage", row.get("coverage_target"))) for row in items]
         y = [_float(row.get("mean_risk")) for row in items]
         pairs = sorted((a, b) for a, b in zip(x, y) if not math.isnan(a) and not math.isnan(b))
         if pairs:
             ax.plot([a for a, _ in pairs], [b for _, b in pairs], marker="o", label=" / ".join(key))
-    ax.set_title("Selective risk curves")
+    if not ax.lines:
+        ax.text(0.5, 0.5, "No available `slice_variable == all` selective-risk rows.", ha="center", va="center", transform=ax.transAxes)
+    ax.set_title("Selective risk curves (overall retained set only)")
     ax.set_xlabel("retained coverage")
     ax.set_ylabel("mean retained risk")
     ax.grid(alpha=0.25)
@@ -438,16 +483,47 @@ def _figures(output: Path, summary: Sequence[Mapping[str, Any]], retained: Seque
     _save(fig, curve_stem)
     plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=(7.0, max(2.6, 0.18 * len(retained))))
-    labels = [f"{row.get('run_id', row.get('sensor_mode', ''))} | {row.get('slice_variable')}={row.get('slice_value')}" for row in retained[:40]]
-    values = [_float(row.get("retained_coverage"), 0.0) for row in retained[:40]]
-    ax.barh(range(len(labels)), values, color="#009E73")
-    ax.set_yticks(range(len(labels)))
-    ax.set_yticklabels(labels)
-    ax.invert_yaxis()
-    ax.set_title("Retained coverage by slice (first 40 rows)")
-    ax.set_xlabel("retained coverage")
-    ax.grid(axis="x", alpha=0.25)
+    slice_rows = [
+        row
+        for row in retained
+        if str(row.get("slice_variable", "")) not in {"", "all", "unavailable"}
+        and not math.isnan(_float(row.get("mean_risk")))
+    ]
+    slice_rows = sorted(
+        slice_rows,
+        key=lambda row: (
+            _float(row.get("mean_risk"), 0.0),
+            abs(_float(row.get("retained_coverage"), 1.0) - 1.0),
+            _float(row.get("total_count"), 0.0),
+        ),
+        reverse=True,
+    )[:20]
+    fig, ax = plt.subplots(figsize=(8.8, max(4.6, 0.34 * len(slice_rows))))
+    if slice_rows:
+        labels = [
+            f"{row.get('run_id', row.get('sensor_mode', ''))} | {row.get('slice_variable')}={row.get('slice_value')} | cov={_float(row.get('coverage_target')):.2g}"
+            for row in slice_rows
+        ]
+        matrix = [
+            [
+                _float(row.get("mean_risk"), 0.0),
+                _float(row.get("retained_coverage"), 0.0),
+            ]
+            for row in slice_rows
+        ]
+        image = ax.imshow(matrix, aspect="auto", cmap="cividis", vmin=0.0, vmax=max(1.0, max(max(row) for row in matrix)))
+        ax.set_yticks(range(len(labels)))
+        ax.set_yticklabels(labels, fontsize=7)
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels(["mean risk", "retained coverage"])
+        ax.set_title("Top 20 selective-risk slices")
+        for y, row_values in enumerate(matrix):
+            for x, value in enumerate(row_values):
+                ax.text(x, y, f"{value:.2f}", ha="center", va="center", fontsize=6.5, color="white" if value > 0.55 else "black")
+        fig.colorbar(image, ax=ax, fraction=0.028, pad=0.02, label="value")
+    else:
+        ax.axis("off")
+        ax.text(0.5, 0.5, "No available slice-level selective-risk rows.", ha="center", va="center")
     _save(fig, heat_stem)
     plt.close(fig)
 

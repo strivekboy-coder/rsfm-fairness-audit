@@ -152,6 +152,10 @@ def _registry_run_rows(registry: Mapping[str, Any]) -> list[dict[str, Any]]:
             for extra in ("macro_f1", "micro_f1", "micro_ap", "balanced_accuracy", "top5_accuracy", "mean_bce_risk", "aggregate_dice"):
                 if extra in run:
                     row[extra] = run.get(extra, "")
+            if exp.get("experiment_id") == "reben_croma_sensor_mode" and (
+                row.get("micro_ap", "") in {"", None} or row.get("micro_f1", "") in {"", None}
+            ):
+                row["metric_availability_note"] = "micro_ap and/or micro_f1 unavailable in registry record; loaded from aggregate_sensor_mode_comparison.csv when present."
             rows.append(row)
     return _enrich_rows_from_available_outputs(registry, rows)
 
@@ -205,6 +209,10 @@ def _enrich_rows_from_available_outputs(registry: Mapping[str, Any], rows: list[
             row["macro_f1"] = _row_value(aggregate, ["macro_f1"], row.get("macro_f1", ""))
             row["micro_f1"] = _row_value(aggregate, ["micro_f1"], row.get("micro_f1", ""))
             row["mean_bce_risk"] = _row_value(aggregate, ["mean_bce_risk", "aggregate_risk", "mean_risk"], row.get("mean_bce_risk", ""))
+            if row.get("micro_ap", "") in {"", None} or row.get("micro_f1", "") in {"", None}:
+                row["metric_availability_note"] = "micro_ap and/or micro_f1 not present in aggregate_sensor_mode_comparison.csv."
+            else:
+                row["metric_availability_note"] = ""
             row["data_source"] = f"file_read:{aggregate_path}"
         bwer = bwer_by_mode.get(mode)
         if bwer:
@@ -379,11 +387,18 @@ def _barh(ax: Any, labels: Sequence[str], values: Sequence[float], title: str, x
 def _figures(output: Path, rows: Sequence[Mapping[str, Any]], claims: Sequence[Mapping[str, Any]]) -> dict[str, Path]:
     plt = _configure_matplotlib()
     figures = ensure_dir(output / "figures")
+    for stale_name in ("worst_slice_heatmap_by_dataset.png", "worst_slice_heatmap_by_dataset.pdf"):
+        stale = figures / stale_name
+        if stale.exists():
+            try:
+                stale.unlink()
+            except OSError:
+                pass
     paths = {
         "framework_overview": figures / "framework_overview",
         "deployment_axis_matrix": figures / "deployment_axis_matrix",
         "average_vs_bwer_cross_dataset": figures / "average_vs_bwer_cross_dataset",
-        "worst_slice_heatmap_by_dataset": figures / "worst_slice_heatmap_by_dataset",
+        "worst_slice_barplot_by_run": figures / "worst_slice_barplot_by_run",
         "reben_sensor_mode_summary": figures / "reben_sensor_mode_summary",
         "claim_support_caveat_matrix": figures / "claim_support_caveat_matrix",
     }
@@ -414,37 +429,70 @@ def _figures(output: Path, rows: Sequence[Mapping[str, Any]], claims: Sequence[M
     _save(fig, paths["deployment_axis_matrix"])
     plt.close(fig)
 
-    # Average vs BWER.
-    fig, ax = plt.subplots(figsize=(5.6, 3.6))
-    colors = {"event_disaster": "#D55E00", "geography_location": "#0072B2", "sensor_modality": "#009E73"}
+    # Average vs BWER, faceted by experiment to avoid cross-task numeric equivalence.
+    valid_groups: dict[str, list[Mapping[str, Any]]] = {}
     for row in rows:
-        agg = _float(row.get("aggregate_score"))
-        bwer = _float(row.get("raw_bwer"))
-        if math.isnan(agg) or math.isnan(bwer):
+        if math.isnan(_float(row.get("aggregate_score"))) or math.isnan(_float(row.get("raw_bwer"))):
             continue
-        ax.scatter(agg, bwer, color=colors.get(str(row.get("deployment_axis")), "#666666"), s=45)
-        ax.text(agg, bwer, str(row.get("run_id")), fontsize=6, ha="left", va="bottom")
-    ax.set_title("Average score vs Raw-BWER (within-task interpretation only)")
-    ax.set_xlabel("aggregate score")
-    ax.set_ylabel("Raw-BWER")
-    ax.grid(alpha=0.25)
+        valid_groups.setdefault(str(row.get("experiment_id", "")), []).append(row)
+    n_panels = max(1, len(valid_groups))
+    fig, axes = plt.subplots(1, n_panels, figsize=(max(4.0, 3.6 * n_panels), 3.4), squeeze=False)
+    palette = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00"]
+    if not valid_groups:
+        axes[0][0].axis("off")
+        axes[0][0].text(0.5, 0.5, "No formal rows with both aggregate score and Raw-BWER.", ha="center", va="center")
+    for ax, (exp_id, items) in zip(axes[0], valid_groups.items()):
+        for idx, row in enumerate(items):
+            agg = _float(row.get("aggregate_score"))
+            bwer = _float(row.get("raw_bwer"))
+            ax.scatter(agg, bwer, color=palette[idx % len(palette)], s=52, edgecolor="white", linewidth=0.7)
+            ax.text(agg, bwer, str(row.get("run_id")), fontsize=6.5, ha="left", va="bottom")
+        first = items[0]
+        ax.set_title(f"{first.get('dataset')}\n{first.get('metric_family')}", fontsize=9)
+        ax.set_xlabel(str(first.get("aggregate_metric_name", "aggregate score")))
+        ax.set_ylabel("Raw-BWER")
+        ax.grid(alpha=0.22)
+    for ax in axes[0][len(valid_groups):]:
+        ax.axis("off")
+    fig.suptitle("Average score vs Raw-BWER, faceted by task family", y=1.02, fontsize=10)
     _save(fig, paths["average_vs_bwer_cross_dataset"])
     plt.close(fig)
 
-    # Worst slice heatmap-like table.
-    fig, ax = plt.subplots(figsize=(7.2, max(2.4, 0.28 * len(rows))))
-    labels = [f"{row.get('dataset')} | {row.get('run_id')}" for row in rows]
-    values = [_float(row.get("raw_bwer"), 0.0) for row in rows]
-    _barh(ax, labels, values, "Worst-slice pressure proxy by run", "Raw-BWER")
-    _save(fig, paths["worst_slice_heatmap_by_dataset"])
+    # Worst-slice bar plot by run.
+    valid_worst = [row for row in rows if not math.isnan(_float(row.get("raw_bwer")))]
+    valid_worst = sorted(valid_worst, key=lambda row: _float(row.get("raw_bwer")), reverse=True)
+    fig, ax = plt.subplots(figsize=(7.6, max(2.8, 0.34 * len(valid_worst))))
+    if valid_worst:
+        labels = [f"{row.get('dataset')} | {row.get('run_id')}" for row in valid_worst]
+        values = [_float(row.get("raw_bwer"), 0.0) for row in valid_worst]
+        _barh(ax, labels, values, "Raw-BWER by formal run", "Raw-BWER")
+    else:
+        ax.axis("off")
+        ax.text(0.5, 0.5, "No valid Raw-BWER rows available.", ha="center", va="center")
+    _save(fig, paths["worst_slice_barplot_by_run"])
     plt.close(fig)
 
     # reBEN sensor mode summary.
     reben = [row for row in rows if row.get("experiment_id") == "reben_croma_sensor_mode"]
-    fig, ax = plt.subplots(figsize=(4.4, 3.0))
+    fig, axes = plt.subplots(2, 2, figsize=(7.2, 5.0), squeeze=False)
+    metrics = [
+        ("aggregate_score", "macro-AP", "higher is better"),
+        ("mean_bce_risk", "mean BCE risk", "lower is better"),
+        ("raw_bwer", "country Raw-BWER", "lower is better"),
+        ("standardised_bwer", "country | class BWER", "lower is better"),
+    ]
     labels = [str(row.get("sensor_mode") or row.get("run_id")) for row in reben]
-    values = [_float(row.get("aggregate_score"), 0.0) for row in reben]
-    _barh(ax, labels, values, "reBEN/CROMA sensor-mode aggregate macro-AP", "macro-AP")
+    for ax, (column, title, subtitle) in zip(axes.ravel(), metrics):
+        values = [_float(row.get(column)) for row in reben]
+        clean_values = [0.0 if math.isnan(value) else value for value in values]
+        ax.bar(labels, clean_values, color=["#0072B2", "#D55E00", "#009E73"][: len(labels)])
+        for idx, value in enumerate(values):
+            label = "NA" if math.isnan(value) else f"{value:.3f}"
+            ax.text(idx, clean_values[idx] + (max(clean_values or [0.0]) * 0.025 + 0.005), label, ha="center", va="bottom", fontsize=7)
+        ax.set_title(f"{title}\n{subtitle}", fontsize=9)
+        ax.set_ylim(0, max(clean_values + [0.01]) * 1.22)
+        ax.grid(axis="y", alpha=0.22)
+    fig.suptitle("reBEN/CROMA sensor-mode summary", y=1.02, fontsize=10)
     _save(fig, paths["reben_sensor_mode_summary"])
     plt.close(fig)
 
@@ -472,6 +520,13 @@ def _write_reports(output: Path, registry: Mapping[str, Any], run_rows: Sequence
         "",
         "Cross-task numeric values are not directly interchangeable: segmentation IoU-risk, single-label classification error, and multi-label BCE risk are separated by `metric_family`.",
     ]
+    missing_metric_notes = [
+        f"- `{row.get('run_id')}`: {row.get('metric_availability_note')}"
+        for row in run_rows
+        if str(row.get("metric_availability_note", "")).strip()
+    ]
+    if missing_metric_notes:
+        matrix_report.extend(["", "## Metric Availability Notes", "", *missing_metric_notes])
     (reports / "unified_audit_matrix_report.md").write_text("\n".join(matrix_report) + "\n", encoding="utf-8")
     summary = [
         "# Paper-Ready Summary",
@@ -505,9 +560,9 @@ def _figure_notes(output: Path) -> None:
         "- `framework_overview`: supports the synthesis workflow only; it is not result evidence.",
         "- `deployment_axis_matrix`: shows coverage of event, geography, and sensor axes.",
         "- `average_vs_bwer_cross_dataset`: shows aggregate-vs-BWER relationships with metric-family caveats; do not compare raw y-values across tasks as equivalent risks.",
-        "- `worst_slice_heatmap_by_dataset`: summarizes tail-pressure rows; inspect support diagnostics before claim use.",
-        "- `reben_sensor_mode_summary`: CROMA-only sensor-mode aggregate comparison; BIFOLD is blocked.",
-        "- `selective_risk_curves_cross_dataset` and `retained_coverage_by_slice_heatmap` are produced by the selective-risk script.",
+        "- `worst_slice_barplot_by_run`: bar plot of formal-run Raw-BWER; it is intentionally not called a heatmap.",
+        "- `reben_sensor_mode_summary`: CROMA-only sensor-mode comparison across macro-AP, mean BCE risk, country Raw-BWER, and country | class BWER; BIFOLD is blocked.",
+        "- `selective_risk_curves_cross_dataset` and `retained_coverage_by_slice_heatmap` are produced by the selective-risk script. The main selective curve uses `slice_variable == all` only.",
         "- `claim_support_caveat_matrix`: summarizes claim support categories and caveat burden.",
     ]
     (output / "figures" / "figure_notes.md").write_text("\n".join(notes) + "\n", encoding="utf-8")
