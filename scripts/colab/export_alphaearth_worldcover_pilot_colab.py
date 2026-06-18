@@ -24,6 +24,8 @@ SAMPLES_PER_CLASS = 15
 PILOT_SCALE_M = 250
 SEED = 42
 INCLUDE_DYNAMIC_WORLD = False
+WAIT_AND_CANCEL_AFTER_MINUTES = 60
+POLL_SECONDS = 120
 PILOT_COUNTRIES = [
     ("US", "USA"),
     ("BR", "BRA"),
@@ -156,6 +158,23 @@ def main() -> None:
     print(f"Drive folder: {EXPORT_FOLDER}")
     print(f"Expected CSV prefix: {EXPORT_FILE_PREFIX}")
     print(f"After export, copy CSV to {PROJECT_ROOT}/outputs/alphaearth_gee_pilot_v1/alphaearth_worldcover_pilot_export.csv")
+    if WAIT_AND_CANCEL_AFTER_MINUTES:
+        import time
+
+        deadline = time.time() + WAIT_AND_CANCEL_AFTER_MINUTES * 60
+        while True:
+            status = task.status()
+            state = status.get("state", "UNKNOWN")
+            print(f"GEE task state: {state}")
+            if state in {"COMPLETED", "FAILED", "CANCELLED"}:
+                print(status)
+                break
+            if time.time() >= deadline:
+                print(f"Task exceeded {WAIT_AND_CANCEL_AFTER_MINUTES} minutes; cancelling.")
+                task.cancel()
+                print(task.status())
+                break
+            time.sleep(POLL_SECONDS)
 
 
 if __name__ == "__main__":
