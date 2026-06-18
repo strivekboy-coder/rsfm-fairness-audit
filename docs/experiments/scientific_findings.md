@@ -695,3 +695,27 @@ Recommended next action:
 - Treat reBEN/CROMA as the sensor/modality audit case: fusion helps aggregate
   metrics and broad BCE-BWER, while residual tail risk and
   risk-primitive-dependent sensor-mode preference remain.
+
+## Unified Audit Matrix and Selective Risk Audit
+
+Recorded: 2026-06-06.
+
+Unified Audit Matrix v1:
+- The completed Sen1Floods11, fMoW-Sentinel, and reBEN/CROMA evidence chains
+  are synthesized through a registry-driven post-hoc matrix covering
+  event/disaster, geography/location, and sensor/modality deployment axes.
+- Formal results remain separate from sanity and diagnostic outputs.
+- Sen1Floods11 aggregate IoU, Raw-BWER, and standardised BWER are read from the
+  extracted closure comparison CSVs rather than inferred or manually invented.
+- Cross-task reporting preserves task-specific metric families; IoU risk,
+  classification error, BCE risk, and binary-error risk are not treated as
+  directly numerically equivalent.
+
+Selective Risk Audit v1:
+- Selective-risk synthesis uses only saved confidence/probability outputs.
+- Available reBEN/CROMA selective-risk summaries are loaded from completed run
+  outputs; runs without usable confidence remain explicitly unavailable.
+- No confidence values, logits, probabilities, or selective-risk results are
+  fabricated for unavailable runs.
+- Selective-risk evidence remains post-hoc and does not modify the completed
+  model predictions, BWER definitions, or formal experiment outputs.
