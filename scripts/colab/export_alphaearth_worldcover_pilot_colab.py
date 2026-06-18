@@ -7,8 +7,9 @@ to be copied to:
     outputs/alphaearth_gee_pilot_v1/alphaearth_worldcover_pilot_export.csv
 
 This scaffold is intentionally conservative: it samples points, attaches
-WorldCover labels, AlphaEarth embedding bands A00..A63, and optional Dynamic
-World agreement/confidence fields if available. It does not train models.
+WorldCover labels and AlphaEarth embedding bands A00..A63. Dynamic World is
+disabled by default because annual probability compositing can make the smoke
+export much slower. It does not train models.
 """
 
 from __future__ import annotations
@@ -19,9 +20,15 @@ EXPORT_FOLDER = "rsfm_fairness_audit_alphaearth_pilot_v1"
 EXPORT_DESCRIPTION = "alphaearth_worldcover_pilot_export_2021_v1"
 EXPORT_FILE_PREFIX = "alphaearth_worldcover_pilot_export"
 YEAR = 2021
-SAMPLES_PER_CLASS = 80
-PILOT_SCALE_M = 100
+SAMPLES_PER_CLASS = 15
+PILOT_SCALE_M = 250
 SEED = 42
+INCLUDE_DYNAMIC_WORLD = False
+PILOT_COUNTRIES = [
+    ("US", "USA"),
+    ("BR", "BRA"),
+    ("IN", "IND"),
+]
 
 
 def main() -> None:
@@ -39,37 +46,22 @@ def main() -> None:
     )
     worldcover = ee.ImageCollection("ESA/WorldCover/v200").first().select("Map").rename("worldcover_label")
 
-    # Optional diagnostic source. Dynamic World labels/probabilities are not
-    # human truth; they only provide confidence/agreement diagnostics.
-    dynamic_world = (
-        ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")
-        .filterDate(f"{YEAR}-01-01", f"{YEAR + 1}-01-01")
-        .select(["label", "water", "trees", "grass", "flooded_vegetation", "crops", "shrub_and_scrub", "built", "bare", "snow_and_ice"])
-    )
-    dw_label = dynamic_world.select("label").mode().rename("dynamic_world_label")
-    dw_confidence = dynamic_world.select(["water", "trees", "grass", "flooded_vegetation", "crops", "shrub_and_scrub", "built", "bare", "snow_and_ice"]).max().reduce(ee.Reducer.max()).rename("dynamic_world_confidence")
+    stacked = alphaearth.addBands(worldcover)
+    if INCLUDE_DYNAMIC_WORLD:
+        # Optional diagnostic source. Dynamic World labels/probabilities are not
+        # human truth; they only provide confidence/agreement diagnostics.
+        dynamic_world = (
+            ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")
+            .filterDate(f"{YEAR}-01-01", f"{YEAR + 1}-01-01")
+            .select(["label", "water", "trees", "grass", "flooded_vegetation", "crops", "shrub_and_scrub", "built", "bare", "snow_and_ice"])
+        )
+        dw_label = dynamic_world.select("label").mode().rename("dynamic_world_label")
+        dw_confidence = dynamic_world.select(["water", "trees", "grass", "flooded_vegetation", "crops", "shrub_and_scrub", "built", "bare", "snow_and_ice"]).max().reduce(ee.Reducer.max()).rename("dynamic_world_confidence")
+        stacked = stacked.addBands(dw_label).addBands(dw_confidence)
 
-    # Use a small, diverse set of pilot countries. Replace this with a
-    # project-specific ISO3 country polygon asset for a full run.
-    countries = ee.FeatureCollection("USDOS/LSIB_SIMPLE/2017").filter(
-        ee.Filter.inList("country_co", ["US", "BR", "IN", "ZA", "AU", "FR", "ID", "MX"])
-    )
-    region = countries.geometry()
-
-    stacked = alphaearth.addBands(worldcover).addBands(dw_label).addBands(dw_confidence)
+    countries = ee.FeatureCollection("USDOS/LSIB_SIMPLE/2017")
 
     class_values = [10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100]
-    samples = stacked.stratifiedSample(
-        numPoints=SAMPLES_PER_CLASS,
-        classBand="worldcover_label",
-        region=region,
-        scale=PILOT_SCALE_M,
-        seed=SEED,
-        geometries=True,
-        classValues=class_values,
-        classPoints=[SAMPLES_PER_CLASS] * len(class_values),
-    ).randomColumn("split_random", seed=SEED)
-
     worldcover_names = ee.Dictionary(
         {
             "10": "Tree cover",
@@ -85,23 +77,10 @@ def main() -> None:
             "100": "Moss and lichen",
         }
     )
-    iso2_to_iso3 = ee.Dictionary({"US": "USA", "BR": "BRA", "IN": "IND", "ZA": "ZAF", "AU": "AUS", "FR": "FRA", "ID": "IDN", "MX": "MEX"})
-
-    # Country properties depend on the chosen boundary source. LSIB provides
-    # two-letter codes. For full paper-grade runs, replace with an ISO3 country
-    # polygon asset or join ISO3 after export.
-    country_join = ee.Join.saveFirst("country_feature").apply(
-        primary=samples,
-        secondary=countries,
-        condition=ee.Filter.intersects(leftField=".geo", rightField=".geo"),
-    )
-
-    def enrich(feature: ee.Feature) -> ee.Feature:
+    def enrich(feature: ee.Feature, iso3: str) -> ee.Feature:
         geom = feature.geometry()
         coords = geom.coordinates()
-        country_feature = ee.Feature(feature.get("country_feature"))
-        country_code = ee.String(ee.Algorithms.If(country_feature, country_feature.get("country_co"), ""))
-        country_iso3 = ee.String(iso2_to_iso3.get(country_code, country_code))
+        iso3_value = ee.String(iso3)
         label = ee.Number(feature.get("worldcover_label")).format()
         # Spatial block at 1-degree grid for pilot leakage-aware splitting.
         lon = ee.Number(coords.get(0))
@@ -117,7 +96,7 @@ def main() -> None:
             .set("lon", lon)
             .set("lat", lat)
             .set("year", YEAR)
-            .set("country_iso3", country_iso3)
+            .set("country_iso3", iso3_value)
             .set("region", "")
             .set("income_group", "")
             .set("biome_or_ecoregion", "")
@@ -127,7 +106,24 @@ def main() -> None:
             .set("worldcover_class_name", worldcover_names.get(label))
         )
 
-    enriched = ee.FeatureCollection(country_join).map(enrich)
+    def sample_country(iso2: str, iso3: str) -> ee.FeatureCollection:
+        country = countries.filter(ee.Filter.eq("country_co", iso2)).geometry()
+        samples = stacked.stratifiedSample(
+            numPoints=SAMPLES_PER_CLASS,
+            classBand="worldcover_label",
+            region=country,
+            scale=PILOT_SCALE_M,
+            seed=SEED,
+            geometries=True,
+            classValues=class_values,
+            classPoints=[SAMPLES_PER_CLASS] * len(class_values),
+            tileScale=4,
+        ).randomColumn("split_random", seed=SEED)
+        return samples.map(lambda feature: enrich(feature, iso3))
+
+    enriched = ee.FeatureCollection([])
+    for iso2, iso3 in PILOT_COUNTRIES:
+        enriched = enriched.merge(sample_country(iso2, iso3))
     selectors = [
         "sample_id",
         "lon",
@@ -142,10 +138,11 @@ def main() -> None:
         "split",
         "worldcover_label",
         "worldcover_class_name",
-        "dynamic_world_label",
-        "dynamic_world_confidence",
         *embedding_bands,
     ]
+    if INCLUDE_DYNAMIC_WORLD:
+        selectors.insert(13, "dynamic_world_label")
+        selectors.insert(14, "dynamic_world_confidence")
     task = ee.batch.Export.table.toDrive(
         collection=enriched,
         description=EXPORT_DESCRIPTION,
