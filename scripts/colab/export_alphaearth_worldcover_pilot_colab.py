@@ -17,6 +17,7 @@ from __future__ import annotations
 
 
 PROJECT_ROOT = "/content/drive/MyDrive/rsfm_fairness_audit"
+EE_PROJECT = "rsfm-fairness-audit"
 EXPORT_FOLDER = "rsfm_fairness_audit_alphaearth_pilot_v1"
 EXPORT_DESCRIPTION = "alphaearth_worldcover_pilot_export_2021_v1"
 EXPORT_FILE_PREFIX = "alphaearth_worldcover_pilot_export"
@@ -54,7 +55,7 @@ def main() -> None:
     import ee
 
     ee.Authenticate()
-    ee.Initialize(project=None)
+    ee.Initialize(project=EE_PROJECT)
 
     embedding_bands = [f"A{i:02d}" for i in range(64)]
     alphaearth_ic = ee.ImageCollection("GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL").filterDate(f"{YEAR}-01-01", f"{YEAR + 1}-01-01")

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 
 YEAR = 2021
+EE_PROJECT = "rsfm-fairness-audit"
 POINT = [-73.9857, 40.7484]  # NYC, fixed smoke point
 EXPORT_FOLDER = "rsfm_fairness_audit_alphaearth_pilot_v1"
 
@@ -33,7 +34,7 @@ def try_step(name, fn):
 def main() -> None:
     import ee
 
-    try_step("Authenticate / initialize", lambda: (ee.Authenticate(), ee.Initialize(project=None), "initialized")[-1])
+    try_step("Authenticate / initialize", lambda: (ee.Authenticate(), ee.Initialize(project=EE_PROJECT), "initialized")[-1])
 
     collection_id = "GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL"
     alpha_ic = ee.ImageCollection(collection_id).filterDate(f"{YEAR}-01-01", f"{YEAR + 1}-01-01")
