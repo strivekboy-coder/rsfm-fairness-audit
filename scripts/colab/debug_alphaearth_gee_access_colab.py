@@ -42,9 +42,12 @@ def main() -> None:
     try_step("AlphaEarth first image band names", lambda: alpha_ic.first().bandNames().getInfo())
 
     point = ee.Geometry.Point(POINT)
-    alpha_img = alpha_ic.first()
+    alpha_at_point = alpha_ic.filterBounds(point)
+    try_step("AlphaEarth point-filtered collection size", lambda: alpha_at_point.size().getInfo())
+    try_step("AlphaEarth point-filtered first image properties", lambda: alpha_at_point.first().toDictionary().getInfo())
+    alpha_img = alpha_at_point.mosaic()
     try_step(
-        "AlphaEarth single point sample, first image",
+        "AlphaEarth single point sample, point-filtered mosaic",
         lambda: alpha_img.sample(region=point, scale=250, numPixels=1, geometries=False).first().toDictionary().getInfo(),
     )
 

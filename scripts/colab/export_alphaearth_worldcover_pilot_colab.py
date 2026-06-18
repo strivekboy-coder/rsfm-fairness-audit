@@ -57,26 +57,8 @@ def main() -> None:
     ee.Initialize(project=None)
 
     embedding_bands = [f"A{i:02d}" for i in range(64)]
-    alphaearth = (
-        ee.ImageCollection("GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL")
-        .filterDate(f"{YEAR}-01-01", f"{YEAR + 1}-01-01")
-        .mosaic()
-        .select(embedding_bands)
-    )
+    alphaearth_ic = ee.ImageCollection("GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL").filterDate(f"{YEAR}-01-01", f"{YEAR + 1}-01-01")
     worldcover = ee.ImageCollection("ESA/WorldCover/v200").first().select("Map").rename("worldcover_label")
-
-    stacked = alphaearth.addBands(worldcover)
-    if INCLUDE_DYNAMIC_WORLD:
-        # Optional diagnostic source. Dynamic World labels/probabilities are not
-        # human truth; they only provide confidence/agreement diagnostics.
-        dynamic_world = (
-            ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")
-            .filterDate(f"{YEAR}-01-01", f"{YEAR + 1}-01-01")
-            .select(["label", "water", "trees", "grass", "flooded_vegetation", "crops", "shrub_and_scrub", "built", "bare", "snow_and_ice"])
-        )
-        dw_label = dynamic_world.select("label").mode().rename("dynamic_world_label")
-        dw_confidence = dynamic_world.select(["water", "trees", "grass", "flooded_vegetation", "crops", "shrub_and_scrub", "built", "bare", "snow_and_ice"]).max().reduce(ee.Reducer.max()).rename("dynamic_world_confidence")
-        stacked = stacked.addBands(dw_label).addBands(dw_confidence)
 
     worldcover_names = ee.Dictionary(
         {
@@ -107,6 +89,23 @@ def main() -> None:
             .set("urban_rural_or_built_proxy", built_proxy)
         )
 
+    def stack_for_region(region: ee.Geometry) -> ee.Image:
+        alphaearth = alphaearth_ic.filterBounds(region).mosaic().select(embedding_bands)
+        image = alphaearth.addBands(worldcover)
+        if INCLUDE_DYNAMIC_WORLD:
+            # Optional diagnostic source. Dynamic World labels/probabilities are
+            # not human truth; they only provide confidence/agreement diagnostics.
+            dynamic_world = (
+                ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")
+                .filterDate(f"{YEAR}-01-01", f"{YEAR + 1}-01-01")
+                .filterBounds(region)
+                .select(["label", "water", "trees", "grass", "flooded_vegetation", "crops", "shrub_and_scrub", "built", "bare", "snow_and_ice"])
+            )
+            dw_label = dynamic_world.select("label").mode().rename("dynamic_world_label")
+            dw_confidence = dynamic_world.select(["water", "trees", "grass", "flooded_vegetation", "crops", "shrub_and_scrub", "built", "bare", "snow_and_ice"]).max().reduce(ee.Reducer.max()).rename("dynamic_world_confidence")
+            image = image.addBands(dw_label).addBands(dw_confidence)
+        return image
+
     def fixed_point_collection() -> ee.FeatureCollection:
         features = []
         for index, (sample_id, lon, lat, iso3, region, built_hint) in enumerate(SMOKE_POINTS):
@@ -127,8 +126,9 @@ def main() -> None:
                     },
                 )
             )
-        sampled = stacked.sampleRegions(
-            collection=ee.FeatureCollection(features),
+        points = ee.FeatureCollection(features)
+        sampled = stack_for_region(points.geometry()).sampleRegions(
+            collection=points,
             properties=[
                 "sample_id",
                 "lon",
@@ -180,7 +180,7 @@ def main() -> None:
 
     def sample_country(iso2: str, iso3: str) -> ee.FeatureCollection:
         country = countries.filter(ee.Filter.eq("country_co", iso2)).geometry()
-        samples = stacked.stratifiedSample(
+        samples = stack_for_region(country).stratifiedSample(
             numPoints=SAMPLES_PER_CLASS,
             classBand="worldcover_label",
             region=country,
