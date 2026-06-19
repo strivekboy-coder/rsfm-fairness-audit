@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import math
 import shutil
 import sys
@@ -141,25 +142,61 @@ def _prepare_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return output
 
 
-def _split(rows: Sequence[Mapping[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    train = [dict(row) for row in rows if str(row.get("split", "")).lower() == "train"]
-    calibration = [dict(row) for row in rows if str(row.get("split", "")).lower() in {"calibration", "calib", "val", "validation"}]
-    test = [dict(row) for row in rows if str(row.get("split", "")).lower() == "test"]
-    rng = np.random.default_rng(42)
-    if not calibration and len(train) >= 10:
-        indices = np.arange(len(train))
-        rng.shuffle(indices)
-        n_cal = max(1, int(len(train) * 0.15))
-        cal_indices = set(indices[:n_cal].tolist())
-        calibration = [row for idx, row in enumerate(train) if idx in cal_indices]
-        train = [row for idx, row in enumerate(train) if idx not in cal_indices]
-    if not test:
-        test = [dict(row) for row in rows if str(row.get("split", "")).lower() in {"val", "validation"}]
-    rng.shuffle(train)
+def _strict_spatial_split(rows: Sequence[Mapping[str, Any]], seed: int = 42) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    block_to_rows: dict[str, list[dict[str, Any]]] = {}
+    for idx, row in enumerate(rows):
+        block = str(row.get("spatial_block_id", "")).strip() or f"missing_block_{idx}"
+        block_to_rows.setdefault(block, []).append(dict(row))
+    blocks = sorted(block_to_rows)
+    blocks.sort(key=lambda block: hashlib.sha256(f"{seed}:{block}".encode("utf-8")).hexdigest())
+    n_blocks = len(blocks)
+    if n_blocks == 0:
+        return [], [], []
+    n_test = max(1, int(round(n_blocks * 0.15))) if n_blocks >= 3 else 1
+    n_cal = max(1, int(round(n_blocks * 0.15))) if n_blocks >= 3 else 0
+    if n_test + n_cal >= n_blocks:
+        n_test = 1
+        n_cal = 1 if n_blocks >= 3 else 0
+    test_blocks = set(blocks[:n_test])
+    cal_blocks = set(blocks[n_test : n_test + n_cal])
+    splits = {"train": [], "calibration": [], "test": []}
+    for block, items in block_to_rows.items():
+        split = "test" if block in test_blocks else "calibration" if block in cal_blocks else "train"
+        for item in items:
+            item["original_export_split"] = item.get("split", "")
+            item["split"] = split
+            item["split_assignment"] = "strict_spatial_block_hash"
+            splits[split].append(item)
+    return splits["train"], splits["calibration"], splits["test"]
+
+
+def _random_sanity_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     random_rows = [dict(row) for row in rows]
     for idx, row in enumerate(random_rows):
+        row["original_export_split"] = row.get("split", "")
         row["split"] = "test" if idx % 5 == 0 else "calibration" if idx % 5 == 1 else "train"
-    return train, calibration, test, random_rows
+        row["split_assignment"] = "row_order_random_sanity"
+    return random_rows
+
+
+def _split(rows: Sequence[Mapping[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    train, calibration, test = _strict_spatial_split(rows)
+    rng = np.random.default_rng(42)
+    rng.shuffle(train)
+    rng.shuffle(calibration)
+    rng.shuffle(test)
+    return train, calibration, test, _random_sanity_rows(rows)
+
+
+def _spatial_block_leakage_count(rows: Sequence[Mapping[str, Any]]) -> int:
+    block_splits: dict[str, set[str]] = {}
+    for row in rows:
+        block = str(row.get("spatial_block_id", "")).strip()
+        split = str(row.get("split", "")).strip()
+        if not block or not split:
+            continue
+        block_splits.setdefault(block, set()).add(split)
+    return sum(1 for splits in block_splits.values() if len(splits) > 1)
 
 
 def _prediction_rows(eval_rows: Sequence[Mapping[str, Any]], labels: Sequence[str], probs: np.ndarray, classes: list[str], model_name: str, protocol: str) -> list[dict[str, Any]]:
@@ -559,9 +596,12 @@ def run_alphaearth_full_audit(input_csv: Path = DEFAULT_EXPORT, manifest_csv: Pa
         {"category": "random_split", "caveat": "Random split protocol contrast is sanity only, not deployment evidence."},
         {"category": "support", "caveat": "Formal inclusion requires support targets; do not hide quota/support limitations."},
     ]
-    strong_enough = len(rows) >= 100000 and len({row.get("country_iso3") for row in rows if row.get("country_iso3")}) >= 100
+    strict_split_rows = train + calibration + test
+    leakage_count = _spatial_block_leakage_count(strict_split_rows)
+    n_countries = len({row.get("country_iso3") for row in rows if row.get("country_iso3")})
+    strong_enough = len(rows) >= 150000 and n_countries >= 100 and leakage_count == 0
     claim_support = [
-        {"claim": "AlphaEarth formal land-cover BWER audit is paper-ready", "support": "supported" if strong_enough else "blocked_by_support_or_quota", "evidence": f"n_rows={len(rows)}; n_countries={len({row.get('country_iso3') for row in rows if row.get('country_iso3')})}", "caveat": "Requires 100k+ samples and 100-120 countries for formal inclusion."},
+        {"claim": "AlphaEarth formal land-cover BWER audit is paper-ready", "support": "supported" if strong_enough else "blocked_by_support_or_split", "evidence": f"n_rows={len(rows)}; n_countries={n_countries}; spatial_block_leakage_count={leakage_count}", "caveat": "Requires 150k+ samples, 100+ countries, and zero spatial-block leakage for formal inclusion."},
         {"claim": "Aggregate land-cover performance can be compared against deployment-tail BWER", "support": "available_from_export" if test_pred else "unavailable", "evidence": "alphaearth_full_metrics.csv and alphaearth_full_bwer_summary.csv", "caveat": "ESA WorldCover is an agreement target."},
     ]
     artifacts = _artifact_paths(output)
@@ -588,17 +628,25 @@ def run_alphaearth_full_audit(input_csv: Path = DEFAULT_EXPORT, manifest_csv: Pa
     artifacts["alphaearth_full_report"].write_text(
         "# AlphaEarth full land-cover audit v1\n\n"
         f"- Rows: {len(rows)}\n"
-        f"- Countries: {len({row.get('country_iso3') for row in rows if row.get('country_iso3')})}\n"
+        f"- Countries: {n_countries}\n"
         f"- Model: {model_name}\n"
         f"- Accuracy: {metrics[0]['accuracy']:.4f}\n"
         f"- Balanced accuracy: {metrics[0]['balanced_accuracy']:.4f}\n"
         f"- Macro-F1: {metrics[0]['macro_f1']:.4f}\n"
-        f"- Formal paper inclusion status: {'strong enough' if strong_enough else 'blocked by support/quota scale'}\n\n"
+        f"- Split assignment: strict spatial-block hash\n"
+        f"- Spatial-block leakage count: {leakage_count}\n"
+        f"- Formal paper inclusion status: {'strong enough' if strong_enough else 'blocked by support or split checks'}\n\n"
         "ESA WorldCover is treated as map-label agreement, not perfect ground truth. Random split is sanity only.\n",
         encoding="utf-8",
     )
     artifacts.update({f"figure_{name}": path for name, path in _write_figures(output, metrics, bwer_rows, slice_rows, selective_bwer, conformal_bwer, conformal_slice, support_preflight or support_rows, social_rows).items()})
     _write_unified_v4(unified_v4_dir, output, metrics, claim_support, strong_enough)
+    try:
+        from scripts.analysis.build_alphaearth_full_paper_diagnostics import build_diagnostics
+
+        artifacts.update(build_diagnostics(output, unified_v4_dir))
+    except Exception as exc:
+        write_csv(output / "alphaearth_full_paper_diagnostics_error.csv", [{"status": "failed", "error": str(exc)}])
     return artifacts
 
 

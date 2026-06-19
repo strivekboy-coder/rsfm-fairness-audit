@@ -18,15 +18,18 @@ from __future__ import annotations
 
 PROJECT_ROOT = "/content/drive/MyDrive/rsfm_fairness_audit"
 EE_PROJECT = "rsfm-fairness-audit"
-EXPORT_FOLDER = "rsfm_fairness_audit_alphaearth_full_v1"
+EXPORT_FOLDER = "rsfm_fairness_audit_alphaearth_full_v2_150k"
+DRIVE_OUTPUT_SUBDIR = "outputs/alphaearth_gee_full_v2_150k"
 YEAR = 2021
-SAMPLES_PER_CLASS_PER_COUNTRY = 100
+SAMPLES_PER_CLASS_PER_COUNTRY = 160
 PILOT_FIRST_N_SHARDS = None  # keep None for formal mode; set to e.g. 2 only for quota debugging.
 PILOT_SCALE_M = 250
 SEED = 42
 INCLUDE_DYNAMIC_WORLD = False
-WAIT_AND_CANCEL_AFTER_MINUTES = 360
+WAIT_AND_CANCEL_AFTER_MINUTES = 0
 POLL_SECONDS = 180
+SIMPLIFY_LARGE_COUNTRY_MAX_ERROR_M = 1000
+LARGE_GEOMETRY_ISO3 = {"CAN", "RUS"}
 
 COUNTRIES = [
     ("United States", "USA", "North America", "High income"),
@@ -235,6 +238,8 @@ def main() -> None:
     countries_to_export = COUNTRIES[:PILOT_FIRST_N_SHARDS] if PILOT_FIRST_N_SHARDS else COUNTRIES
     for shard_index, (country_name, iso3, region_name, income_group) in enumerate(countries_to_export, start=1):
         country_geom = countries_fc.filter(ee.Filter.eq("country_na", country_name)).geometry()
+        if iso3 in LARGE_GEOMETRY_ISO3:
+            country_geom = country_geom.simplify(maxError=SIMPLIFY_LARGE_COUNTRY_MAX_ERROR_M)
         sample = stack_for_region(country_geom).stratifiedSample(
             numPoints=SAMPLES_PER_CLASS_PER_COUNTRY,
             classBand="worldcover_label",
@@ -278,7 +283,7 @@ def main() -> None:
         time.sleep(POLL_SECONDS)
 
     print(f"Export folder: {EXPORT_FOLDER}")
-    print(f"Copy completed CSV shards into {PROJECT_ROOT}/outputs/alphaearth_gee_full_v1/")
+    print(f"Copy completed CSV shards into {PROJECT_ROOT}/{DRIVE_OUTPUT_SUBDIR}/")
     print("Then create alphaearth_worldcover_full_export_manifest.csv with columns shard_id,path,status.")
 
 
