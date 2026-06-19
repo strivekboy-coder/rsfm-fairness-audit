@@ -196,7 +196,7 @@ def main() -> None:
         built_proxy = ee.Algorithms.If(ee.Number(feature.get("worldcover_label")).eq(50), "built_proxy", "non_built_proxy")
         return (
             feature.setGeometry(None)
-            .set("sample_id", ee.String(iso3).cat("_").cat(label).cat("_").cat(ee.Number(feature.id()).format()))
+            .set("sample_id", ee.String(iso3).cat("_").cat(label).cat("_").cat(ee.String(feature.id())))
             .set("lon", lon)
             .set("lat", lat)
             .set("year", YEAR)
