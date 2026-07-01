@@ -89,6 +89,13 @@ def test_full_output_existence_smoke() -> None:
         "alphaearth_full_calibrated_threshold_bwer",
         "alphaearth_full_conformal_bwer",
         "alphaearth_full_claim_support",
+        "alphaearth_logistic_baseline_metrics",
+        "alphaearth_logistic_baseline_bwer_summary",
+        "alphaearth_logistic_baseline_standardised_bwer",
+        "alphaearth_full_rank_divergence",
+        "alphaearth_grassland_confusion_diagnostic",
+        "alphaearth_conformal_slice_gap_diagnostic",
+        "alphaearth_scale_sensitivity_summary",
         "figure_alphaearth_aggregate_vs_bwer_png",
     ]
     for key in required:

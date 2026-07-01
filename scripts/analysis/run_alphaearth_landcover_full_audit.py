@@ -106,6 +106,30 @@ def _fit_predict_proba(x_train: np.ndarray, y_train: np.ndarray, x_eval: np.ndar
         return "numpy_multinomial_logreg_fallback", _predict_numpy_logreg(x_eval, model)
 
 
+def _fit_predict_proba_logistic_baseline(x_train: np.ndarray, y_train: np.ndarray, x_eval: np.ndarray, n_classes: int, seed: int) -> tuple[str, np.ndarray]:
+    try:
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import make_pipeline
+        from sklearn.preprocessing import StandardScaler
+
+        model = make_pipeline(
+            StandardScaler(),
+            LogisticRegression(max_iter=500, C=1.0, multi_class="auto", n_jobs=-1, random_state=seed),
+        )
+        model.fit(x_train, y_train)
+        probs = model.predict_proba(x_eval)
+        classes_seen = model.named_steps["logisticregression"].classes_
+        if probs.shape[1] != n_classes:
+            full = np.zeros((x_eval.shape[0], n_classes), dtype=float)
+            for index, cls in enumerate(classes_seen):
+                full[:, int(cls)] = probs[:, index]
+            probs = full
+        return "logistic_regression_baseline", probs
+    except Exception:
+        model = _fit_numpy_logreg(x_train, y_train, n_classes, seed=seed, epochs=250)
+        return "numpy_multinomial_logreg_baseline", _predict_numpy_logreg(x_eval, model)
+
+
 def _arrays(rows: Sequence[Mapping[str, Any]]) -> tuple[np.ndarray, list[str]]:
     return np.asarray([[_float(row.get(band), 0.0) for band in EMBEDDING_BANDS] for row in rows], dtype=float), [str(row.get("worldcover_label")) for row in rows]
 
@@ -540,6 +564,9 @@ def _artifact_paths(output: Path) -> dict[str, Path]:
         "alphaearth_full_social_spatial_association": output / "alphaearth_full_social_spatial_association.csv",
         "alphaearth_full_claim_support": output / "alphaearth_full_claim_support.csv",
         "alphaearth_full_caveats": output / "alphaearth_full_caveats.csv",
+        "alphaearth_logistic_baseline_metrics": output / "alphaearth_logistic_baseline_metrics.csv",
+        "alphaearth_logistic_baseline_bwer_summary": output / "alphaearth_logistic_baseline_bwer_summary.csv",
+        "alphaearth_logistic_baseline_standardised_bwer": output / "alphaearth_logistic_baseline_standardised_bwer.csv",
         "alphaearth_full_report": output / "alphaearth_full_report.md",
     }
 
@@ -570,6 +597,12 @@ def run_alphaearth_full_audit(input_csv: Path = DEFAULT_EXPORT, manifest_csv: Pa
     cal_pred = _prediction_rows(calibration, y_cal_raw, cal_probs, classes, model_name, "spatial_block") if len(calibration) else []
     test_pred = _prediction_rows(test, y_test_raw, test_probs, classes, model_name, "spatial_block")
     metrics = [_metrics(test_pred, classes, model_name, "spatial_block", len(train), len(calibration))]
+    logistic_model_name, logistic_probs = _fit_predict_proba_logistic_baseline(x_train, y_train, x_test, len(classes), seed)
+    logistic_pred = _prediction_rows(test, y_test_raw, logistic_probs, classes, logistic_model_name, "spatial_block")
+    logistic_metrics = [_metrics(logistic_pred, classes, logistic_model_name, "spatial_block", len(train), len(calibration))]
+    logistic_bwer_rows, _, _ = _bwer_family(logistic_pred, logistic_model_name, "spatial_block", "baseline", min_support=20)
+    logistic_raw_bwer = [row for row in logistic_bwer_rows if row.get("bwer_type") == "raw"]
+    logistic_std_bwer = [row for row in logistic_bwer_rows if row.get("bwer_type") == "standardised"]
     bwer_rows, slice_rows, support_rows = _bwer_family(test_pred, model_name, "spatial_block", "baseline", min_support=20)
     raw_bwer = [row for row in bwer_rows if row.get("bwer_type") == "raw"]
     std_bwer = [row for row in bwer_rows if row.get("bwer_type") == "standardised"]
@@ -603,6 +636,7 @@ def run_alphaearth_full_audit(input_csv: Path = DEFAULT_EXPORT, manifest_csv: Pa
     claim_support = [
         {"claim": "AlphaEarth formal land-cover BWER audit is paper-ready", "support": "supported" if strong_enough else "blocked_by_support_or_split", "evidence": f"n_rows={len(rows)}; n_countries={n_countries}; spatial_block_leakage_count={leakage_count}", "caveat": "Requires 150k+ samples, 100+ countries, and zero spatial-block leakage for formal inclusion."},
         {"claim": "Aggregate land-cover performance can be compared against deployment-tail BWER", "support": "available_from_export" if test_pred else "unavailable", "evidence": "alphaearth_full_metrics.csv and alphaearth_full_bwer_summary.csv", "caveat": "ESA WorldCover is an agreement target."},
+        {"claim": "AlphaEarth tail-risk pattern is not specific to HistGradientBoosting", "support": "available_from_logistic_baseline", "evidence": "alphaearth_logistic_baseline_metrics.csv and alphaearth_logistic_baseline_bwer_summary.csv", "caveat": "Logistic regression is a lightweight sanity baseline, not a model zoo."},
     ]
     artifacts = _artifact_paths(output)
     write_csv(artifacts["alphaearth_full_metrics"], metrics)
@@ -625,6 +659,9 @@ def run_alphaearth_full_audit(input_csv: Path = DEFAULT_EXPORT, manifest_csv: Pa
     write_csv(artifacts["alphaearth_full_social_spatial_association"], social_rows)
     write_csv(artifacts["alphaearth_full_claim_support"], claim_support)
     write_csv(artifacts["alphaearth_full_caveats"], caveats)
+    write_csv(artifacts["alphaearth_logistic_baseline_metrics"], logistic_metrics)
+    write_csv(artifacts["alphaearth_logistic_baseline_bwer_summary"], logistic_raw_bwer)
+    write_csv(artifacts["alphaearth_logistic_baseline_standardised_bwer"], logistic_std_bwer)
     artifacts["alphaearth_full_report"].write_text(
         "# AlphaEarth full land-cover audit v1\n\n"
         f"- Rows: {len(rows)}\n"
@@ -642,9 +679,9 @@ def run_alphaearth_full_audit(input_csv: Path = DEFAULT_EXPORT, manifest_csv: Pa
     artifacts.update({f"figure_{name}": path for name, path in _write_figures(output, metrics, bwer_rows, slice_rows, selective_bwer, conformal_bwer, conformal_slice, support_preflight or support_rows, social_rows).items()})
     _write_unified_v4(unified_v4_dir, output, metrics, claim_support, strong_enough)
     try:
-        from scripts.analysis.build_alphaearth_full_paper_diagnostics import build_diagnostics
+        from scripts.analysis.build_alphaearth_full_paper_diagnostics import DEFAULT_REFERENCE_AUDIT_ROOT, build_diagnostics
 
-        artifacts.update(build_diagnostics(output, unified_v4_dir))
+        artifacts.update(build_diagnostics(output, unified_v4_dir, DEFAULT_REFERENCE_AUDIT_ROOT))
     except Exception as exc:
         write_csv(output / "alphaearth_full_paper_diagnostics_error.csv", [{"status": "failed", "error": str(exc)}])
     return artifacts

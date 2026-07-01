@@ -17,7 +17,8 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 from rsfm_fairness_audit.io import ensure_dir, read_csv_rows, write_csv
 
 
-DEFAULT_AUDIT_ROOT = Path("outputs/alphaearth_landcover_audit_full_v1")
+DEFAULT_AUDIT_ROOT = Path("outputs/alphaearth_landcover_audit_full_v2_150k")
+DEFAULT_REFERENCE_AUDIT_ROOT = Path("outputs/alphaearth_landcover_audit_full_v1")
 DEFAULT_UNIFIED_V4_ROOT = Path("outputs/unified_paper_package_v4")
 TARGET_COVERAGES = ["0.7", "0.8", "0.9"]
 KEY_SLICE_VARIABLES = ["country_iso3", "worldcover_class_name", "country_class", "region_class", "income_group"]
@@ -152,6 +153,97 @@ def build_grassland_diagnostic(audit_root: Path) -> list[dict[str, Any]]:
     return sorted(output, key=lambda row: (_float(row.get("risk"), -1), _float(row.get("support_count"), -1)), reverse=True)
 
 
+def build_grassland_confusion(audit_root: Path) -> list[dict[str, Any]]:
+    predictions = _read_optional(audit_root / "alphaearth_full_predictions.csv")
+    grassland = [
+        row
+        for row in predictions
+        if _str(row.get("class_label")) == "Grassland" or _str(row.get("worldcover_class_name")) == "Grassland" or _str(row.get("label")) == "30"
+    ]
+    output: list[dict[str, Any]] = []
+    for keys in (["predicted_class_name"], ["region", "predicted_class_name"]):
+        for key, items in _group(grassland, keys).items():
+            support = len(items)
+            output.append(
+                {
+                    "diagnostic_scope": "|".join(keys),
+                    "slice_value": "|".join(key),
+                    "support_count": support,
+                    "share_of_grassland_samples": support / len(grassland) if grassland else "",
+                    "error_share_within_scope": float(np.mean([_float(item.get("risk")) for item in items])) if items else "",
+                    "interpretation_scope": "Grassland confusion mechanism diagnostic; WorldCover is a map-label agreement target.",
+                }
+            )
+    return sorted(output, key=lambda row: (_float(row.get("support_count"), -1)), reverse=True)
+
+
+def build_conformal_slice_gap(audit_root: Path) -> list[dict[str, Any]]:
+    rows = _read_optional(audit_root / "alphaearth_full_conformal_slice_coverage.csv")
+    output = []
+    for row in rows:
+        coverage = _float(row.get("coverage_target"))
+        slice_coverage = _float(row.get("slice_coverage"))
+        gap = coverage - slice_coverage if not math.isnan(coverage) and not math.isnan(slice_coverage) else float("nan")
+        output.append(
+            {
+                **row,
+                "coverage_gap_recomputed": "" if math.isnan(gap) else gap,
+                "undercovered": "" if math.isnan(gap) else int(gap > 0),
+                "interpretation": "Marginal conformal coverage does not guarantee slice-level coverage reliability." if not math.isnan(gap) and gap > 0 else "Slice coverage meets or exceeds nominal target.",
+            }
+        )
+    return sorted(output, key=lambda row: _float(row.get("coverage_gap_recomputed"), -999), reverse=True)
+
+
+def _metric_lookup(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
+    return rows[0] if rows else {}
+
+
+def _bwer_by_slice(rows: Sequence[Mapping[str, Any]]) -> dict[tuple[str, str], Mapping[str, Any]]:
+    return {(_str(row.get("slice_variable")), _str(row.get("bwer_type"))): row for row in rows}
+
+
+def build_scale_sensitivity(audit_root: Path, reference_audit_root: Path | None = None) -> list[dict[str, Any]]:
+    roots = [("current", audit_root)]
+    if reference_audit_root and reference_audit_root.exists():
+        roots.insert(0, ("reference", reference_audit_root))
+    output: list[dict[str, Any]] = []
+    for label, root in roots:
+        metrics = _metric_lookup(_read_optional(root / "alphaearth_full_metrics.csv"))
+        bwer_rows = _read_optional(root / "alphaearth_full_bwer_summary.csv")
+        std_rows = _read_optional(root / "alphaearth_full_standardised_bwer.csv")
+        by_slice = _bwer_by_slice([*bwer_rows, *std_rows])
+        for slice_variable in ["country_iso3", "worldcover_class_name", "country_class", "region_class", "income_group"]:
+            raw = by_slice.get((slice_variable, "raw"), {})
+            std = by_slice.get((slice_variable, "standardised"), {})
+            output.append(
+                {
+                    "scale_label": label,
+                    "audit_root": str(root),
+                    "n_train": metrics.get("n_train", ""),
+                    "n_calibration": metrics.get("n_calibration", ""),
+                    "n_test": metrics.get("n_test", ""),
+                    "accuracy": metrics.get("accuracy", ""),
+                    "macro_f1": metrics.get("macro_f1", ""),
+                    "slice_variable": slice_variable,
+                    "raw_bwer": raw.get("bwer", ""),
+                    "raw_tail_risk": raw.get("tail_risk", ""),
+                    "standardised_bwer": std.get("bwer", ""),
+                    "standardised_tail_risk": std.get("tail_risk", ""),
+                    "interpretation": "Compare aggregate stability against tail-risk discovery as audit coverage scales.",
+                }
+            )
+    if len(roots) == 1:
+        output.append(
+            {
+                "scale_label": "reference_unavailable",
+                "audit_root": str(reference_audit_root or ""),
+                "interpretation": "Provide the 98k/v1 audit root to populate direct 98k-vs-156k scale comparison.",
+            }
+        )
+    return output
+
+
 def build_spatial_split_diagnostics(audit_root: Path) -> list[dict[str, Any]]:
     predictions = _read_optional(audit_root / "alphaearth_full_predictions.csv")
     output: list[dict[str, Any]] = []
@@ -262,6 +354,9 @@ def update_reports(audit_root: Path, unified_v4_root: Path, rank_rows: Sequence[
     adopted = [
         "rank divergence table for baseline, confidence top-k, calibrated threshold, and conformal-set scenarios",
         "Grassland mechanism diagnostic",
+        "Grassland confusion and regional risk diagnostic",
+        "conformal marginal-versus-slice coverage gap diagnostic",
+        "audit scale-sensitivity comparison where a reference audit root is available",
         "spatial split diagnostics",
         "BWER CI/sensitivity postprocess summary",
         "Dynamic World label-agreement availability check",
@@ -278,7 +373,7 @@ def update_reports(audit_root: Path, unified_v4_root: Path, rank_rows: Sequence[
     write_csv(unified_v4_root / "alphaearth_rank_divergence_v4.csv", rank_rows)
 
 
-def build_diagnostics(audit_root: Path, unified_v4_root: Path) -> dict[str, Path]:
+def build_diagnostics(audit_root: Path, unified_v4_root: Path, reference_audit_root: Path | None = DEFAULT_REFERENCE_AUDIT_ROOT) -> dict[str, Path]:
     output = ensure_dir(audit_root)
     paths = {
         "alphaearth_full_rank_divergence": output / "alphaearth_full_rank_divergence.csv",
@@ -286,6 +381,9 @@ def build_diagnostics(audit_root: Path, unified_v4_root: Path) -> dict[str, Path
         "alphaearth_spatial_split_diagnostics": output / "alphaearth_spatial_split_diagnostics.csv",
         "alphaearth_bwer_ci_summary": output / "alphaearth_bwer_ci_summary.csv",
         "alphaearth_dynamic_world_label_agreement_diagnostic": output / "alphaearth_dynamic_world_label_agreement_diagnostic.csv",
+        "alphaearth_grassland_confusion_diagnostic": output / "alphaearth_grassland_confusion_diagnostic.csv",
+        "alphaearth_conformal_slice_gap_diagnostic": output / "alphaearth_conformal_slice_gap_diagnostic.csv",
+        "alphaearth_scale_sensitivity_summary": output / "alphaearth_scale_sensitivity_summary.csv",
     }
     rank_rows = build_rank_divergence(output)
     write_csv(paths["alphaearth_full_rank_divergence"], rank_rows)
@@ -293,6 +391,9 @@ def build_diagnostics(audit_root: Path, unified_v4_root: Path) -> dict[str, Path
     write_csv(paths["alphaearth_spatial_split_diagnostics"], build_spatial_split_diagnostics(output))
     write_csv(paths["alphaearth_bwer_ci_summary"], build_bwer_ci_summary(output))
     write_csv(paths["alphaearth_dynamic_world_label_agreement_diagnostic"], build_dynamic_world_label_agreement_placeholder(output))
+    write_csv(paths["alphaearth_grassland_confusion_diagnostic"], build_grassland_confusion(output))
+    write_csv(paths["alphaearth_conformal_slice_gap_diagnostic"], build_conformal_slice_gap(output))
+    write_csv(paths["alphaearth_scale_sensitivity_summary"], build_scale_sensitivity(output, reference_audit_root))
     update_reports(output, unified_v4_root, rank_rows)
     return paths
 
@@ -300,9 +401,10 @@ def build_diagnostics(audit_root: Path, unified_v4_root: Path) -> dict[str, Path
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build AlphaEarth full paper diagnostics from completed audit outputs.")
     parser.add_argument("--audit-root", type=Path, default=DEFAULT_AUDIT_ROOT)
+    parser.add_argument("--reference-audit-root", type=Path, default=DEFAULT_REFERENCE_AUDIT_ROOT)
     parser.add_argument("--unified-v4-out", type=Path, default=DEFAULT_UNIFIED_V4_ROOT)
     args = parser.parse_args()
-    paths = build_diagnostics(args.audit_root, args.unified_v4_out)
+    paths = build_diagnostics(args.audit_root, args.unified_v4_out, args.reference_audit_root)
     for name, path in paths.items():
         print(f"{name}: {path}")
 
