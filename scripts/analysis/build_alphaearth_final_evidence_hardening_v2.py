@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import math
-import shutil
 import sys
 import zipfile
 from pathlib import Path
@@ -34,7 +33,9 @@ DEFAULT_AUDIT_ROOT = Path("outputs/alphaearth_landcover_audit_full_v2_150k")
 DEFAULT_REFERENCE_AUDIT_ROOT = Path("outputs/alphaearth_landcover_audit_full_v1")
 DEFAULT_UNIFIED_V4_ROOT = Path("outputs/unified_paper_package_v4")
 SCALE_TARGETS = [25000, 50000, 75000, 100000, 125000]
+FORMAL_SCALE_SEEDS = [42, 73, 101]
 KEY_BWER_SLICES = ["country_iso3", "worldcover_class_name", "country_class", "region_class"]
+REQUIRED_DW_COLUMNS = ["sample_id", "worldcover_label", "dynamic_world_label", "alphaearth_prediction"]
 
 
 def _float(value: Any, default: float = float("nan")) -> float:
@@ -48,6 +49,41 @@ def _float(value: Any, default: float = float("nan")) -> float:
 
 def _read(path: Path) -> list[dict[str, str]]:
     return read_csv_rows(path) if path.exists() else []
+
+
+def _clean(value: Any) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def _label_equal(left: Any, right: Any) -> int:
+    return int(_clean(left) != "" and _clean(left) == _clean(right))
+
+
+def _confidence_bin(value: Any) -> str:
+    score = _float(value)
+    if math.isnan(score):
+        return "missing"
+    if score < 0.4:
+        return "0.0-0.4"
+    if score < 0.6:
+        return "0.4-0.6"
+    if score < 0.8:
+        return "0.6-0.8"
+    return "0.8-1.0"
+
+
+def _entropy_bin(row: Mapping[str, Any]) -> str:
+    entropy = _float(row.get("dynamic_world_entropy"))
+    if math.isnan(entropy):
+        top = _float(row.get("dynamic_world_top_probability") or row.get("dynamic_world_confidence"))
+        if math.isnan(top):
+            return "missing"
+        entropy = 1.0 - top
+    if entropy < 0.2:
+        return "low"
+    if entropy < 0.4:
+        return "medium"
+    return "high"
 
 
 def _save_figure(fig: Any, output_root: Path, name: str) -> dict[str, Path]:
@@ -112,7 +148,7 @@ def build_prediction_subsample_scale(audit_root: Path, seeds: Sequence[int]) -> 
 def build_retrained_scale_sensitivity(input_csv: Path, manifest_csv: Path, seeds: Sequence[int], max_scales: int | None = None) -> list[dict[str, Any]]:
     rows, _ = read_alphaearth_full_export(input_csv, manifest_csv)
     if not rows:
-        return [{"status": "unavailable", "reason": "missing_full_export_for_retrained_scale_sensitivity"}]
+        raise FileNotFoundError(f"Formal scale sensitivity requires a readable full export or manifest: input={input_csv}; manifest={manifest_csv}")
     prepared = _prepare_rows(rows)
     levels = [level for level in SCALE_TARGETS if level < len(prepared)] + [len(prepared)]
     if max_scales:
@@ -125,7 +161,7 @@ def build_retrained_scale_sensitivity(input_csv: Path, manifest_csv: Path, seeds
             sample_rows = [prepared[int(idx)] for idx in indices]
             train, calibration, test, _ = _split(sample_rows)
             if not train or not test:
-                output.append({"mode": "retrained_subsample", "seed": seed, "requested_scale": level, "status": "missing_train_or_test_split"})
+                output.append({"seed": seed, "requested_scale": level, "source_sample_rows": len(sample_rows), "status": "missing_train_or_test_split"})
                 continue
             x_train, y_train_raw = _arrays(train)
             x_test, y_test_raw = _arrays(test)
@@ -138,9 +174,12 @@ def build_retrained_scale_sensitivity(input_csv: Path, manifest_csv: Path, seeds
             bwer_map = _bwer_summary_map(bwer_rows)
             output.append(
                 {
-                    "mode": "retrained_subsample",
                     "seed": seed,
                     "requested_scale": level,
+                    "source_sample_rows": len(sample_rows),
+                    "n_train": len(train),
+                    "n_calibration": len(calibration),
+                    "n_test": len(test),
                     "effective_eval_rows": len(pred),
                     "accuracy": metrics.get("accuracy", ""),
                     "macro_f1": metrics.get("macro_f1", ""),
@@ -148,45 +187,115 @@ def build_retrained_scale_sensitivity(input_csv: Path, manifest_csv: Path, seeds
                     "class_bwer": bwer_map.get("worldcover_class_name", {}).get("bwer", ""),
                     "country_class_bwer": bwer_map.get("country_class", {}).get("bwer", ""),
                     "region_class_bwer": bwer_map.get("region_class", {}).get("bwer", ""),
-                    "note": "Model retrained on strict spatial-block subsample.",
                 }
             )
     return output
 
 
+def _dw_column(row: Mapping[str, Any], *names: str) -> str:
+    for name in names:
+        value = _clean(row.get(name))
+        if value:
+            return value
+    return ""
+
+
+def _group_metric(rows: Sequence[Mapping[str, Any]], metric_name: str, group_name: str, value_getter: Any) -> list[dict[str, Any]]:
+    grouped: dict[str, list[float]] = {}
+    for row in rows:
+        key = str(value_getter(row))
+        grouped.setdefault(key, []).append(_float(row.get(metric_name)))
+    return [
+        {
+            "metric": metric_name,
+            "group": group_name,
+            "group_value": key,
+            "value": float(np.mean([value for value in values if not math.isnan(value)])) if any(not math.isnan(value) for value in values) else "",
+            "support_count": len(values),
+            "claim_scope": "Dynamic World is map-product agreement / label ambiguity diagnostic only, not human ground truth.",
+        }
+        for key, values in sorted(grouped.items())
+    ]
+
+
 def build_dynamic_world_diagnostic(audit_root: Path) -> tuple[list[dict[str, Any]], str]:
-    predictions = _read(audit_root / "alphaearth_full_predictions.csv")
-    if not predictions or "dynamic_world_label" not in predictions[0]:
+    aligned_path = audit_root / "alphaearth_full_dw_aligned.csv"
+    aligned = _read(aligned_path)
+    if not aligned:
         return (
             [
                 {
                     "status": "unavailable",
-                    "reason": "dynamic_world_columns_not_exported",
-                    "required_action": "Run a lightweight GEE diagnostic exporter that samples Dynamic World labels/confidence at existing sample coordinates.",
+                    "reason": "missing_alphaearth_full_dw_aligned_csv",
+                    "required_action": "Create alphaearth_full_dw_aligned.csv with sample_id, worldcover_label, dynamic_world_label, Dynamic World confidence/probability, and AlphaEarth prediction columns.",
                     "claim_scope": "Dynamic World is optional diagnostic evidence only, not human ground truth.",
                 }
             ],
-            "Dynamic World diagnostic unavailable because Dynamic World columns were not exported. No claim was fabricated.",
+            "Dynamic World diagnostic unavailable because alphaearth_full_dw_aligned.csv is missing. No claim was fabricated.",
         )
-    grouped: dict[str, list[Mapping[str, Any]]] = {}
-    for row in predictions:
-        grouped.setdefault(str(row.get("worldcover_class_name") or row.get("label")), []).append(row)
-    output = []
-    for label, items in sorted(grouped.items()):
-        agreement = [int(str(row.get("dynamic_world_label")) == str(row.get("label"))) for row in items]
-        confidence = [_float(row.get("dynamic_world_confidence")) for row in items]
-        error = [_float(row.get("risk")) for row in items]
-        output.append(
+    missing_columns = [column for column in REQUIRED_DW_COLUMNS if column not in aligned[0]]
+    if missing_columns:
+        return (
+            [
+                {
+                    "status": "invalid",
+                    "reason": "missing_required_columns",
+                    "missing_columns": ";".join(missing_columns),
+                    "claim_scope": "Dynamic World diagnostic rejected; no empirical DW claim should be made.",
+                }
+            ],
+            f"Dynamic World diagnostic invalid because required columns are missing: {', '.join(missing_columns)}.",
+        )
+    sample_ids = [_clean(row.get("sample_id")) for row in aligned]
+    unique_sample_ids = len(set(sample_ids))
+    validation = {
+        "metric": "dw_aligned_table_validation",
+        "group": "all",
+        "group_value": "all",
+        "value": "",
+        "support_count": len(aligned),
+        "unique_sample_id_count": unique_sample_ids,
+        "expected_row_count": 156246,
+        "row_count_status": "ok" if len(aligned) == 156246 else "unexpected",
+        "unique_sample_id_status": "ok" if unique_sample_ids == len(aligned) else "duplicate_sample_ids",
+        "claim_scope": "Validation of aligned Dynamic World diagnostic table.",
+    }
+    metric_rows = []
+    enriched = []
+    ambiguity_labels = {"20", "30", "40", "Shrubland", "Grassland", "Cropland"}
+    for row in aligned:
+        wc = _dw_column(row, "worldcover_label", "label")
+        dw = _dw_column(row, "dynamic_world_label")
+        ae = _dw_column(row, "alphaearth_prediction", "ae_pred", "prediction")
+        wc_dw = _label_equal(wc, dw)
+        ae_wc = _label_equal(ae, wc)
+        ae_dw = _label_equal(ae, dw)
+        item = dict(row)
+        item["worldcover_dynamicworld_agreement"] = wc_dw
+        item["alphaearth_worldcover_accuracy"] = ae_wc
+        item["alphaearth_dynamicworld_agreement"] = ae_dw
+        item["dw_confidence_bin"] = _confidence_bin(row.get("dynamic_world_top_probability") or row.get("dynamic_world_confidence"))
+        item["dw_entropy_bin"] = _entropy_bin(row)
+        item["worldcover_dynamicworld_agreement_group"] = "agree" if wc_dw else "disagree"
+        item["grassland_shrubland_cropland_ambiguity"] = int(wc in ambiguity_labels or dw in ambiguity_labels or ae in ambiguity_labels)
+        enriched.append(item)
+    for metric in ["worldcover_dynamicworld_agreement", "alphaearth_worldcover_accuracy", "alphaearth_dynamicworld_agreement", "grassland_shrubland_cropland_ambiguity"]:
+        values = [_float(row.get(metric)) for row in enriched]
+        metric_rows.append(
             {
-                "worldcover_class_or_label": label,
-                "support_count": len(items),
-                "worldcover_dynamicworld_agreement": float(np.mean(agreement)) if agreement else "",
-                "mean_dynamic_world_confidence": float(np.mean(confidence)) if confidence else "",
-                "alphaearth_error_rate": float(np.mean(error)) if error else "",
-                "claim_scope": "map-label agreement diagnostic only",
+                "metric": metric,
+                "group": "all",
+                "group_value": "all",
+                "value": float(np.mean(values)) if values else "",
+                "support_count": len(values),
+                "unique_sample_id_count": unique_sample_ids,
+                "claim_scope": "Dynamic World is map-product agreement / label ambiguity diagnostic only, not human ground truth.",
             }
         )
-    return output, "Dynamic World diagnostic computed as map-label agreement only."
+    metric_rows.extend(_group_metric(enriched, "alphaearth_worldcover_accuracy", "dw_confidence_bin", lambda row: row.get("dw_confidence_bin")))
+    metric_rows.extend(_group_metric(enriched, "alphaearth_worldcover_accuracy", "worldcover_dynamicworld_agreement", lambda row: row.get("worldcover_dynamicworld_agreement_group")))
+    metric_rows.extend(_group_metric(enriched, "alphaearth_worldcover_accuracy", "dw_entropy_bin", lambda row: row.get("dw_entropy_bin")))
+    return [validation, *metric_rows], "Dynamic World diagnostic computed from alphaearth_full_dw_aligned.csv as map-product agreement / label ambiguity evidence only."
 
 
 def build_grassland_outputs(audit_root: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -309,10 +418,11 @@ def write_figures(output_root: Path, scale_rows: Sequence[Mapping[str, Any]], gr
         _save_figure(fig, output_root, "alphaearth_conformal_set_size_by_slice")
         plt.close(fig)
 
-    if dynamic_world and dynamic_world[0].get("status") != "unavailable":
+    if dynamic_world and dynamic_world[0].get("status") not in {"unavailable", "invalid"}:
         fig, ax = plt.subplots(figsize=(6.2, 3.8))
-        ax.bar([str(row.get("worldcover_class_or_label")) for row in dynamic_world], [_float(row.get("worldcover_dynamicworld_agreement")) for row in dynamic_world], color="#5086C1")
-        ax.set_ylabel("Agreement")
+        subset = [row for row in dynamic_world if row.get("metric") in {"worldcover_dynamicworld_agreement", "alphaearth_worldcover_accuracy", "alphaearth_dynamicworld_agreement"} and row.get("group") == "all"]
+        ax.bar([str(row.get("metric")) for row in subset], [_float(row.get("value")) for row in subset], color="#5086C1")
+        ax.set_ylabel("Rate")
         ax.tick_params(axis="x", rotation=45)
         _save_figure(fig, output_root, "alphaearth_worldcover_dynamicworld_agreement")
         plt.close(fig)
@@ -342,7 +452,7 @@ def update_unified_v4(unified_root: Path, audit_root: Path, dynamic_status: str)
         },
         {
             "claim": "Dynamic World diagnostic is optional map-label agreement evidence",
-            "support": "available" if "computed" in dynamic_status else "unavailable",
+            "support": "available" if "computed from alphaearth_full_dw_aligned.csv" in dynamic_status else "unavailable",
             "evidence": str(audit_root / "alphaearth_dynamic_world_agreement.csv"),
             "caveat": "Dynamic World is not human truth.",
         },
@@ -362,7 +472,7 @@ def update_unified_v4(unified_root: Path, audit_root: Path, dynamic_status: str)
         "# Paper-ready main findings v4\n\n"
         "AlphaEarth adds a fourth deployment axis: land-cover map-label agreement using AlphaEarth annual embeddings under strict spatial-block evaluation. "
         "Scaling the audit to 156k samples leaves aggregate performance comparatively stable while exposing stronger deployment-tail risk, especially country x class and region x class slices. "
-        "Dynamic World, if unavailable, is treated only as an optional diagnostic blocker rather than ground truth.\n",
+        "Dynamic World, when available through `alphaearth_full_dw_aligned.csv`, is used only as map-product agreement and label-ambiguity diagnostic evidence rather than ground truth.\n",
         encoding="utf-8",
     )
     (unified_root / "manuscript_outline_v4.md").write_text(
@@ -371,7 +481,7 @@ def update_unified_v4(unified_root: Path, audit_root: Path, dynamic_status: str)
         "2. Methods: BWER, Standardised-BWER, Selective-BWER, Conformal-BWER.\n"
         "3. Evidence axes: fMoW geography, reBEN sensor/mode, Sen1 event tail risk, AlphaEarth land-cover.\n"
         "4. AlphaEarth v2: strict spatial split, 156k samples, scale sensitivity, Grassland mechanism, conformal slice gaps.\n"
-        "5. Caveats: map-label agreement, Dynamic World diagnostic only, no causal claims.\n",
+        "5. Caveats: WorldCover map-label agreement, Dynamic World diagnostic only, no causal claims.\n",
         encoding="utf-8",
     )
     zip_path = unified_root / "rsfm_bwer_paper_freeze_v4.zip"
@@ -385,11 +495,11 @@ def update_unified_v4(unified_root: Path, audit_root: Path, dynamic_status: str)
 
 def build_hardening(args: argparse.Namespace) -> dict[str, Path]:
     audit_root = ensure_dir(args.audit_root)
-    seeds = [int(seed.strip()) for seed in str(args.seeds).split(",") if seed.strip()]
-    if args.manifest and args.manifest.exists():
-        scale_rows = build_retrained_scale_sensitivity(args.input, args.manifest, seeds, args.max_scales)
-    else:
-        scale_rows = build_prediction_subsample_scale(audit_root, seeds)
+    seeds = [int(seed.strip()) for seed in str(args.seeds).split(",") if seed.strip()] or FORMAL_SCALE_SEEDS
+    if not args.manifest or not args.manifest.exists():
+        raise FileNotFoundError("Formal alphaearth_scale_sensitivity_repeated.csv requires --manifest pointing to the full AlphaEarth export manifest.")
+    scale_rows = build_retrained_scale_sensitivity(args.input, args.manifest, seeds, args.max_scales)
+    prediction_subset_rows = build_prediction_subsample_scale(audit_root, seeds)
     dynamic_rows, dynamic_status = build_dynamic_world_diagnostic(audit_root)
     grass_confusion, grass_region = build_grassland_outputs(audit_root)
     conformal_gap, set_size = build_conformal_outputs(audit_root)
@@ -398,12 +508,14 @@ def build_hardening(args: argparse.Namespace) -> dict[str, Path]:
         "scale_report": audit_root / "alphaearth_scale_sensitivity_report.md",
         "dynamic": audit_root / "alphaearth_dynamic_world_agreement.csv",
         "dynamic_report": audit_root / "alphaearth_dynamic_world_diagnostic_report.md",
+        "prediction_subset": audit_root / "alphaearth_prediction_subset_sensitivity_diagnostic.csv",
         "grass_confusion": audit_root / "alphaearth_grassland_confusion_matrix.csv",
         "grass_region": audit_root / "alphaearth_grassland_region_risk.csv",
         "conformal_gap": audit_root / "alphaearth_conformal_slice_gap_diagnostic.csv",
         "set_size": audit_root / "alphaearth_conformal_set_size_by_slice.csv",
     }
     write_csv(paths["scale"], scale_rows)
+    write_csv(paths["prediction_subset"], prediction_subset_rows)
     write_csv(paths["dynamic"], dynamic_rows)
     write_csv(paths["grass_confusion"], grass_confusion)
     write_csv(paths["grass_region"], grass_region)
@@ -411,8 +523,8 @@ def build_hardening(args: argparse.Namespace) -> dict[str, Path]:
     write_csv(paths["set_size"], set_size)
     paths["scale_report"].write_text(
         "# AlphaEarth scale sensitivity v2\n\n"
-        "This analysis tests whether aggregate metrics remain comparatively stable while BWER exposes deployment-tail risk as audit coverage expands. "
-        "When manifest mode is used, each scale is retrained under strict spatial-block split. Prediction-subsample mode is diagnostic only.\n",
+        "This formal repeated scale-sensitivity analysis loads the full AlphaEarth source export through the manifest, subsamples source rows, and retrains/evaluates under strict spatial-block split at each scale. "
+        "`alphaearth_prediction_subset_sensitivity_diagnostic.csv` is a separate diagnostic and is not the formal scale result.\n",
         encoding="utf-8",
     )
     paths["dynamic_report"].write_text(f"# Dynamic World diagnostic\n\n{dynamic_status}\n", encoding="utf-8")
@@ -428,7 +540,7 @@ def main() -> None:
     parser.add_argument("--unified-v4-out", type=Path, default=DEFAULT_UNIFIED_V4_ROOT)
     parser.add_argument("--input", type=Path, default=Path("__DO_NOT_CREATE_force_manifest_read__.csv"))
     parser.add_argument("--manifest", type=Path, default=None)
-    parser.add_argument("--seeds", default="42")
+    parser.add_argument("--seeds", default="42,73,101")
     parser.add_argument("--max-scales", type=int, default=None)
     args = parser.parse_args()
     paths = build_hardening(args)

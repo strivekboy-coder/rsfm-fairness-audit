@@ -4,8 +4,11 @@ from argparse import Namespace
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 from rsfm_fairness_audit.io import read_csv_rows, write_csv
 from scripts.analysis.build_alphaearth_final_evidence_hardening_v2 import build_hardening
+from scripts.analysis.check_alphaearth_full_export_schema import EMBEDDING_BANDS
 
 
 def _prediction_rows() -> list[dict[str, object]]:
@@ -37,6 +40,46 @@ def _prediction_rows() -> list[dict[str, object]]:
     return rows
 
 
+def _export_rows() -> list[dict[str, object]]:
+    rows = []
+    for row in _prediction_rows():
+        item = {
+            "sample_id": row["sample_id"],
+            "lon": 0.01 * len(rows),
+            "lat": 0.02 * len(rows),
+            "year": 2021,
+            "country_iso3": row["country_iso3"],
+            "region": row["region"],
+            "income_group": "High income",
+            "biome_or_ecoregion": "",
+            "urban_rural_or_built_proxy": "non_built_proxy",
+            "spatial_block_id": row["spatial_block_id"],
+            "split": row["split"],
+            "worldcover_label": row["label"],
+            "worldcover_class_name": row["class_label"],
+        }
+        for band_index, band in enumerate(EMBEDDING_BANDS):
+            item[band] = float(int(row["label"]) * 0.01 + (band_index % 5) * 0.001)
+        rows.append(item)
+    return rows
+
+
+def _dw_rows() -> list[dict[str, object]]:
+    rows = []
+    for row in _prediction_rows():
+        rows.append(
+            {
+                "sample_id": row["sample_id"],
+                "worldcover_label": row["label"],
+                "dynamic_world_label": row["label"] if int(str(row["label"])) != 20 else "30",
+                "dynamic_world_confidence": 0.7,
+                "dynamic_world_top_probability": 0.72,
+                "alphaearth_prediction": row["prediction"],
+            }
+        )
+    return rows
+
+
 def test_alphaearth_final_hardening_outputs() -> None:
     root = Path("outputs") / f"test_alphaearth_hardening_{uuid4().hex}"
     audit = root / "audit"
@@ -44,6 +87,11 @@ def test_alphaearth_final_hardening_outputs() -> None:
     audit.mkdir(parents=True)
     rows = _prediction_rows()
     write_csv(audit / "alphaearth_full_predictions.csv", rows)
+    write_csv(audit / "alphaearth_full_dw_aligned.csv", _dw_rows())
+    shard = root / "synthetic_shard.csv"
+    manifest = root / "manifest.csv"
+    write_csv(shard, _export_rows())
+    write_csv(manifest, [{"shard_id": "synthetic", "path": str(shard.resolve()), "status": "available", "bytes": shard.stat().st_size}])
     write_csv(
         audit / "alphaearth_full_conformal_slice_coverage.csv",
         [
@@ -56,14 +104,33 @@ def test_alphaearth_final_hardening_outputs() -> None:
         reference_audit_root=root / "missing_reference",
         unified_v4_out=unified,
         input=root / "missing_input.csv",
-        manifest=None,
-        seeds="42",
+        manifest=manifest,
+        seeds="42,73,101",
         max_scales=None,
     )
     paths = build_hardening(args)
     for path in paths.values():
         assert path.exists(), path
     assert read_csv_rows(audit / "alphaearth_scale_sensitivity_repeated.csv")
-    assert read_csv_rows(audit / "alphaearth_dynamic_world_agreement.csv")
+    dynamic = read_csv_rows(audit / "alphaearth_dynamic_world_agreement.csv")
+    assert {"worldcover_dynamicworld_agreement", "alphaearth_worldcover_accuracy", "alphaearth_dynamicworld_agreement"}.issubset({row["metric"] for row in dynamic})
     assert read_csv_rows(audit / "alphaearth_conformal_slice_gap_diagnostic.csv")
     assert (unified / "rsfm_bwer_paper_freeze_v4.zip").exists()
+
+
+def test_alphaearth_final_hardening_requires_manifest_for_formal_scale() -> None:
+    root = Path("outputs") / f"test_alphaearth_hardening_no_manifest_{uuid4().hex}"
+    audit = root / "audit"
+    audit.mkdir(parents=True)
+    write_csv(audit / "alphaearth_full_predictions.csv", _prediction_rows())
+    args = Namespace(
+        audit_root=audit,
+        reference_audit_root=root / "missing_reference",
+        unified_v4_out=root / "unified",
+        input=root / "missing_input.csv",
+        manifest=None,
+        seeds="42",
+        max_scales=None,
+    )
+    with pytest.raises(FileNotFoundError, match="requires --manifest"):
+        build_hardening(args)
