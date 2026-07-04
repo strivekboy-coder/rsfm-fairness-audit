@@ -37,6 +37,8 @@ FORMAL_SCALE_SEEDS = [42, 73, 101]
 KEY_BWER_SLICES = ["country_iso3", "worldcover_class_name", "country_class", "region_class"]
 REQUIRED_DW_COLUMNS = ["sample_id", "dynamic_world_label"]
 PLACEHOLDER_VALUES = {"", "-1", "None", "none", "nan", "NaN"}
+DW_CONFIDENCE_ALIASES = ["dw_confidence", "dynamic_world_confidence", "dw_top_probability", "dynamic_world_top_probability"]
+DW_ENTROPY_ALIASES = ["dw_entropy", "dynamic_world_entropy"]
 DW_TO_WORLDCOVER = {
     "0": "80",  # water
     "1": "10",  # trees
@@ -76,6 +78,14 @@ def _clean(value: Any) -> str:
     return "" if value is None else str(value).strip()
 
 
+def _first_present(row: Mapping[str, Any], names: Sequence[str]) -> Any:
+    for name in names:
+        value = row.get(name)
+        if _clean(value) not in PLACEHOLDER_VALUES:
+            return value
+    return ""
+
+
 def _valid_label(value: Any) -> bool:
     return _clean(value) not in PLACEHOLDER_VALUES
 
@@ -98,9 +108,9 @@ def _confidence_bin(value: Any) -> str:
 
 
 def _entropy_bin(row: Mapping[str, Any]) -> str:
-    entropy = _float(row.get("dynamic_world_entropy"))
+    entropy = _float(_first_present(row, DW_ENTROPY_ALIASES))
     if math.isnan(entropy):
-        top = _float(row.get("dynamic_world_top_probability") or row.get("dynamic_world_confidence"))
+        top = _float(_first_present(row, DW_CONFIDENCE_ALIASES))
         if math.isnan(top):
             return "missing"
         entropy = 1.0 - top
@@ -347,7 +357,7 @@ def build_dynamic_world_diagnostic(audit_root: Path) -> tuple[list[dict[str, Any
                     "matched_prediction_rows": 0,
                     "prediction_table_rows": prediction_row_count,
                     "unique_sample_id_count": unique_sample_ids,
-                    "placeholder_label_count": placeholder_count,
+                    "raw_aligned_placeholder_label_count": placeholder_count,
                     "claim_scope": "No valid AlphaEarth prediction/WorldCover label join exists for this scope.",
                 }
             )
@@ -368,7 +378,7 @@ def build_dynamic_world_diagnostic(audit_root: Path) -> tuple[list[dict[str, Any
             "expected_row_count": 156246,
             "row_count_status": "ok" if len(aligned) == 156246 else "unexpected",
             "unique_sample_id_status": "ok" if unique_sample_ids == len(aligned) else "duplicate_sample_ids",
-            "placeholder_label_count": placeholder_count,
+        "raw_aligned_placeholder_label_count": placeholder_count,
             "diagnostic_scope": "matched_subset" if len(joined) < len(aligned) else "full_aligned_table",
             "claim_scope": "paper_facing_formal_evaluation" if claim_kind in {"formal_eval", "formal_test"} else "descriptive_background_only",
         }
@@ -385,7 +395,7 @@ def build_dynamic_world_diagnostic(audit_root: Path) -> tuple[list[dict[str, Any
             item["worldcover_dynamicworld_agreement"] = wc_dw
             item["alphaearth_worldcover_accuracy"] = ae_wc
             item["alphaearth_dynamicworld_agreement"] = ae_dw
-            item["dw_confidence_bin"] = _confidence_bin(row.get("dynamic_world_top_probability") or row.get("dynamic_world_confidence"))
+            item["dw_confidence_bin"] = _confidence_bin(_first_present(row, DW_CONFIDENCE_ALIASES))
             item["dw_entropy_bin"] = _entropy_bin(row)
             item["worldcover_dynamicworld_agreement_group"] = "agree" if wc_dw else "disagree"
             item["grassland_shrubland_cropland_ambiguity"] = int(wc in ambiguity_labels or dw in ambiguity_labels or ae in ambiguity_labels)
@@ -620,6 +630,22 @@ def update_unified_v4(unified_root: Path, audit_root: Path, dynamic_status: str)
 
 def build_hardening(args: argparse.Namespace) -> dict[str, Path]:
     audit_root = ensure_dir(args.audit_root)
+    if getattr(args, "dw_only", False):
+        dynamic_rows, dynamic_status = build_dynamic_world_diagnostic(audit_root)
+        paths = {
+            "dynamic": audit_root / "alphaearth_dynamic_world_agreement.csv",
+            "dynamic_report": audit_root / "alphaearth_dynamic_world_diagnostic_report.md",
+        }
+        write_csv(paths["dynamic"], dynamic_rows)
+        paths["dynamic_report"].write_text(
+            "# Dynamic World diagnostic\n\n"
+            f"{dynamic_status}\n\n"
+            "Paper-facing Dynamic World mechanism claims must use `test_only` or `eval_calibration_test` rows. "
+            "`all_split_descriptive` rows are map-product/background distribution only and must not be used as formal model accuracy evidence.\n",
+            encoding="utf-8",
+        )
+        update_unified_v4(args.unified_v4_out, audit_root, dynamic_status)
+        return paths
     seeds = [int(seed.strip()) for seed in str(args.seeds).split(",") if seed.strip()] or FORMAL_SCALE_SEEDS
     if not args.manifest or not args.manifest.exists():
         raise FileNotFoundError("Formal alphaearth_scale_sensitivity_repeated.csv requires --manifest pointing to the full AlphaEarth export manifest.")
@@ -673,6 +699,7 @@ def main() -> None:
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--seeds", default="42,73,101")
     parser.add_argument("--max-scales", type=int, default=None)
+    parser.add_argument("--dw-only", action="store_true", help="Only regenerate Dynamic World diagnostics and unified v4 summary/zip; do not touch scale sensitivity.")
     args = parser.parse_args()
     paths = build_hardening(args)
     for name, path in paths.items():

@@ -72,8 +72,9 @@ def _dw_rows() -> list[dict[str, object]]:
                 "sample_id": row["sample_id"],
                 "worldcover_label": -1,
                 "dynamic_world_label": {"80": 0, "10": 1, "30": 2, "90": 3, "40": 4, "20": 5}.get(str(row["label"]), 2),
-                "dynamic_world_confidence": 0.7,
-                "dynamic_world_top_probability": 0.72,
+                "dw_confidence": 0.7,
+                "dw_top_probability": 0.72,
+                "dw_entropy": 0.28,
                 "alphaearth_prediction": -1,
             }
         )
@@ -119,11 +120,13 @@ def test_alphaearth_final_hardening_outputs() -> None:
     accuracy = next(row for row in dynamic if row["metric"] == "alphaearth_worldcover_accuracy" and row["group"] == "all")
     assert 0 < float(accuracy["value"]) < 1
     validation = next(row for row in dynamic if row["metric"] == "dw_aligned_table_validation" and row["scope"] == "all_split_descriptive")
-    assert int(validation["placeholder_label_count"]) > 0
+    assert int(validation["raw_aligned_placeholder_label_count"]) > 0
     assert int(validation["matched_prediction_rows"]) == len(rows)
     assert int(validation["prediction_table_rows"]) == len(rows)
     eval_validation = next(row for row in dynamic if row["metric"] == "dw_aligned_table_validation" and row["scope"] == "eval_calibration_test")
     assert int(eval_validation["matched_prediction_rows"]) == 30
+    assert any(row["group"] == "dw_confidence_bin" and row["group_value"] != "missing" for row in dynamic)
+    assert any(row["group"] == "dw_entropy_bin" and row["group_value"] != "missing" for row in dynamic)
     assert read_csv_rows(audit / "alphaearth_conformal_slice_gap_diagnostic.csv")
     assert (unified / "rsfm_bwer_paper_freeze_v4.zip").exists()
 
