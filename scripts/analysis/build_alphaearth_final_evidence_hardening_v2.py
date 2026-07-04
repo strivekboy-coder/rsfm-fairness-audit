@@ -35,7 +35,28 @@ DEFAULT_UNIFIED_V4_ROOT = Path("outputs/unified_paper_package_v4")
 SCALE_TARGETS = [25000, 50000, 75000, 100000, 125000]
 FORMAL_SCALE_SEEDS = [42, 73, 101]
 KEY_BWER_SLICES = ["country_iso3", "worldcover_class_name", "country_class", "region_class"]
-REQUIRED_DW_COLUMNS = ["sample_id", "worldcover_label", "dynamic_world_label", "alphaearth_prediction"]
+REQUIRED_DW_COLUMNS = ["sample_id", "dynamic_world_label"]
+PLACEHOLDER_VALUES = {"", "-1", "None", "none", "nan", "NaN"}
+DW_TO_WORLDCOVER = {
+    "0": "80",  # water
+    "1": "10",  # trees
+    "2": "30",  # grass
+    "3": "90",  # flooded vegetation
+    "4": "40",  # crops
+    "5": "20",  # shrub and scrub
+    "6": "50",  # built
+    "7": "60",  # bare
+    "8": "70",  # snow and ice
+    "water": "80",
+    "trees": "10",
+    "grass": "30",
+    "flooded_vegetation": "90",
+    "crops": "40",
+    "shrub_and_scrub": "20",
+    "built": "50",
+    "bare": "60",
+    "snow_and_ice": "70",
+}
 
 
 def _float(value: Any, default: float = float("nan")) -> float:
@@ -55,8 +76,12 @@ def _clean(value: Any) -> str:
     return "" if value is None else str(value).strip()
 
 
+def _valid_label(value: Any) -> bool:
+    return _clean(value) not in PLACEHOLDER_VALUES
+
+
 def _label_equal(left: Any, right: Any) -> int:
-    return int(_clean(left) != "" and _clean(left) == _clean(right))
+    return int(_valid_label(left) and _clean(left) == _clean(right))
 
 
 def _confidence_bin(value: Any) -> str:
@@ -84,6 +109,13 @@ def _entropy_bin(row: Mapping[str, Any]) -> str:
     if entropy < 0.4:
         return "medium"
     return "high"
+
+
+def _to_worldcover_label(value: Any) -> str:
+    label = _clean(value)
+    if not label:
+        return ""
+    return DW_TO_WORLDCOVER.get(label, label)
 
 
 def _save_figure(fig: Any, output_root: Path, name: str) -> dict[str, Path]:
@@ -200,6 +232,58 @@ def _dw_column(row: Mapping[str, Any], *names: str) -> str:
     return ""
 
 
+def _lookup_from_rows(predictions: Sequence[Mapping[str, Any]], split_filter: set[str] | None = None) -> dict[str, Mapping[str, Any]]:
+    lookup = {}
+    for row in predictions:
+        if split_filter is not None and _clean(row.get("split")) not in split_filter:
+            continue
+        sample_id = _clean(row.get("sample_id"))
+        if sample_id:
+            lookup[sample_id] = row
+    return lookup
+
+
+def _prediction_scopes(audit_root: Path) -> dict[str, tuple[list[dict[str, str]], set[str] | None, str]]:
+    eval_rows = _read(audit_root / "alphaearth_full_eval_predictions.csv")
+    if not eval_rows:
+        eval_rows = _read(audit_root / "alphaearth_full_predictions.csv")
+    all_rows = _read(audit_root / "alphaearth_full_all_split_predictions.csv")
+    scopes: dict[str, tuple[list[dict[str, str]], set[str] | None, str]] = {
+        "eval_calibration_test": (eval_rows, None, "formal_eval"),
+        "test_only": (eval_rows, {"test"}, "formal_test"),
+    }
+    if all_rows:
+        scopes["all_split_descriptive"] = (all_rows, None, "descriptive_background_only")
+    return scopes
+
+
+def _joined_dw_rows(aligned: Sequence[Mapping[str, Any]], predictions: Sequence[Mapping[str, Any]], split_filter: set[str] | None = None) -> tuple[list[dict[str, Any]], int, int]:
+    lookup = _lookup_from_rows(predictions, split_filter)
+    joined: list[dict[str, Any]] = []
+    placeholder_count = 0
+    for row in aligned:
+        sample_id = _clean(row.get("sample_id"))
+        pred = lookup.get(sample_id)
+        raw_wc = _dw_column(row, "worldcover_label", "label")
+        raw_ae = _dw_column(row, "alphaearth_prediction", "ae_pred", "prediction")
+        if not _valid_label(raw_wc) or not _valid_label(raw_ae):
+            placeholder_count += 1
+        if not pred:
+            continue
+        wc = _dw_column(pred, "label", "worldcover_label")
+        ae = _dw_column(pred, "prediction", "alphaearth_prediction", "ae_pred")
+        if not _valid_label(wc) or not _valid_label(ae):
+            continue
+        item = dict(row)
+        item["worldcover_label"] = wc
+        item["alphaearth_prediction"] = ae
+        item["alphaearth_correct"] = pred.get("correct", _label_equal(ae, wc))
+        item["alphaearth_risk"] = pred.get("risk", 1 - _label_equal(ae, wc))
+        item["matched_prediction_row"] = 1
+        joined.append(item)
+    return joined, len(lookup), placeholder_count
+
+
 def _group_metric(rows: Sequence[Mapping[str, Any]], metric_name: str, group_name: str, value_getter: Any) -> list[dict[str, Any]]:
     grouped: dict[str, list[float]] = {}
     for row in rows:
@@ -248,54 +332,95 @@ def build_dynamic_world_diagnostic(audit_root: Path) -> tuple[list[dict[str, Any
         )
     sample_ids = [_clean(row.get("sample_id")) for row in aligned]
     unique_sample_ids = len(set(sample_ids))
-    validation = {
-        "metric": "dw_aligned_table_validation",
-        "group": "all",
-        "group_value": "all",
-        "value": "",
-        "support_count": len(aligned),
-        "unique_sample_id_count": unique_sample_ids,
-        "expected_row_count": 156246,
-        "row_count_status": "ok" if len(aligned) == 156246 else "unexpected",
-        "unique_sample_id_status": "ok" if unique_sample_ids == len(aligned) else "duplicate_sample_ids",
-        "claim_scope": "Validation of aligned Dynamic World diagnostic table.",
-    }
-    metric_rows = []
-    enriched = []
+    output_rows = []
+    valid_scope_count = 0
     ambiguity_labels = {"20", "30", "40", "Shrubland", "Grassland", "Cropland"}
-    for row in aligned:
-        wc = _dw_column(row, "worldcover_label", "label")
-        dw = _dw_column(row, "dynamic_world_label")
-        ae = _dw_column(row, "alphaearth_prediction", "ae_pred", "prediction")
-        wc_dw = _label_equal(wc, dw)
-        ae_wc = _label_equal(ae, wc)
-        ae_dw = _label_equal(ae, dw)
-        item = dict(row)
-        item["worldcover_dynamicworld_agreement"] = wc_dw
-        item["alphaearth_worldcover_accuracy"] = ae_wc
-        item["alphaearth_dynamicworld_agreement"] = ae_dw
-        item["dw_confidence_bin"] = _confidence_bin(row.get("dynamic_world_top_probability") or row.get("dynamic_world_confidence"))
-        item["dw_entropy_bin"] = _entropy_bin(row)
-        item["worldcover_dynamicworld_agreement_group"] = "agree" if wc_dw else "disagree"
-        item["grassland_shrubland_cropland_ambiguity"] = int(wc in ambiguity_labels or dw in ambiguity_labels or ae in ambiguity_labels)
-        enriched.append(item)
-    for metric in ["worldcover_dynamicworld_agreement", "alphaearth_worldcover_accuracy", "alphaearth_dynamicworld_agreement", "grassland_shrubland_cropland_ambiguity"]:
-        values = [_float(row.get(metric)) for row in enriched]
-        metric_rows.append(
-            {
-                "metric": metric,
-                "group": "all",
-                "group_value": "all",
-                "value": float(np.mean(values)) if values else "",
-                "support_count": len(values),
-                "unique_sample_id_count": unique_sample_ids,
-                "claim_scope": "Dynamic World is map-product agreement / label ambiguity diagnostic only, not human ground truth.",
-            }
-        )
-    metric_rows.extend(_group_metric(enriched, "alphaearth_worldcover_accuracy", "dw_confidence_bin", lambda row: row.get("dw_confidence_bin")))
-    metric_rows.extend(_group_metric(enriched, "alphaearth_worldcover_accuracy", "worldcover_dynamicworld_agreement", lambda row: row.get("worldcover_dynamicworld_agreement_group")))
-    metric_rows.extend(_group_metric(enriched, "alphaearth_worldcover_accuracy", "dw_entropy_bin", lambda row: row.get("dw_entropy_bin")))
-    return [validation, *metric_rows], "Dynamic World diagnostic computed from alphaearth_full_dw_aligned.csv as map-product agreement / label ambiguity evidence only."
+    for scope, (predictions, split_filter, claim_kind) in _prediction_scopes(audit_root).items():
+        joined, prediction_row_count, placeholder_count = _joined_dw_rows(aligned, predictions, split_filter)
+        if not joined:
+            output_rows.append(
+                {
+                    "scope": scope,
+                    "status": "invalid",
+                    "reason": "no_valid_prediction_label_join",
+                    "dw_aligned_rows": len(aligned),
+                    "matched_prediction_rows": 0,
+                    "prediction_table_rows": prediction_row_count,
+                    "unique_sample_id_count": unique_sample_ids,
+                    "placeholder_label_count": placeholder_count,
+                    "claim_scope": "No valid AlphaEarth prediction/WorldCover label join exists for this scope.",
+                }
+            )
+            continue
+        valid_scope_count += 1
+        validation = {
+            "scope": scope,
+            "metric": "dw_aligned_table_validation",
+            "group": "all",
+            "group_value": "all",
+            "value": "",
+            "dw_aligned_rows": len(aligned),
+            "matched_prediction_rows": len(joined),
+            "prediction_table_rows": prediction_row_count,
+            "support_count": len(joined),
+            "unique_sample_id_count": unique_sample_ids,
+            "matched_unique_sample_id_count": len({_clean(row.get("sample_id")) for row in joined}),
+            "expected_row_count": 156246,
+            "row_count_status": "ok" if len(aligned) == 156246 else "unexpected",
+            "unique_sample_id_status": "ok" if unique_sample_ids == len(aligned) else "duplicate_sample_ids",
+            "placeholder_label_count": placeholder_count,
+            "diagnostic_scope": "matched_subset" if len(joined) < len(aligned) else "full_aligned_table",
+            "claim_scope": "paper_facing_formal_evaluation" if claim_kind in {"formal_eval", "formal_test"} else "descriptive_background_only",
+        }
+        output_rows.append(validation)
+        enriched = []
+        for row in joined:
+            wc = _dw_column(row, "worldcover_label", "label")
+            dw = _to_worldcover_label(_dw_column(row, "dynamic_world_label"))
+            ae = _dw_column(row, "alphaearth_prediction", "ae_pred", "prediction")
+            wc_dw = _label_equal(wc, dw)
+            ae_wc = _label_equal(ae, wc)
+            ae_dw = _label_equal(ae, dw)
+            item = dict(row)
+            item["worldcover_dynamicworld_agreement"] = wc_dw
+            item["alphaearth_worldcover_accuracy"] = ae_wc
+            item["alphaearth_dynamicworld_agreement"] = ae_dw
+            item["dw_confidence_bin"] = _confidence_bin(row.get("dynamic_world_top_probability") or row.get("dynamic_world_confidence"))
+            item["dw_entropy_bin"] = _entropy_bin(row)
+            item["worldcover_dynamicworld_agreement_group"] = "agree" if wc_dw else "disagree"
+            item["grassland_shrubland_cropland_ambiguity"] = int(wc in ambiguity_labels or dw in ambiguity_labels or ae in ambiguity_labels)
+            enriched.append(item)
+        claim_scope = "paper_facing_formal_evaluation" if claim_kind in {"formal_eval", "formal_test"} else "descriptive_background_only_not_formal_model_accuracy"
+        for metric in ["worldcover_dynamicworld_agreement", "alphaearth_worldcover_accuracy", "alphaearth_dynamicworld_agreement", "grassland_shrubland_cropland_ambiguity"]:
+            values = [_float(row.get(metric)) for row in enriched]
+            output_rows.append(
+                {
+                    "scope": scope,
+                    "metric": metric,
+                    "group": "all",
+                    "group_value": "all",
+                    "value": float(np.mean(values)) if values else "",
+                    "support_count": len(values),
+                    "dw_aligned_rows": len(aligned),
+                    "matched_prediction_rows": len(joined),
+                    "unique_sample_id_count": unique_sample_ids,
+                    "claim_scope": claim_scope,
+                }
+            )
+        for row in _group_metric(enriched, "alphaearth_worldcover_accuracy", "dw_confidence_bin", lambda item: item.get("dw_confidence_bin")):
+            output_rows.append({"scope": scope, **row, "claim_scope": claim_scope})
+        for row in _group_metric(enriched, "alphaearth_worldcover_accuracy", "worldcover_dynamicworld_agreement", lambda item: item.get("worldcover_dynamicworld_agreement_group")):
+            output_rows.append({"scope": scope, **row, "claim_scope": claim_scope})
+        error_rows = []
+        for row in enriched:
+            item = dict(row)
+            item["alphaearth_error"] = 1 - int(_float(row.get("alphaearth_worldcover_accuracy"), 0))
+            error_rows.append(item)
+        for row in _group_metric(error_rows, "alphaearth_error", "dw_entropy_bin", lambda item: item.get("dw_entropy_bin")):
+            output_rows.append({"scope": scope, **row, "claim_scope": claim_scope})
+    if valid_scope_count == 0:
+        return output_rows, "Dynamic World diagnostic invalid because no valid prediction/label join exists in any scope. No accuracy was reported."
+    return output_rows, "Dynamic World diagnostic computed by scope from alphaearth_full_dw_aligned.csv joined to formal eval and all-split prediction tables."
 
 
 def build_grassland_outputs(audit_root: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -452,7 +577,7 @@ def update_unified_v4(unified_root: Path, audit_root: Path, dynamic_status: str)
         },
         {
             "claim": "Dynamic World diagnostic is optional map-label agreement evidence",
-            "support": "available" if "computed from alphaearth_full_dw_aligned.csv" in dynamic_status else "unavailable",
+            "support": "available" if "computed by scope" in dynamic_status else "unavailable",
             "evidence": str(audit_root / "alphaearth_dynamic_world_agreement.csv"),
             "caveat": "Dynamic World is not human truth.",
         },
@@ -472,7 +597,7 @@ def update_unified_v4(unified_root: Path, audit_root: Path, dynamic_status: str)
         "# Paper-ready main findings v4\n\n"
         "AlphaEarth adds a fourth deployment axis: land-cover map-label agreement using AlphaEarth annual embeddings under strict spatial-block evaluation. "
         "Scaling the audit to 156k samples leaves aggregate performance comparatively stable while exposing stronger deployment-tail risk, especially country x class and region x class slices. "
-        "Dynamic World, when available through `alphaearth_full_dw_aligned.csv`, is used only as map-product agreement and label-ambiguity diagnostic evidence rather than ground truth.\n",
+        "Dynamic World, when available through `alphaearth_full_dw_aligned.csv`, is evaluated on formal `test_only` and `eval_calibration_test` scopes for paper-facing mechanism claims; all-split results are descriptive background only.\n",
         encoding="utf-8",
     )
     (unified_root / "manuscript_outline_v4.md").write_text(
@@ -527,7 +652,13 @@ def build_hardening(args: argparse.Namespace) -> dict[str, Path]:
         "`alphaearth_prediction_subset_sensitivity_diagnostic.csv` is a separate diagnostic and is not the formal scale result.\n",
         encoding="utf-8",
     )
-    paths["dynamic_report"].write_text(f"# Dynamic World diagnostic\n\n{dynamic_status}\n", encoding="utf-8")
+    paths["dynamic_report"].write_text(
+        "# Dynamic World diagnostic\n\n"
+        f"{dynamic_status}\n\n"
+        "Paper-facing Dynamic World mechanism claims must use `test_only` or `eval_calibration_test` rows. "
+        "`all_split_descriptive` rows are map-product/background distribution only and must not be used as formal model accuracy evidence.\n",
+        encoding="utf-8",
+    )
     write_figures(audit_root, scale_rows, grass_confusion, grass_region, conformal_gap, set_size, dynamic_rows)
     update_unified_v4(args.unified_v4_out, audit_root, dynamic_status)
     return paths

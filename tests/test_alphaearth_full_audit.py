@@ -82,6 +82,8 @@ def test_full_output_existence_smoke() -> None:
     required = [
         "alphaearth_full_metrics",
         "alphaearth_full_predictions",
+        "alphaearth_full_eval_predictions",
+        "alphaearth_full_all_split_predictions",
         "alphaearth_full_bwer_summary",
         "alphaearth_full_standardised_bwer",
         "alphaearth_full_selective_risk_summary",

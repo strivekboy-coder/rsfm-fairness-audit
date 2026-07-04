@@ -88,22 +88,36 @@ def _predict_numpy_logreg(x: np.ndarray, model: tuple[np.ndarray, np.ndarray, np
     return _softmax(np.nan_to_num((x - mean) / std) @ weights + bias)
 
 
-def _fit_predict_proba(x_train: np.ndarray, y_train: np.ndarray, x_eval: np.ndarray, n_classes: int, seed: int) -> tuple[str, np.ndarray]:
+def _expand_proba(probs: np.ndarray, classes_seen: Sequence[Any], n_classes: int) -> np.ndarray:
+    if probs.shape[1] == n_classes:
+        return probs
+    full = np.zeros((probs.shape[0], n_classes), dtype=float)
+    for index, cls in enumerate(classes_seen):
+        full[:, int(cls)] = probs[:, index]
+    return full
+
+
+def _fit_probability_model(x_train: np.ndarray, y_train: np.ndarray, n_classes: int, seed: int) -> tuple[str, Any]:
     try:
         from sklearn.ensemble import HistGradientBoostingClassifier
 
         model = HistGradientBoostingClassifier(max_iter=120, learning_rate=0.08, l2_regularization=0.02, random_state=seed)
         model.fit(x_train, y_train)
-        probs = model.predict_proba(x_eval)
-        if probs.shape[1] != n_classes:
-            full = np.zeros((x_eval.shape[0], n_classes), dtype=float)
-            for index, cls in enumerate(model.classes_):
-                full[:, int(cls)] = probs[:, index]
-            probs = full
-        return "hist_gradient_boosting", probs
+        return "hist_gradient_boosting", model
     except Exception:
         model = _fit_numpy_logreg(x_train, y_train, n_classes, seed=seed)
-        return "numpy_multinomial_logreg_fallback", _predict_numpy_logreg(x_eval, model)
+        return "numpy_multinomial_logreg_fallback", model
+
+
+def _predict_probability_model(model_name: str, model: Any, x_eval: np.ndarray, n_classes: int) -> np.ndarray:
+    if model_name == "hist_gradient_boosting":
+        return _expand_proba(model.predict_proba(x_eval), model.classes_, n_classes)
+    return _predict_numpy_logreg(x_eval, model)
+
+
+def _fit_predict_proba(x_train: np.ndarray, y_train: np.ndarray, x_eval: np.ndarray, n_classes: int, seed: int) -> tuple[str, np.ndarray]:
+    model_name, model = _fit_probability_model(x_train, y_train, n_classes, seed)
+    return model_name, _predict_probability_model(model_name, model, x_eval, n_classes)
 
 
 def _fit_predict_proba_logistic_baseline(x_train: np.ndarray, y_train: np.ndarray, x_eval: np.ndarray, n_classes: int, seed: int) -> tuple[str, np.ndarray]:
@@ -243,6 +257,7 @@ def _prediction_rows(eval_rows: Sequence[Mapping[str, Any]], labels: Sequence[st
             "correct": correct,
             "risk": 1 - correct,
             "confidence": float(np.max(prob)),
+            "max_probability": float(np.max(prob)),
             "p_true": float(prob[true_idx]),
         }
         for cls, value in zip(classes, prob):
@@ -546,6 +561,8 @@ def _artifact_paths(output: Path) -> dict[str, Path]:
     return {
         "alphaearth_full_metrics": output / "alphaearth_full_metrics.csv",
         "alphaearth_full_predictions": output / "alphaearth_full_predictions.csv",
+        "alphaearth_full_eval_predictions": output / "alphaearth_full_eval_predictions.csv",
+        "alphaearth_full_all_split_predictions": output / "alphaearth_full_all_split_predictions.csv",
         "alphaearth_full_bwer_summary": output / "alphaearth_full_bwer_summary.csv",
         "alphaearth_full_standardised_bwer": output / "alphaearth_full_standardised_bwer.csv",
         "alphaearth_full_selective_risk_summary": output / "alphaearth_full_selective_risk_summary.csv",
@@ -591,11 +608,16 @@ def run_alphaearth_full_audit(input_csv: Path = DEFAULT_EXPORT, manifest_csv: Pa
     classes = sorted(set(y_train_raw) | set(y_cal_raw) | set(y_test_raw), key=lambda value: int(value) if str(value).isdigit() else str(value))
     y_train = np.asarray([classes.index(label) for label in y_train_raw], dtype=int)
     x_eval = np.vstack([x_cal, x_test]) if len(calibration) else x_test
-    model_name, probs_eval = _fit_predict_proba(x_train, y_train, x_eval, len(classes), seed)
+    model_name, fitted_model = _fit_probability_model(x_train, y_train, len(classes), seed)
+    probs_eval = _predict_probability_model(model_name, fitted_model, x_eval, len(classes))
     cal_probs = probs_eval[: len(calibration)] if len(calibration) else np.empty((0, len(classes)))
     test_probs = probs_eval[len(calibration) :] if len(calibration) else probs_eval
     cal_pred = _prediction_rows(calibration, y_cal_raw, cal_probs, classes, model_name, "spatial_block") if len(calibration) else []
     test_pred = _prediction_rows(test, y_test_raw, test_probs, classes, model_name, "spatial_block")
+    all_rows_for_prediction = train + calibration + test
+    x_all, y_all_raw = _arrays(all_rows_for_prediction)
+    all_probs = _predict_probability_model(model_name, fitted_model, x_all, len(classes))
+    all_split_pred = _prediction_rows(all_rows_for_prediction, y_all_raw, all_probs, classes, model_name, "spatial_block")
     metrics = [_metrics(test_pred, classes, model_name, "spatial_block", len(train), len(calibration))]
     logistic_model_name, logistic_probs = _fit_predict_proba_logistic_baseline(x_train, y_train, x_test, len(classes), seed)
     logistic_pred = _prediction_rows(test, y_test_raw, logistic_probs, classes, logistic_model_name, "spatial_block")
@@ -641,6 +663,8 @@ def run_alphaearth_full_audit(input_csv: Path = DEFAULT_EXPORT, manifest_csv: Pa
     artifacts = _artifact_paths(output)
     write_csv(artifacts["alphaearth_full_metrics"], metrics)
     write_csv(artifacts["alphaearth_full_predictions"], cal_pred + test_pred)
+    write_csv(artifacts["alphaearth_full_eval_predictions"], cal_pred + test_pred)
+    write_csv(artifacts["alphaearth_full_all_split_predictions"], all_split_pred)
     write_csv(artifacts["alphaearth_full_bwer_summary"], raw_bwer)
     write_csv(artifacts["alphaearth_full_standardised_bwer"], std_bwer)
     write_csv(artifacts["alphaearth_full_selective_risk_summary"], selective_risk)

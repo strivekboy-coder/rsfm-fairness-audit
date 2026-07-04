@@ -70,11 +70,11 @@ def _dw_rows() -> list[dict[str, object]]:
         rows.append(
             {
                 "sample_id": row["sample_id"],
-                "worldcover_label": row["label"],
-                "dynamic_world_label": row["label"] if int(str(row["label"])) != 20 else "30",
+                "worldcover_label": -1,
+                "dynamic_world_label": {"80": 0, "10": 1, "30": 2, "90": 3, "40": 4, "20": 5}.get(str(row["label"]), 2),
                 "dynamic_world_confidence": 0.7,
                 "dynamic_world_top_probability": 0.72,
-                "alphaearth_prediction": row["prediction"],
+                "alphaearth_prediction": -1,
             }
         )
     return rows
@@ -86,7 +86,8 @@ def test_alphaearth_final_hardening_outputs() -> None:
     unified = root / "unified"
     audit.mkdir(parents=True)
     rows = _prediction_rows()
-    write_csv(audit / "alphaearth_full_predictions.csv", rows)
+    write_csv(audit / "alphaearth_full_predictions.csv", rows[:30])
+    write_csv(audit / "alphaearth_full_all_split_predictions.csv", rows)
     write_csv(audit / "alphaearth_full_dw_aligned.csv", _dw_rows())
     shard = root / "synthetic_shard.csv"
     manifest = root / "manifest.csv"
@@ -114,6 +115,15 @@ def test_alphaearth_final_hardening_outputs() -> None:
     assert read_csv_rows(audit / "alphaearth_scale_sensitivity_repeated.csv")
     dynamic = read_csv_rows(audit / "alphaearth_dynamic_world_agreement.csv")
     assert {"worldcover_dynamicworld_agreement", "alphaearth_worldcover_accuracy", "alphaearth_dynamicworld_agreement"}.issubset({row["metric"] for row in dynamic})
+    assert {"test_only", "eval_calibration_test", "all_split_descriptive"}.issubset({row.get("scope") for row in dynamic})
+    accuracy = next(row for row in dynamic if row["metric"] == "alphaearth_worldcover_accuracy" and row["group"] == "all")
+    assert 0 < float(accuracy["value"]) < 1
+    validation = next(row for row in dynamic if row["metric"] == "dw_aligned_table_validation" and row["scope"] == "all_split_descriptive")
+    assert int(validation["placeholder_label_count"]) > 0
+    assert int(validation["matched_prediction_rows"]) == len(rows)
+    assert int(validation["prediction_table_rows"]) == len(rows)
+    eval_validation = next(row for row in dynamic if row["metric"] == "dw_aligned_table_validation" and row["scope"] == "eval_calibration_test")
+    assert int(eval_validation["matched_prediction_rows"]) == 30
     assert read_csv_rows(audit / "alphaearth_conformal_slice_gap_diagnostic.csv")
     assert (unified / "rsfm_bwer_paper_freeze_v4.zip").exists()
 
@@ -134,3 +144,29 @@ def test_alphaearth_final_hardening_requires_manifest_for_formal_scale() -> None
     )
     with pytest.raises(FileNotFoundError, match="requires --manifest"):
         build_hardening(args)
+
+
+def test_alphaearth_dynamic_world_invalid_without_prediction_join() -> None:
+    root = Path("outputs") / f"test_alphaearth_hardening_bad_dw_{uuid4().hex}"
+    audit = root / "audit"
+    unified = root / "unified"
+    audit.mkdir(parents=True)
+    write_csv(audit / "alphaearth_full_dw_aligned.csv", _dw_rows())
+    shard = root / "synthetic_shard.csv"
+    manifest = root / "manifest.csv"
+    write_csv(shard, _export_rows())
+    write_csv(manifest, [{"shard_id": "synthetic", "path": str(shard.resolve()), "status": "available", "bytes": shard.stat().st_size}])
+    args = Namespace(
+        audit_root=audit,
+        reference_audit_root=root / "missing_reference",
+        unified_v4_out=unified,
+        input=root / "missing_input.csv",
+        manifest=manifest,
+        seeds="42",
+        max_scales=1,
+    )
+    build_hardening(args)
+    dynamic = read_csv_rows(audit / "alphaearth_dynamic_world_agreement.csv")
+    assert dynamic[0]["status"] == "invalid"
+    assert dynamic[0]["reason"] == "no_valid_prediction_label_join"
+    assert "alphaearth_worldcover_accuracy" not in {row.get("metric") for row in dynamic}
