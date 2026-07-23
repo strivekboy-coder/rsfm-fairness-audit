@@ -3,9 +3,11 @@
 
 torch
 torchvision
-timm
+# DOFAv2's author-maintained ViT-B/14 implementation requires timm>=1.0.15.
+# Freeze the exact version used by the 194/194-key checkpoint compatibility test.
+timm==1.0.15
 kornia
-numpy
+numpy>=1.24,<2.1
 PyYAML
 datasets
 huggingface_hub

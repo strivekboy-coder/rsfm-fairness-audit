@@ -43,6 +43,21 @@ cd /content/rsfm-fairness-audit
 python -m pip install -e .
 ```
 
+运行 fMoW / DOFAv2 smoke 前，在该 runtime 安装冻结的 DOFA 环境：
+
+```bash
+python -m pip install -r requirements-dofa.txt
+python - <<'PY'
+import timm
+assert timm.__version__ == "1.0.15", timm.__version__
+print("timm", timm.__version__)
+PY
+```
+
+DOFAv2 Base 使用作者实现的 ViT-B/14（不是 DOFAv1 的 ViT-B/16）。正式加载必须得到
+`194/194` 个 state-dict 键、`105432320/105432320` 个参数完全匹配；不得降低 coverage
+门槛或用 `strict=False` 掩盖结构不一致。
+
 TerraMind 作业还需安装冻结兼容窗 `terratorch>=1.2.5,<1.3`；若安装后出现 `numpy.dtype size changed`，重启 runtime 后再继续。
 
 ## 2. 只读盘点 Drive，先判断哪些概率可复用
@@ -102,6 +117,28 @@ python scripts/colab/run_fmow_dofav2_final_colab.py \
   --output-dir /content/smoke/fmow_dofav2 \
   --device cuda \
   --diagnostic-max-per-split 32
+```
+
+验收日志中的 `checkpoint_load_report` 必须同时满足：
+
+```text
+parameter_coverage = 1.0
+matched_keys = model_keys = checkpoint_keys = 194
+model_keys_missing_from_checkpoint = []
+checkpoint_keys_missing_from_model = []
+same_name_shape_mismatches = []
+patch_size = 14
+timm = 1.0.15
+```
+
+若仍失败，先运行结构诊断，不要重新训练或降低门槛：
+
+```bash
+python scripts/diagnose_dofa_checkpoint_compatibility.py \
+  --repo-path /content/rsfm_model_repos/dofa \
+  --checkpoint /content/rsfm_model_assets/dofav2_vit_base_e150.pth \
+  --constructor dofav2_base_patch14 \
+  --output-json /content/dofav2_checkpoint_compatibility.json
 ```
 
 ### reBEN / CROMA×TerraMind×三模态

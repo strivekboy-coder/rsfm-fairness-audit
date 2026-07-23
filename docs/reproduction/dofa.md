@@ -34,6 +34,30 @@ The official demo preprocessing uses 224x224 random resized crop and sensor-spec
 
 The official `dofa_v1.py` implementation returns frozen representations from `forward_features(x, wave_list=...)`; this is the embedding layer used by the audit adapter.
 
+## DOFAv2 Base Architecture Contract
+
+`dofav2_vit_base_e150.pth` is not a drop-in replacement for the DOFAv1
+`vit_base_patch16()` constructor. The verified checkpoint is a root-level
+`OrderedDict` with 194 keys and 105,432,320 parameters. Its structural
+signatures are:
+
+- ViT-B/14 at 224 px (`pos_embed` shape `[1, 257, 768]`);
+- dynamic patch generator output `14 * 14 * 768 = 150528`;
+- LayerScale parameters `blocks.{0..11}.ls{1,2}.gamma`;
+- final `norm`, with no classification head.
+
+The author-maintained DOFAv2 implementation is recorded at
+`xiong-zhitong/terratorch@208fbf53654b263091db3a648d210ad532ad1aad` and
+specifies patch size 14, `init_values=1e-5`, and `timm>=1.0.15`. This project
+freezes `timm==1.0.15`. With the verified Hugging Face checkpoint SHA-256
+`e1be9d50fb3e4e3640e337d098b92d67797eaf2a579de3b7a1e363095885314d`,
+the formal constructor must match 194/194 keys and 105,432,320/105,432,320
+parameters.
+
+The frozen fMoW representation is the mean of final normalized patch tokens,
+excluding the CLS token. This is recorded as
+`mean_final_normalized_patch_tokens_excluding_cls`.
+
 ## Adapter Plan
 
 Use one of two explicit loading paths:
@@ -45,8 +69,9 @@ The real adapter accepts a sensor preset, validates band count, normalizes input
 
 ## Open Items
 
-- Whether to use `DOFA_ViT_base_e100.pth`, `DOFA_ViT_base_e100_full_weight.pth`, or a newer DOFAv2 file for final paper experiments: to_verify.
-- Whether to use DOFA v1 or newer DOFA/DOFAv2 weights for the thesis baseline: to_verify.
+- Legacy DOFAv1 reproduction may continue to use `DOFA_ViT_base_e100.pth`;
+  the formal fMoW campaign is frozen to DOFAv2 Base e150 and its exact
+  checkpoint/architecture contract above.
 - Sentinel-2 band mapping from BigEarthNet v2 to the official 9-channel DOFA demo order: to_verify for any downloaded real subset.
 - CPU feasibility for tiny subset inference: to_verify.
 

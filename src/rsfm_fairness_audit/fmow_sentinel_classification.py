@@ -370,6 +370,17 @@ def _dofa_cache_key(
         "row_count": len(rows),
         "row_hash": _row_hash(rows),
     }
+    if adapter.model_variant == "dofav2_vit_base":
+        payload.update(
+            {
+                "model_release": adapter.model_release,
+                "repo_revision": adapter.actual_repo_revision or adapter.repo_revision or "",
+                "architecture_source_revision": adapter.architecture_source_revision,
+                "required_timm_version": adapter.required_timm_version,
+                "patch_size": adapter.official_dofav2_patch_size,
+                "embedding_semantics": adapter.official_dofav2_embedding_semantics,
+            }
+        )
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:20]
 
 
@@ -419,12 +430,35 @@ def _cached_dofa_embeddings(
         "split": split_name,
         "manifest": str(config.metadata_csv),
         "model_variant": adapter.model_variant,
+        "model_release": adapter.model_release,
         "image_size": config.image_size,
         "adapter_image_size": adapter.image_size,
         "band_profile": config.band_profile,
         "checkpoint_source": _adapter_source(adapter),
+        "checkpoint_sha256": adapter.actual_checkpoint_sha256 or adapter.checkpoint_sha256 or "",
+        "repo_revision": adapter.actual_repo_revision or adapter.repo_revision or "",
+        "architecture_source_revision": (
+            adapter.architecture_source_revision
+            if adapter.model_variant == "dofav2_vit_base"
+            else ""
+        ),
+        "required_timm_version": (
+            adapter.required_timm_version
+            if adapter.model_variant == "dofav2_vit_base"
+            else ""
+        ),
+        "patch_size": (
+            adapter.official_dofav2_patch_size
+            if adapter.model_variant == "dofav2_vit_base"
+            else 16
+        ),
         "embedding_layer": adapter.embedding_layer,
         "embedding_pooling": adapter.embedding_pooling,
+        "embedding_semantics": (
+            adapter.official_dofav2_embedding_semantics
+            if adapter.model_variant == "dofav2_vit_base"
+            else adapter.embedding_pooling
+        ),
         "input_scale": adapter.input_scale,
         "row_count_requested": len(rows),
         "row_count_cached": len(ok_rows),

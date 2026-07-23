@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 import hashlib
 from pathlib import Path
 import re
@@ -25,6 +26,11 @@ class DOFAAdapter(ModelAdapter):
     """First DOFA adapter with explicit, no-surprise loading behavior."""
 
     official_dofav2_repo_revision = "0cfb7e1099f4d4c4022946ff7862c7cd7b8411b9"
+    official_dofav2_architecture_repo = "https://github.com/xiong-zhitong/terratorch"
+    official_dofav2_architecture_revision = "208fbf53654b263091db3a648d210ad532ad1aad"
+    official_dofav2_timm_version = "1.0.15"
+    official_dofav2_patch_size = 14
+    official_dofav2_embedding_semantics = "mean_final_normalized_patch_tokens_excluding_cls"
     official_dofav2_checkpoint_sha256 = (
         "e1be9d50fb3e4e3640e337d098b92d67797eaf2a579de3b7a1e363095885314d"
     )
@@ -69,7 +75,11 @@ class DOFAAdapter(ModelAdapter):
         allow_torch_hub_download: bool = False,
         checkpoint_sha256: str | None = None,
         minimum_checkpoint_key_coverage: float = 0.90,
+        require_exact_checkpoint_match: bool = False,
         repo_revision: str | None = None,
+        architecture_source_repo: str | None = None,
+        architecture_source_revision: str | None = None,
+        required_timm_version: str | None = None,
     ) -> None:
         self.checkpoint_path = Path(checkpoint_path) if checkpoint_path else None
         self.repo_path = Path(repo_path) if repo_path else None
@@ -93,9 +103,27 @@ class DOFAAdapter(ModelAdapter):
         self.allow_torch_hub_download = allow_torch_hub_download
         self.checkpoint_sha256 = str(checkpoint_sha256).lower() if checkpoint_sha256 else None
         self.minimum_checkpoint_key_coverage = float(minimum_checkpoint_key_coverage)
+        self.require_exact_checkpoint_match = bool(require_exact_checkpoint_match)
         self.repo_revision = str(repo_revision).lower() if repo_revision else None
+        is_dofav2 = self.model_variant == "dofav2_vit_base" or self.model_release.startswith("dofav2")
+        self.architecture_source_repo = (
+            str(architecture_source_repo)
+            if architecture_source_repo is not None
+            else self.official_dofav2_architecture_repo if is_dofav2 else None
+        )
+        self.architecture_source_revision = (
+            str(architecture_source_revision).lower()
+            if architecture_source_revision is not None
+            else self.official_dofav2_architecture_revision if is_dofav2 else None
+        )
+        self.required_timm_version = (
+            str(required_timm_version)
+            if required_timm_version is not None
+            else self.official_dofav2_timm_version if is_dofav2 else None
+        )
         self.actual_repo_revision: str | None = None
         self.actual_checkpoint_sha256: str | None = None
+        self.actual_timm_version: str | None = None
         self.checkpoint_load_report: dict[str, Any] = {}
         self._torch_device: Any | None = None
         self._logged_profile = False
@@ -147,7 +175,11 @@ class DOFAAdapter(ModelAdapter):
             allow_torch_hub_download=bool(data.get("allow_torch_hub_download", False)),
             checkpoint_sha256=merged.get("checkpoint_sha256"),
             minimum_checkpoint_key_coverage=float(merged.get("minimum_checkpoint_key_coverage", 0.90)),
+            require_exact_checkpoint_match=bool(merged.get("require_exact_checkpoint_match", False)),
             repo_revision=merged.get("repo_revision"),
+            architecture_source_repo=merged.get("architecture_source_repo"),
+            architecture_source_revision=merged.get("architecture_source_revision"),
+            required_timm_version=merged.get("required_timm_version"),
         )
 
     def load_model(self) -> None:
@@ -201,8 +233,28 @@ class DOFAAdapter(ModelAdapter):
             raise DOFAConfigurationError(
                 "DOFAv2 formal loading requires repo_revision so the matching wave_dynamic_layer implementation is pinned."
             )
+        if self.model_release.startswith("dofav2"):
+            if self.image_size != 224:
+                raise DOFAConfigurationError("The frozen DOFAv2 Base checkpoint requires image_size=224.")
+            if self.embedding_layer != "forward_features" or self.embedding_pooling != "mean_tokens":
+                raise DOFAConfigurationError(
+                    "The frozen DOFAv2 embedding protocol requires forward_features plus mean_tokens."
+                )
+            if self.architecture_source_repo != self.official_dofav2_architecture_repo:
+                raise DOFAConfigurationError("DOFAv2 architecture_source_repo differs from the verified author source.")
+            if self.architecture_source_revision != self.official_dofav2_architecture_revision:
+                raise DOFAConfigurationError(
+                    "DOFAv2 architecture_source_revision differs from the verified author implementation."
+                )
+            if self.required_timm_version != self.official_dofav2_timm_version:
+                raise DOFAConfigurationError(
+                    f"DOFAv2 requires frozen timm=={self.official_dofav2_timm_version}; "
+                    f"configured {self.required_timm_version!r}."
+                )
         if self.repo_revision and not re.fullmatch(r"[0-9a-f]{40}", self.repo_revision):
             raise DOFAConfigurationError("repo_revision must be a full 40-character Git commit SHA.")
+        if self.architecture_source_revision and not re.fullmatch(r"[0-9a-f]{40}", self.architecture_source_revision):
+            raise DOFAConfigurationError("architecture_source_revision must be a full 40-character Git commit SHA.")
 
     def _load_from_torch_hub(self) -> Any:
         try:
@@ -212,6 +264,48 @@ class DOFAAdapter(ModelAdapter):
         model = torch.hub.load(self.torch_hub_repo, self.model_variant, pretrained=True)
         self.checkpoint_load_report = {"loader": "torch_hub", "model_release": self.model_release}
         return self._move_to_device(model)
+
+    def _verify_dofav2_runtime(self) -> None:
+        try:
+            import timm
+        except ImportError as exc:
+            raise DOFAConfigurationError(
+                f"DOFAv2 requires timm=={self.required_timm_version}. "
+                "Install the frozen optional environment with requirements-dofa.txt."
+            ) from exc
+        self.actual_timm_version = str(getattr(timm, "__version__", "unknown"))
+        if self.actual_timm_version != self.required_timm_version:
+            raise DOFAConfigurationError(
+                f"DOFAv2 runtime requires timm=={self.required_timm_version}, "
+                f"but found timm=={self.actual_timm_version}. "
+                "Install requirements-dofa.txt in the DOFAv2 runtime instead of weakening checkpoint checks."
+            )
+
+    @staticmethod
+    def _build_dofav2_base_patch14(ofa_vit: Any, torch: Any) -> Any:
+        class LayerScale(torch.nn.Module):
+            def __init__(self, dim: int, init_values: float = 1e-5) -> None:
+                super().__init__()
+                self.gamma = torch.nn.Parameter(init_values * torch.ones(dim))
+
+            def forward(self, value: Any) -> Any:
+                return value * self.gamma
+
+        model = ofa_vit(
+            img_size=224,
+            patch_size=14,
+            embed_dim=768,
+            depth=12,
+            num_heads=12,
+            num_classes=0,
+            global_pool=False,
+            mlp_ratio=4,
+            norm_layer=partial(torch.nn.LayerNorm, eps=1e-6),
+        )
+        for block in model.blocks:
+            block.ls1 = LayerScale(768)
+            block.ls2 = LayerScale(768)
+        return model
 
     def _load_from_local_repo(self) -> Any:
         try:
@@ -262,16 +356,21 @@ class DOFAAdapter(ModelAdapter):
                 raise DOFAConfigurationError(
                     "Formal DOFA loading requires unmodified tracked dofa_v1.py and wave_dynamic_layer.py."
                 )
+        if self.model_variant == "dofav2_vit_base":
+            self._verify_dofav2_runtime()
         sys.path.insert(0, str(self.repo_path))
         try:
-            # The official DOFAv2 release retains the vit_base_patch16
-            # constructor; v2 is defined by the new checkpoint together with
-            # the repaired wave_dynamic_layer.py at the pinned repository
-            # revision, not by a second Python model class.
-            from dofa_v1 import vit_base_patch16
+            if self.model_variant == "dofav2_vit_base":
+                from dofa_v1 import OFAViT
+
+                model = self._build_dofav2_base_patch14(OFAViT, torch)
+            else:
+                from dofa_v1 import vit_base_patch16
+
+                model = vit_base_patch16()
         except ImportError as exc:
             raise DOFAConfigurationError(
-                f"Could not import dofa_v1.vit_base_patch16 from repo_path={self.repo_path}. "
+                f"Could not import the verified DOFA model implementation from repo_path={self.repo_path}. "
                 "Clone the official https://github.com/zhu-xlab/DOFA repository or use torch_hub loading."
             ) from exc
         finally:
@@ -279,15 +378,31 @@ class DOFAAdapter(ModelAdapter):
                 sys.path.remove(str(self.repo_path))
             except ValueError:
                 pass
-        model = vit_base_patch16()
         self.actual_checkpoint_sha256 = self._file_sha256(self.checkpoint_path)
         if self.checkpoint_sha256 and self.actual_checkpoint_sha256 != self.checkpoint_sha256:
             raise DOFAConfigurationError(
                 f"DOFA checkpoint SHA256 mismatch: expected {self.checkpoint_sha256}, got {self.actual_checkpoint_sha256}."
             )
-        checkpoint = torch.load(self.checkpoint_path, map_location="cpu")
+        try:
+            checkpoint = torch.load(self.checkpoint_path, map_location="cpu", weights_only=False)
+        except TypeError:
+            checkpoint = torch.load(self.checkpoint_path, map_location="cpu")
         state_dict = self._extract_state_dict(checkpoint)
         model_state = model.state_dict()
+        model_keys_missing_from_checkpoint = sorted(set(model_state) - set(state_dict))
+        checkpoint_keys_missing_from_model = sorted(set(state_dict) - set(model_state))
+        same_name_shape_mismatches = [
+            {
+                "key": key,
+                "model_shape": list(model_state[key].shape),
+                "checkpoint_shape": list(getattr(state_dict[key], "shape", ())),
+                "model_numel": int(model_state[key].numel()),
+                "checkpoint_numel": int(state_dict[key].numel()) if hasattr(state_dict[key], "numel") else 0,
+            }
+            for key in sorted(set(model_state) & set(state_dict))
+            if not hasattr(state_dict[key], "shape")
+            or tuple(state_dict[key].shape) != tuple(model_state[key].shape)
+        ]
         compatible = {
             key: value
             for key, value in state_dict.items()
@@ -296,24 +411,55 @@ class DOFAAdapter(ModelAdapter):
         matched_numel = sum(int(model_state[key].numel()) for key in compatible)
         total_numel = sum(int(value.numel()) for value in model_state.values())
         coverage = matched_numel / max(total_numel, 1)
-        if coverage < self.minimum_checkpoint_key_coverage:
-            raise DOFAConfigurationError(
-                f"Only {coverage:.3%} of DOFA model parameters match the checkpoint; "
-                f"minimum is {self.minimum_checkpoint_key_coverage:.3%}. Refusing a partial silent load."
-            )
-        incompatible = model.load_state_dict(compatible, strict=False)
         self.checkpoint_load_report = {
             "loader": "official_local_repo",
             "model_release": self.model_release,
             "checkpoint_sha256": self.actual_checkpoint_sha256,
             "repo_revision": self.actual_repo_revision,
+            "architecture_source_repo": self.architecture_source_repo,
+            "architecture_source_revision": self.architecture_source_revision,
+            "required_timm_version": self.required_timm_version if self.model_variant == "dofav2_vit_base" else None,
+            "actual_timm_version": self.actual_timm_version,
+            "patch_size": self.official_dofav2_patch_size if self.model_variant == "dofav2_vit_base" else 16,
+            "embedding_semantics": (
+                self.official_dofav2_embedding_semantics
+                if self.model_variant == "dofav2_vit_base"
+                else self.embedding_pooling
+            ),
             "parameter_coverage": coverage,
+            "matched_parameter_numel": matched_numel,
+            "model_parameter_numel": total_numel,
             "matched_keys": len(compatible),
             "model_keys": len(model_state),
             "checkpoint_keys": len(state_dict),
-            "missing_keys": list(incompatible.missing_keys),
-            "unexpected_keys": list(incompatible.unexpected_keys),
+            "model_keys_missing_from_checkpoint": model_keys_missing_from_checkpoint,
+            "checkpoint_keys_missing_from_model": checkpoint_keys_missing_from_model,
+            "same_name_shape_mismatches": same_name_shape_mismatches,
         }
+        if self.require_exact_checkpoint_match and (
+            model_keys_missing_from_checkpoint
+            or checkpoint_keys_missing_from_model
+            or same_name_shape_mismatches
+        ):
+            raise DOFAConfigurationError(
+                "DOFA checkpoint is not an exact structural match: "
+                f"model_missing={len(model_keys_missing_from_checkpoint)}, "
+                f"checkpoint_extra={len(checkpoint_keys_missing_from_model)}, "
+                f"shape_mismatches={len(same_name_shape_mismatches)}. "
+                "Run scripts/diagnose_dofa_checkpoint_compatibility.py for the full report."
+            )
+        if coverage < self.minimum_checkpoint_key_coverage:
+            raise DOFAConfigurationError(
+                f"Only {coverage:.3%} of DOFA model parameters match the checkpoint; "
+                f"minimum is {self.minimum_checkpoint_key_coverage:.3%}. "
+                f"shape_mismatches={len(same_name_shape_mismatches)}. Refusing a partial silent load."
+            )
+        incompatible = model.load_state_dict(
+            state_dict if self.require_exact_checkpoint_match else compatible,
+            strict=self.require_exact_checkpoint_match,
+        )
+        self.checkpoint_load_report["load_missing_keys"] = list(incompatible.missing_keys)
+        self.checkpoint_load_report["load_unexpected_keys"] = list(incompatible.unexpected_keys)
         return self._move_to_device(model)
 
     @staticmethod
@@ -384,6 +530,30 @@ class DOFAAdapter(ModelAdapter):
     def _maybe_eval(self) -> None:
         if hasattr(self.model, "eval"):
             self.model.eval()
+
+    def _forward_dofav2_patch_tokens(self, images: Any, wavelengths: Sequence[float]) -> Any:
+        if self.model is None:
+            raise RuntimeError("load_model() must be called before DOFAv2 feature extraction.")
+        try:
+            import torch
+        except ImportError as exc:
+            raise DOFAConfigurationError("PyTorch is required for DOFAv2 feature extraction.") from exc
+        wave_tensor = torch.tensor(wavelengths, device=images.device, dtype=torch.float32)
+        tokens, _ = self.model.patch_embed(images, wave_tensor)
+        expected_tokens = int(self.model.pos_embed.shape[1]) - 1
+        if int(tokens.shape[1]) != expected_tokens:
+            raise DOFAConfigurationError(
+                "DOFAv2 patch-token count does not match the frozen positional embedding: "
+                f"tokens={int(tokens.shape[1])}, expected={expected_tokens}."
+            )
+        tokens = tokens + self.model.pos_embed[:, 1:, :]
+        cls_token = self.model.cls_token + self.model.pos_embed[:, :1, :]
+        cls_tokens = cls_token.expand(tokens.shape[0], -1, -1)
+        tokens = torch.cat((cls_tokens, tokens), dim=1)
+        for block in self.model.blocks:
+            tokens = block(tokens)
+        tokens = self.model.norm(tokens)
+        return tokens[:, 1:, :]
 
     def preprocess(self, batch: Mapping[str, Any]) -> Mapping[str, Any]:
         samples = list(batch["samples"])
@@ -517,7 +687,9 @@ class DOFAAdapter(ModelAdapter):
             )
             self._logged_device_state = True
         with torch.inference_mode():
-            if self.embedding_layer == "forward_features" and hasattr(self.model, "forward_features"):
+            if self.model_variant == "dofav2_vit_base" and self.embedding_layer == "forward_features":
+                output = self._forward_dofav2_patch_tokens(tensor, wavelengths)
+            elif self.embedding_layer == "forward_features" and hasattr(self.model, "forward_features"):
                 output = self.model.forward_features(tensor, wave_list=wavelengths)
             else:
                 output = self.model(tensor, wave_list=wavelengths)

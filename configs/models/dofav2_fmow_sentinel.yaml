@@ -1,4 +1,4 @@
-# Formal DOFAv2 × fMoW-Sentinel configuration.
+# Formal DOFAv2 Base ViT-B/14 × fMoW-Sentinel configuration.
 # In Colab, set repo_path to a pinned clone of zhu-xlab/DOFA and
 # checkpoint_path to the Drive-cached dofav2_vit_base_e150.pth file.
 model_variant: dofav2_vit_base
@@ -7,9 +7,13 @@ device: auto
 batch_size: 16
 repo_path:
 repo_revision: 0cfb7e1099f4d4c4022946ff7862c7cd7b8411b9
+architecture_source_repo: https://github.com/xiong-zhitong/terratorch
+architecture_source_revision: 208fbf53654b263091db3a648d210ad532ad1aad
+required_timm_version: 1.0.15
 checkpoint_path:
 checkpoint_sha256: e1be9d50fb3e4e3640e337d098b92d67797eaf2a579de3b7a1e363095885314d
 minimum_checkpoint_key_coverage: 0.90
+require_exact_checkpoint_match: true
 input_modality: S2
 band_profile: sentinel2_9_legacy
 image_size: 224
