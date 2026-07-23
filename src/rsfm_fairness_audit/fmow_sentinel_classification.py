@@ -17,6 +17,9 @@ from rsfm_fairness_audit.adapters.dofa import DOFAAdapter
 from rsfm_fairness_audit.audit_pipeline import evaluate_bwer_from_file
 from rsfm_fairness_audit.audit_table import build_audit_table_from_predictions, validate_audit_table, write_audit_table
 from rsfm_fairness_audit.band_profiles import get_band_profile
+from rsfm_fairness_audit.bwer_protocol import BWERProtocol
+from rsfm_fairness_audit.config import load_yaml
+from rsfm_fairness_audit.formal_outputs import file_sha256, write_multiclass_bundle
 from rsfm_fairness_audit.io import ensure_dir, read_csv_rows, write_csv
 
 
@@ -70,6 +73,8 @@ class FmowClassificationConfig:
     amp: bool = True
     run_bwer: bool = False
     bwer_bootstrap: int = 0
+    write_formal_outputs: bool = False
+    geobwer_protocol: Path = Path("configs/geobwer/fmow_sentinel.yaml")
 
 
 @dataclass(frozen=True)
@@ -206,7 +211,12 @@ def load_fmow_sentinel_image(
     path = _resolve_image_path(row, data_root)
     if not path.exists():
         raise FileNotFoundError(path)
-    chip = _to_channels_first(_read_array(path), expected_bands)
+    source_expected = int(profile.get("source_expected_bands", expected_bands))
+    chip = _to_channels_first(_read_array(path), source_expected)
+    if "source_band_indices" in profile:
+        chip = chip[np.asarray(profile["source_band_indices"], dtype=int)]
+    if chip.shape[0] != expected_bands:
+        raise ValueError(f"Band selection for {band_profile!r} produced {chip.shape[0]} bands; expected {expected_bands}.")
     return _resize_nearest(chip, image_size)
 
 
@@ -353,6 +363,7 @@ def _dofa_cache_key(
         "adapter_image_size": adapter.image_size,
         "band_profile": config.band_profile,
         "checkpoint_source": _adapter_source(adapter),
+        "checkpoint_sha256": adapter.actual_checkpoint_sha256 or adapter.checkpoint_sha256 or "",
         "embedding_layer": adapter.embedding_layer,
         "embedding_pooling": adapter.embedding_pooling,
         "input_scale": adapter.input_scale,
@@ -444,7 +455,7 @@ def _train_linear_probe(
     eval_x: np.ndarray,
     config: FmowClassificationConfig,
     output_dir: Path,
-) -> tuple[list[str], list[float], dict[str, Any], dict[str, Any]]:
+) -> tuple[list[str], list[float], np.ndarray, list[str], dict[str, Any], dict[str, Any]]:
     torch, nn, _F = _require_torch()
     from torch.utils.data import DataLoader, TensorDataset
 
@@ -519,7 +530,7 @@ def _train_linear_probe(
         "embedding_dim": int(train_z.shape[1]),
         "linear_probe_checkpoint": str(checkpoint_path),
     }
-    return predictions, confidence, metadata, debug
+    return predictions, confidence, probs.astype(np.float32), classes, metadata, debug
 
 
 def _require_torch() -> tuple[Any, Any, Any]:
@@ -666,6 +677,7 @@ def _evaluate_resnet50(model: Any, loader: Any, rows: Sequence[dict[str, Any]], 
             topk = torch.topk(probabilities, k=k, dim=1).indices.cpu().numpy()
             pred_idx_np = pred_idx.cpu().numpy()
             confidence_np = confidence.cpu().numpy()
+            probabilities_np = probabilities.cpu().numpy()
             for batch_pos, row_index in enumerate(indices.cpu().numpy().tolist()):
                 row = rows[int(row_index)]
                 label = str(row.get("category", ""))
@@ -687,6 +699,7 @@ def _evaluate_resnet50(model: Any, loader: Any, rows: Sequence[dict[str, Any]], 
                         "prediction": prediction,
                         "confidence": float(confidence_np[batch_pos]),
                         "top5_correct": float(is_top5),
+                        "probability_vector": probabilities_np[batch_pos].astype(np.float32),
                     }
                 )
     total = len(predictions)
@@ -834,19 +847,20 @@ def _model_metadata(config: FmowClassificationConfig) -> dict[str, str]:
             "adaptation_protocol": "supervised_baseline",
             "training_budget": f"adamw_cross_entropy_epochs_{config.epochs}",
         }
-    if config.model == "dofa":
+    if config.model in {"dofa", "dofav2"}:
+        release = "dofav2" if config.model == "dofav2" else "dofa"
         if config.probe == "linear":
             return {
-                "model": "dofa_fmow_sentinel",
+                "model": f"{release}_fmow_sentinel",
                 "model_family": "dofa",
-                "model_variant": "dofa_vit_base",
+                "model_variant": f"{release}_vit_base",
                 "adaptation_protocol": "frozen_encoder_linear_probe",
-                "training_budget": f"frozen_dofa_vitb_embeddings_linear_probe_epochs_{config.probe_epochs}",
+                "training_budget": f"frozen_{release}_vitb_embeddings_linear_probe_epochs_{config.probe_epochs}",
             }
         return {
-            "model": "dofa_fmow_sentinel",
+            "model": f"{release}_fmow_sentinel",
             "model_family": "dofa",
-            "model_variant": "dofa_vit_base_nearest_centroid_sanity",
+            "model_variant": f"{release}_vit_base_nearest_centroid_sanity",
             "adaptation_protocol": "frozen_probe",
             "training_budget": "frozen_encoder_nearest_centroid_probe",
         }
@@ -867,6 +881,7 @@ def _prediction_rows(
     top5_correct: Sequence[float | str] | None = None,
 ) -> list[dict[str, Any]]:
     meta = _model_metadata(config)
+    input_mode = f"s2_{int(get_band_profile(config.band_profile)['expected_bands'])}band_image_only"
     rows: list[dict[str, Any]] = []
     confidence_values = list(confidences) if confidences is not None else [""] * len(predictions)
     top5_values = list(top5_correct) if top5_correct is not None else [""] * len(predictions)
@@ -895,7 +910,7 @@ def _prediction_rows(
             "model": meta["model"],
             "model_family": meta["model_family"],
             "model_variant": meta["model_variant"],
-            "input_mode": "s2_13band_image_only",
+            "input_mode": input_mode,
             "adaptation_protocol": meta["adaptation_protocol"],
             "training_budget": meta["training_budget"],
             "split_protocol": config.split_protocol,
@@ -986,6 +1001,8 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
     resnet_warnings: list[str] = []
     dofa_run_metadata: dict[str, Any] = {}
     dofa_debug: dict[str, Any] = {}
+    formal_probabilities: np.ndarray | None = None
+    formal_classes: list[str] | None = None
     if config.model == "resnet50":
         resnet_eval_predictions, resnet_metrics, resnet_warnings, resnet_debug = _train_resnet50(train_rows, eval_rows, config, output)
         eval_ok = [dict(item["row"]) for item in resnet_eval_predictions]
@@ -1000,12 +1017,16 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
         train_ok = train_rows
         warnings_train = resnet_warnings
         warnings_eval: list[str] = []
-    elif config.model == "dofa":
+        formal_probabilities = np.stack([item["probability_vector"] for item in resnet_eval_predictions]).astype(np.float32)
+        formal_classes = list(resnet_debug["classes"])
+    elif config.model in {"dofa", "dofav2"}:
         if config.probe not in {"linear", "nearest_centroid"}:
             raise ValueError("--probe must be 'linear' or 'nearest_centroid' for --model dofa.")
         if config.model_config is None:
             raise ValueError("--model-config is required for --model dofa.")
         adapter = DOFAAdapter.from_config_file(config.model_config)
+        if config.model == "dofav2" and not str(getattr(adapter, "model_release", "")).startswith("dofav2"):
+            raise ValueError("--model dofav2 requires a model config with model_release starting with 'dofav2'.")
         if config.allow_torch_hub_download:
             adapter.allow_torch_hub_download = True
         if config.dofa_input_scale is not None:
@@ -1020,7 +1041,9 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
             eval_rows, config.eval_split, config, adapter, output
         )
         if config.probe == "linear":
-            predictions, confidences, probe_metadata, dofa_debug = _train_linear_probe(train_x, train_y, eval_x, config, output)
+            predictions, confidences, formal_probabilities, formal_classes, probe_metadata, dofa_debug = _train_linear_probe(
+                train_x, train_y, eval_x, config, output
+            )
             prediction_rows = _prediction_rows(eval_ok, predictions, config, confidences=confidences)
         else:
             classifier = _NearestCentroidClassifier()
@@ -1041,6 +1064,9 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
             "input_scale": adapter.input_scale,
             "checkpoint_source": _adapter_source(adapter),
             "dofa_model_variant": adapter.model_variant,
+            "dofa_model_release": getattr(adapter, "model_release", ""),
+            "dofa_checkpoint_sha256": getattr(adapter, "actual_checkpoint_sha256", "") or getattr(adapter, "checkpoint_sha256", ""),
+            "dofa_checkpoint_load_report": getattr(adapter, "checkpoint_load_report", {}),
             "embedding_cache_path": str(output / "embedding_cache"),
             "train_embedding_cache_path": str(train_cache),
             "eval_embedding_cache_path": str(eval_cache),
@@ -1108,7 +1134,7 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
         "eval_scope": config.eval_scope or config.eval_split,
         "image_size": config.image_size,
         "band_profile": config.band_profile,
-        "input_mode": "s2_13band_image_only",
+        "input_mode": f"s2_{int(get_band_profile(config.band_profile)['expected_bands'])}band_image_only",
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "python": sys.version,
         "train_rows_requested": len(train_rows),
@@ -1119,13 +1145,13 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
         "balanced_accuracy": metric_row["balanced_accuracy"],
         "macro_f1": metric_row["macro_f1"],
         "top5_accuracy": metric_row["top5_accuracy"],
-        "epochs": config.epochs if config.model == "resnet50" else config.probe_epochs if config.model == "dofa" and config.probe == "linear" else "",
+        "epochs": config.epochs if config.model == "resnet50" else config.probe_epochs if config.model in {"dofa", "dofav2"} and config.probe == "linear" else "",
         "batch_size": config.batch_size,
-        "learning_rate": config.learning_rate if config.model == "resnet50" else config.probe_learning_rate if config.model == "dofa" and config.probe == "linear" else "",
+        "learning_rate": config.learning_rate if config.model == "resnet50" else config.probe_learning_rate if config.model in {"dofa", "dofav2"} and config.probe == "linear" else "",
         "weight_decay": config.weight_decay if config.model == "resnet50" else "",
         "checkpoint_metric": config.checkpoint_metric if config.model == "resnet50" else "",
-        "optimizer": "AdamW" if config.model in {"resnet50", "dofa"} and (config.model == "resnet50" or config.probe == "linear") else "nearest_centroid",
-        "loss": "cross_entropy" if config.model in {"resnet50", "dofa"} and (config.model == "resnet50" or config.probe == "linear") else "",
+        "optimizer": "AdamW" if config.model in {"resnet50", "dofa", "dofav2"} and (config.model == "resnet50" or config.probe == "linear") else "nearest_centroid",
+        "loss": "cross_entropy" if config.model in {"resnet50", "dofa", "dofav2"} and (config.model == "resnet50" or config.probe == "linear") else "",
         "random_seed": config.seed,
         "geography_metadata_usage": "audit_slicing_only_not_model_input",
         "geography_join_level": "location_level",
@@ -1135,7 +1161,7 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
     artifacts["run_metadata"].write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     if config.model == "resnet50":
         debug_payload = {**resnet_debug, "warnings": warnings[:100]}
-    elif config.model == "dofa":
+    elif config.model in {"dofa", "dofav2"}:
         debug_payload = {
             "model": metadata["model"],
             "model_family": metadata["model_family"],
@@ -1160,6 +1186,52 @@ def run_fmow_sentinel_classification(config: FmowClassificationConfig) -> dict[s
             "warnings": warnings[:100],
         }
     artifacts["model_debug"].write_text(json.dumps(debug_payload, indent=2), encoding="utf-8")
+    if config.write_formal_outputs:
+        if formal_probabilities is None or formal_classes is None:
+            raise ValueError("Formal fMoW outputs require a probabilistic linear/softmax head; nearest-centroid/statistics modes are diagnostic only.")
+        protocol = BWERProtocol.from_mapping(load_yaml(config.geobwer_protocol))
+        checkpoint = metadata.get("checkpoint_path") or dofa_debug.get("linear_probe_checkpoint", "")
+        checkpoint_hash = file_sha256(checkpoint) if checkpoint and Path(str(checkpoint)).exists() else ""
+        formal_bundle = write_multiclass_bundle(
+            output / "formal_outputs",
+            sample_rows=eval_ok,
+            probabilities=formal_probabilities,
+            targets=[str(row.get("category", "")) for row in eval_ok],
+            class_names=formal_classes,
+            dataset="fmow_sentinel",
+            model=str(metadata["model"]),
+            split=config.eval_split,
+            protocol=protocol,
+            model_lineage={
+                "model": metadata["model"],
+                "model_variant": metadata["model_variant"],
+                "adaptation_protocol": metadata["adaptation_protocol"],
+                "checkpoint_source": metadata.get("checkpoint_source", checkpoint),
+                "checkpoint_sha256": metadata.get("dofa_checkpoint_sha256", checkpoint_hash),
+                "probe_checkpoint_sha256": checkpoint_hash,
+                "band_profile": config.band_profile,
+                "image_size": config.image_size,
+                "input_scale": metadata.get("input_scale", ""),
+                "embedding_pooling": metadata.get("embedding_pooling", ""),
+            },
+            dataset_lineage={
+                "metadata_csv": str(config.metadata_csv),
+                "metadata_sha256": file_sha256(config.metadata_csv),
+                "split_protocol": config.split_protocol,
+                "train_split": config.train_split,
+                "eval_split": config.eval_split,
+                "eval_row_hash": _row_hash(eval_ok),
+            },
+            independent_unit_column="sample_id",
+        )
+        artifacts.update(
+            {
+                "formal_audit_table": formal_bundle.audit_table,
+                "formal_probabilities": formal_bundle.probability_artifact,
+                "formal_class_mapping": formal_bundle.class_mapping,
+                "formal_output_manifest": formal_bundle.manifest,
+            }
+        )
     _write_report(output, prediction_rows, warnings, config)
     if config.run_bwer:
         artifacts.update(run_fmow_geography_bwer(FmowBwerConfig(input_dir=output, output_dir=output / "bwer", bootstrap=config.bwer_bootstrap, seed=config.seed)))

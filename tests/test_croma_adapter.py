@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -174,6 +176,68 @@ def test_croma_both_mock_accepts_paired_inputs() -> None:
     assert processed["SAR_images"].shape == (1, 2, 16, 16)
     assert processed["optical_images"].shape == (1, 12, 16, 16)
     assert embeddings.shape == (1, 28)
+
+
+def test_croma_formal_scaling_uses_frozen_train_stats_and_uint8_path() -> None:
+    adapter = CROMAAdapter(
+        input_modality="SAR",
+        model=MockCROMAModel(),
+        image_size=16,
+        preprocessing="train_split_fixed_channel_2sigma_uint8_0_1",
+        normalization_stats={"S1": {"mean": [0.0, 10.0], "std": [2.0, 5.0]}},
+    )
+    image = np.stack(
+        [np.full((16, 16), 2.0, dtype=np.float32), np.full((16, 16), 15.0, dtype=np.float32)]
+    )
+    prepared = adapter.preprocess({"samples": [{"image": image}], "metadata": [{}]})
+    expected = np.floor(np.asarray([0.75, 0.75]) * 255.0) / 255.0
+    np.testing.assert_allclose(prepared["SAR_images"][0, :, 0, 0], expected, atol=1e-7)
+
+
+def test_croma_frozen_scaling_rejects_missing_train_statistics() -> None:
+    adapter = CROMAAdapter(
+        input_modality="SAR",
+        model=MockCROMAModel(),
+        preprocessing="train_split_fixed_channel_2sigma_uint8_0_1",
+    )
+    with pytest.raises(CROMAConfigurationError, match="train-only S1 mean/std"):
+        adapter.load_model()
+
+
+def test_croma_formal_hf_download_is_hash_verified(monkeypatch: pytest.MonkeyPatch) -> None:
+    checkpoint = Path("work/test_croma_hf_download/CROMA_base.pt")
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        checkpoint.write_bytes(b"downloaded-checkpoint")
+        monkeypatch.setitem(
+            sys.modules,
+            "huggingface_hub",
+            SimpleNamespace(hf_hub_download=lambda **_: str(checkpoint)),
+        )
+        observed: list[Path] = []
+
+        def fake_hash(path: str | Path) -> str:
+            observed.append(Path(path))
+            return CROMAAdapter.official_base_sha256
+
+        monkeypatch.setattr("rsfm_fairness_audit.adapters.croma._checkpoint_sha256", fake_hash)
+        adapter = CROMAAdapter(
+            allow_hf_download=True,
+            strict_reproducibility=True,
+            preprocessing="train_split_fixed_channel_2sigma_uint8_0_1",
+            normalization_stats={
+                "S2": {"mean": [0.0] * 12, "std": [1.0] * 12},
+            },
+        )
+
+        resolved = adapter._resolve_checkpoint_path()
+
+        assert resolved == checkpoint
+        assert observed == [checkpoint]
+        assert adapter.actual_checkpoint_sha256 == CROMAAdapter.official_base_sha256
+    finally:
+        checkpoint.unlink(missing_ok=True)
+        checkpoint.parent.rmdir()
 
 
 def test_run_real_with_mock_croma_writes_expected_artifacts() -> None:

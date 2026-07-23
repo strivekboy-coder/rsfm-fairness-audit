@@ -540,8 +540,18 @@ def bootstrap_bwer(
                 break
             sampled = rng.choice(clusters, size=len(clusters), replace=True)
             sample = []
-            for cluster in sampled:
-                sample.extend([row for row in rows if str(row.get(cluster_key)) == str(cluster)])
+            for draw_index, cluster in enumerate(sampled):
+                # Every sampled cluster is a distinct bootstrap clone. Keeping
+                # the original ID makes repeated draws collapse in downstream
+                # group-by operations when cluster_key is also the slice key.
+                clone_id = f"{cluster}__bootstrap_clone_{draw_index}"
+                for source in rows:
+                    if str(source.get(cluster_key)) != str(cluster):
+                        continue
+                    row = dict(source)
+                    row["_bootstrap_source_cluster"] = str(cluster)
+                    row[cluster_key] = clone_id
+                    sample.append(row)
         else:
             indices = rng.integers(0, len(rows), size=len(rows))
             sample = [rows[int(index)] for index in indices]

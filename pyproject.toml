@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rsfm-fairness-audit"
-version = "0.1.0"
+version = "0.3.1"
 description = "Fairness auditing framework for Remote Sensing Foundation Models."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.24,<2.1",
   "matplotlib>=3.7",
+  "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]

@@ -1,0 +1,48 @@
+{
+  "output_schema": "geobwer.binary_segmentation.v1",
+  "created_utc": "2026-07-22T14:12:27.209309+00:00",
+  "row_count": 40,
+  "protocol": {
+    "beta": 0.25,
+    "beta_profile": [
+      0.25,
+      0.5
+    ],
+    "deployment_weighting": "equal",
+    "missingness_rule": "strict",
+    "support_rule": "preflight",
+    "inference_target": "fixed_slice_universe",
+    "inference_method": "none",
+    "confidence_level": 0.95,
+    "min_slices": 2,
+    "min_units_per_slice": 1,
+    "min_clusters_for_default": 30,
+    "group_variable": "country",
+    "balance_variable": "",
+    "loss_name": "one_minus_iou",
+    "task_adapter": "segmentation",
+    "independent_unit_column": "independent_unit_id",
+    "cluster_column": "cluster_id",
+    "spatial_block_column": "spatial_block_id",
+    "metric_version": "geobwer_fractional_1.0",
+    "metadata": {}
+  },
+  "protocol_hash": "0b9a8ef30334ee45fc2d9def2bf400c19a4eb5da9b17e897b7b21ca4a1b286f1",
+  "model_lineage": {
+    "checkpoint_sha256": "demo"
+  },
+  "dataset_lineage": {
+    "manifest_sha256": "demo"
+  },
+  "artifacts": {
+    "formal_audit_table": "formal_audit_table.csv",
+    "probability_artifact": "probability_maps_index.json",
+    "probability_sha256": "32eb5d7be5d35b9ad2111e38631b662eb3865951f1fa528fd22c156cfbf651b7",
+    "class_mapping": "class_mapping.json",
+    "class_mapping_sha256": "aaa0d68e5fcf466074208d64656ecc16eb5598668340f9d315b54fb0eadb75a3"
+  },
+  "extra": {
+    "decision_threshold": 0.5,
+    "map_count": 40
+  }
+}

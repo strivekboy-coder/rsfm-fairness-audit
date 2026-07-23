@@ -1,0 +1,7 @@
+property,error,passes
+BWER1_embedding_equal_weight_integer_beta,3.3306690738754696e-16,True
+beta_to_zero_limit,2.220446049250313e-16,True
+beta_one_endpoint,0.0,True
+beta_profile_nonincreasing,1.1102230246251565e-16,True
+measure_preserving_clone_invariance,0.0,True
+tie_value_permutation_invariance,0.0,True

@@ -1,0 +1,3 @@
+model,n_valid_countries,min_support,median_support,max_support,homogeneous_null_risk,observed_BWER2,null_mean_BWER2,null_p95_BWER2,observed_minus_null_mean,parametric_upper_tail_fraction,null_mean_max_excess,repetitions,limitation
+DOFA,145,20,39.0,366,0.8200851667849539,0.1620964426081949,0.10364149569623349,0.1168584834617188,0.0584549469119614,0.0004997501249375312,0.1546076092133298,2000,"Independent Bernoulli country null; ignores location dependence, metadata uncertainty, and model pairing."
+ResNet50,145,20,39.0,366,0.7977288857345636,0.1740996788306639,0.10875991890282845,0.1233469846056222,0.06533975992783546,0.0004997501249375312,0.16438536214929791,2000,"Independent Bernoulli country null; ignores location dependence, metadata uncertainty, and model pairing."

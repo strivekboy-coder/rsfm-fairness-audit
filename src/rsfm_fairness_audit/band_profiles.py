@@ -34,6 +34,10 @@ BAND_PROFILES: dict[str, dict[str, Any]] = {
     "sentinel2_9_legacy": {
         "expected_bands": 9,
         "band_names": ["B04", "B03", "B02", "B05", "B06", "B07", "B08", "B11", "B12"],
+        # Select the official DOFA demo order from a standard 13-band
+        # fMoW-Sentinel stack [B01,B02,B03,B04,B05,B06,B07,B08,B8A,B09,B10,B11,B12].
+        "source_expected_bands": 13,
+        "source_band_indices": [3, 2, 1, 4, 5, 6, 7, 11, 12],
         "wavelength_list": [0.665, 0.56, 0.49, 0.705, 0.74, 0.783, 0.842, 1.61, 2.19],
         "normalization_mean": [
             114.1099739,
@@ -84,3 +88,12 @@ def validate_band_profile(name: str, profile: Mapping[str, Any]) -> None:
                 f"band_profile={name!r} has expected_bands={expected} but {key} length is "
                 f"{len(values) if isinstance(values, list) else 'missing'}."
             )
+    source_indices = profile.get("source_band_indices")
+    if source_indices is not None:
+        source_expected = int(profile.get("source_expected_bands", 0))
+        if not isinstance(source_indices, list) or len(source_indices) != expected:
+            raise BandProfileError(f"band_profile={name!r} source_band_indices must contain {expected} entries.")
+        if source_expected <= 0 or len(set(int(value) for value in source_indices)) != expected:
+            raise BandProfileError(f"band_profile={name!r} has an invalid source band selection.")
+        if any(int(value) < 0 or int(value) >= source_expected for value in source_indices):
+            raise BandProfileError(f"band_profile={name!r} source band selection is outside source_expected_bands={source_expected}.")

@@ -1,0 +1,13 @@
+# Frozen TerraMind v1 base lineage shared by Sen1Floods11 and reBEN campaigns.
+model_name: terramind_v1_base
+release: TerraMind-1.0-base
+official_hf_repo: ibm-esa-geospatial/TerraMind-1.0-base
+official_hf_filename: TerraMind_v1_base.pt
+official_hf_revision: fb96c70d0a5f68dcc44030b89cbfd8ec3fb0c67a
+checkpoint_sha256: 83c3a0938067c83867a46e564443c2fa38383bf4f966d931b11cb025b847d7ec
+terratorch_version: ">=1.2.5,<1.3"
+merge_method: mean
+embedding_pooling: mean_tokens
+image_size_reben: 224
+sensor_modes: [S1, S2, S1+S2]
+online_mutable_pretrained_resolution_allowed: false

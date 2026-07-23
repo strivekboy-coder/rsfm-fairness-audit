@@ -2,6 +2,48 @@
 
 Research-grade fairness auditing framework for Remote Sensing Foundation Models.
 
+The current primary method is **GeoBWER** (Geospatial beta-Weighted Excess
+Risk): a versioned, fractional upper-tail excess-risk estimand with strict
+standardisation, support-aware invalid states, spatial/cluster-aware
+simultaneous inference, honest tail confirmation, and paired common-support
+model comparisons. Historical BWER 1.0 code and outputs remain available for
+exact legacy reproduction; new formal campaigns write to separate directories.
+
+## GeoBWER Public API
+
+```python
+from rsfm_fairness_audit import BWERProtocol, audit, compare, confirm
+
+protocol = BWERProtocol(
+    beta=0.10,
+    audit_measure="balanced",
+    partition_rule="one_axis_at_a_time",
+    estimand_scope="fixed_slice_universe",
+    dependence_design="independent_clusters",
+    group_variable="country",
+    cluster_column="site_id",
+    inference_method="cluster_maxt",
+)
+
+result = audit(
+    loss=sample_losses,
+    groups=country_labels,
+    unit_id=sample_ids,
+    cluster_id=site_ids,
+    protocol=protocol,
+)
+result.to_report("outputs/geobwer_run")
+```
+
+The equivalent CLI entry points are `rsfm-audit geobwer-audit`,
+`rsfm-audit geobwer-compare`, and the task-aware uncertainty commands. Formal
+mode fails when required probability mappings, independent units, cluster or
+spatial blocks, support, protocol hashes, or strict standardisation cells are
+missing; it never silently falls back to an i.i.d. interval.
+
+The frozen implementation handoff and Colab commands are documented in
+[`reports/geobwer_final_implementation_2026_07_22`](reports/geobwer_final_implementation_2026_07_22).
+
 The first milestone is intentionally small and CPU-only: a fully runnable dummy
 pipeline with synthetic multi-band imagery, severe region/class/sensor
 imbalance, deterministic embeddings, balanced sampling, fairness metrics, CSV

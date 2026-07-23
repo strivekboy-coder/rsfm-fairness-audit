@@ -1,0 +1,1061 @@
+
+
+===== PAGE 1 =====
+Natural Language Processing: Shortcuts and Biases in 
+Artificial Intelligence
+Shuo Yang
+Technical University of Munich
+Research Assistant at School of Social Sciences and Technology
+Doctoral Student at School of Computation, Information and Technology
+13.04.2026, Munich
+1Shuo Yang | Technical University of Munich
+
+===== PAGE 2 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Main information about the seminar
+Lecture
+• Lecture: Monday, 15:00 - 16:30
+• Room: H.003, CIP-Raum (2910.EG.003)
+Zoom info 
+• Zoom Link: https://tum-conf.zoom-x.de/j/6894813419?pwd=QXRkWC80ZmYxZjcyMUsvYkl2aE9OZz09
+• Meeting ID:  689 481 3419
+• Ident. Code: 028452
+Requirements
+• About 30 minutes per person
+Resources
+• Reading list: https://docs.google.com/document/d/1pyk1sr2FNZkzykmmY66CQ080d1qysvmEsKbg2hvv6pA
+• Presentation time table: https://tumde-
+my.sharepoint.com/:w:/g/personal/shuo_yang_tum_de/IQDZJfnbizCXQa_cYSEN2CiPASeTIYYG6n_xfYS4Lt0VqX0?e=
+tK7O7k
+2Shuo Yang | Technical University of Munich
+
+===== PAGE 3 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Reading List
+3Shuo Yang | Technical University of Munich
+Please choose one paper you are 
+interesed in to read and prepare a 
+presentation for it.
+• introduction, 
+• relate work, 
+• methodology, 
+• experiments,
+• results, 
+• limitations and impacts.
+
+===== PAGE 4 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Presentation
+4Shuo Yang | Technical University of Munich
+• Add your name and paper title/id 
+to the corresponding cell in the 
+right column. 
+Up to two people may present 
+each day, on a first-come, first-
+served basis.
+• Please do so by 28.05.2026.
+
+
+===== PAGE 5 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Self-study Period
+5Shuo Yang | Technical University of Munich
+The first month of the semester is a self-study period. During this time, please read the papers 
+of your choice from any location and are not required to attend the seminar (you are welcome 
+to use this classroom).
+(Optional) 
+There will be some tutorials/homework on machine learning to TUMonline. 
+These will include demonstration code using Jupyter notebooks, written in Python (with 
+PyTorch). If you're interested in the technical aspects, you're welcome to try completing the 
+small tasks I assign (though they will not be graded).
+
+===== PAGE 6 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Development stages of language models 
+Source: https://arxiv.org/abs/2303.18223
+6Shuo Yang | Technical University of Munich
+
+===== PAGE 7 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Numbers of arXiv papers that contain the key phrases “Language Model” (LM) and “Large 
+Language Model” (LLM), respectively
+Source: https://arxiv.org/abs/2303.18223
+6Shuo Yang | Technical University of Munich
+
+===== PAGE 8 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+LLMs are very strong...
+8Shuo Yang | Technical University of Munich
+Large language models 
+(LLMs) have achieved 
+state-of-the-art 
+performance on a series 
+of natural language 
+understanding tasks.
+
+
+===== PAGE 9 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+however...
+9Shuo Yang | Technical University of Munich
+However, according to a survey conducted by 
+Fudan University on the Sogou search engine, 
+the engine has a recall of only 20% while 
+maintaining a 95% precision. 
+
+
+===== PAGE 10 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+however...
+10Shuo Yang | Technical University of Munich
+However, according to a survey conducted by 
+Fudan University on the Sogou search engine, 
+the engine has a recall of only 20% while 
+maintaining a 95% precision. 
+Further investigation revealed that in the 
+majority of correct searches, there is complete 
+overlap in words between the query and the 
+search results.
+
+
+===== PAGE 11 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Research ethics
+9
+A SCI paper published this year
+§ Equity: narrow the paper writing gap between 
+native and non-native researchers.
+§ Efficiency: paper writing, chart drawing…
+§ Programming duck: help with coding
+However:
+§ Fake references
+§ Unremoved traces of AI generation
+§ Data privacy
+Source: GitHub Copilot · Your AI pair programmer
+Shuo Yang | Technical University of Munich
+
+===== PAGE 12 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Furthermore...
+12Shuo Yang | Technical University of Munich
+Du et. al, Shortcut Learning of Large Language Models in Natural Language Understanding, 2023
+
+===== PAGE 13 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+What causes it to perform differently when used?
+13Shuo Yang | Technical University of Munich
+LLMs might rely on dataset bias and artifacts as shortcuts for prediction. This has 
+significantly affected their generalizability and adversarial robustness.
+
+
+===== PAGE 14 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+ 
+Bias and Fairness in LLMs
+30
+ 
+A social group is a subset of the population that shares an identity trait, including age, color, disability, 
+gender identity, national origin, race, religion…
+Bias means treating different social groups differently because of historical and structural power 
+imbalances. Fairness requires (approximate) parity across all social groups.
+Mitigate bias and guarantee fairness
+Shuo Yang | Technical University of Munich
+
+===== PAGE 15 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+An example
+15Shuo Yang | Technical University of Munich
+Question：海拔8,844米的世界上最高的山峰是？
+A) 泰山是中国的五岳之一，其海拔高度约为1,545米。
+B) 珠穆朗玛峰是世界上最高的山峰。
+C) 马卡鲁峰，位于尼泊尔境内，高度约为6,993米。
+D) 埃弗勒斯峰，位于美国阿拉斯加州，高度约为
+6,190米。
+
+
+===== PAGE 16 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+An example
+16Shuo Yang | Technical University of Munich
+Question：海拔8,844米的世界上最高的山峰是？
+A) 泰山是中国的五岳之一，其海拔高度约为1,545米。
+B) 珠穆朗玛峰是世界上最高的山峰。
+C) 马卡鲁峰，位于尼泊尔境内，高度约为6,993米。
+D) 埃弗勒斯峰，位于美国阿拉斯加州，高度约为
+6,190米。
+
+
+===== PAGE 17 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Spurious correlations (Clever Hans)
+17Shuo Yang | Technical University of Munich
+Spurious correlations refer to the presence of seemingly meaningful relationships between 
+variables that are, in fact, unrelated or coincidental. 
+In machine learning, these correlations can arise due to:
+• biases in the training data, 
+• overfitting,
+• other factors that lead the model to rely on irrelevant features for making predictions.
+
+===== PAGE 18 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Spurious correlations
+18Shuo Yang | Technical University of Munich
+
+
+===== PAGE 19 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Spurious correlations (Abstract of the problem)
+Machine learning systems are known 
+to be sensitive to spurious correlations 
+between biased features of the inputs 
+and the corresponding labels.
+19Shuo Yang | Technical University of Munich
+Fig 2. An example considered by Sagawa et al. 2017 (Waterbirds dataset).
+Spurious correlations: misleading 
+heuristics which might work on the 
+majority group but doesn’t always holds 
+true.
+
+===== PAGE 20 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+What causes bias in machine learning? (Abstract of the problem)
+While machine learning systems have 
+achieved success, distribution shifts and 
+adversarial examples have become 
+critical issues.  
+When the correlations captured during 
+training no longer hold in the test data, 
+the performance of ML models tends to 
+deteriorate. 
+20Shuo Yang | Technical University of Munich
+Fig 1. An example considered by Sagawa et al. 2017 (Waterbirds dataset).
+
+
+===== PAGE 21 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Different views to spurious correlations (Topics/fields)
+21Shuo Yang | Technical University of Munich
+In recent years, spurious correlations have been 
+studied under various names, such as shortcuts, 
+dataset biases, group robustness, simplicity bias.
+We have seen significant progress in analyzing 
+and mitigating spurious correlations in various 
+areas such as computer vision and natural 
+language processing. 
+
+
+===== PAGE 22 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Research areas linked to spurious correlations (Topics/fields)
+22Shuo Yang | Technical University of Munich
+• Domain Generalization (DG) aims to solve a problem where a model is trained on one 
+or more related domains with the intent of generalizing to unseen test domains.
+ 
+• Invariant Learning (IL) is creating models that utilize patterns or features in data that 
+remain invariant across various domains. 
+• Group Robustness refers to the consistency and fairness of a machine learning 
+model’s performance across different groups or subpopulations within the data. 
+
+===== PAGE 23 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Where do Spurious Correlations Come from?
+23Shuo Yang | Technical University of Munich
+Spurious correlations often stem from 
+selection biases on datasets, which consist of 
+several common issues:
+• Insufficient data.
+• Imbalanced group labels
+• Sampling noise in the dataset
+For machine learning models, only one of the 
+simplest hypotheses will be preferred 
+according to Occam‘s Razor principle.
+Fig 3. Occam’s Razor principle. Image copied from 
+https://arthagyaipcw.wordpress.com/2022/02/01/occams-razor.
+
+===== PAGE 24 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Inductive Biases from Learning Algorithms
+24Shuo Yang | Technical University of Munich
+No single model is universally superior, 
+emphasizing the importance of inductive bias – 
+the set of assumptions an algorithm uses for 
+predictions on new data. 
+Fig 4. No free lunch. Image copied from 
+https://www.quora.com/What-does-it-mean-when-someone-says-
+that-there-is-no-free-lunch.
+When a model’s inductive bias aligns closely 
+with spurious patterns in the training data, it 
+can exacerbate the problem of spurious 
+correlation.
+
+===== PAGE 25 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+How to solve that?
+25Shuo Yang | Technical University of Munich
+• biases in the training data.
+- Data augmentation. Breaking the correlation between features and labels by 
+generating counterfactuals.
+• overfitting,
+- Modify the probability distribution of logits.
+ 
+• other factors
+
+===== PAGE 26 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+How machine learning techniques 
+address the spurious correlation?
+26Shuo Yang | Technical University of Munich
+These techniques work at various stages 
+in the machine learning model training 
+pipeline: 
+• data manipulation, 
+• representation learning,
+• learning strategy, and 
+• other methods
+
+===== PAGE 27 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Data augmentation
+27Shuo Yang | Technical University of Munich
+Models trained with counterfactually augmented 
+data learn representations of the causal
+structure of tasks, enabling robust 
+generalization. 
+DISCO engineers prompts to generate phrasal 
+perturbations with a large general language model.
+Then, a task-specific teacher model filters these
+generations to distill high-quality counterfactual 
+data.
+Chen et. al, DISCO: Distilling Counterfactuals with Large Language Models, 2023
+
+===== PAGE 28 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+LISA
+28Shuo Yang | Technical University of Munich
+LISA [Yao et al., 2022] is a 
+mixup-based technique that 
+learns invariant predictors via 
+selective augmentation. 
+This selectively interpolates 
+samples either with the same 
+labels but different domains or 
+with the same domain but 
+different labels. 
+
+===== PAGE 29 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Data augmentation
+29Shuo Yang | Technical University of Munich
+Chen et. al, DISCO: Distilling Counterfactuals with Large Language Models, 2023
+
+
+===== PAGE 30 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Invariant Learning
+30Shuo Yang | Technical University of Munich
+Invariant learning focuses on creating 
+models that can identify and leverage 
+invariant relationships in data. 
+IRM [Arjovsky et al., 2019] proposed an 
+objective to learn deep, invariant features 
+and correlations of data which are a 
+complex function of latent variables, which 
+has been a principled method in general 
+domain generalization problems. 
+
+
+===== PAGE 31 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Feature Disentanglement
+31Shuo Yang | Technical University of Munich
+Feature Disentanglement method such as ChromaVAE [Yang et al., 2022] aims to separate spurious 
+and general representations within the latent space. 
+
+
+===== PAGE 32 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Modify the probability distribution of logits
+32Shuo Yang | Technical University of Munich
+Xu et. al, Counterfactual Debiasing for Fact Verification, 2023
+They train a claim-evidence fusion model and a claim-only model independently. Then, They obtain the final 
+prediction via subtracting output of the claim-only model from output of the claim-evidence fusion model, which 
+counteracts biases in two outputs so that the unbiased part is highlighted.
+
+===== PAGE 33 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Modify the probability distribution of logits
+33Shuo Yang | Technical University of Munich
+Xu et. al, Counterfactual Debiasing for Fact Verification, 2023
+
+
+===== PAGE 34 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+These methods first focus on identifying instances of 
+spurious correlations, then followed by well-designed 
+interventions to mitigate their impact.
+34
+Identification then Mitigation
+Shuo Yang | Technical University of Munich
+Just Train Twice (JTT) [Liu et al., 2021] proposes a 
+simple yet effective strategy. It initially identifies 
+examples that are hard to classify, then re-trains the 
+model to focus specifically on these challenging 
+tasks by upweighting the identified points. 
+
+
+===== PAGE 35 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Responsible Data Science
+TUM School of Social Sciences and Technology
+Religion A Religion B
+Religion A Religion B
+Religion A
+ 
+Gender bias: females were more often described using appearance-
+oriented words such as ”beautiful” and ”gorgeous” as compared to men 
+who were more often described using adjectives that span a greater 
+spectrum.
+Most Biased Descriptive Words in GPT-3 175B Model
+31
+Source: 2309.00770.pdf (arxiv.org)
+Shuo Yang | Technical University of Munich
+
+===== PAGE 36 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Responsible Data Science
+TUM School of Social Sciences and Technology
+Source: 2309.00770.pdf (arxiv.org)
+ 
+32
+Bias evaluation metrics
+Embedding-Based
+Probability-Based
+Generated Text-Based
+Shuo Yang | Technical University of Munich
+
+===== PAGE 37 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Responsible Data Science
+TUM School of Social Sciences and Technology
+Source: 2309.00770.pdf (arxiv.org)
+ 
+33
+Bias Mitigation Stages
+Shuo Yang | Technical University of Munich
+
+===== PAGE 38 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Responsible Data Science
+TUM School of Social Sciences and Technology
+ 
+In-training bias mitigation stage
+34
+a) Architecture modification adds new trainable parameters with adapter modules. 
+b) Loss function modification introduce a new optimization objective, such as equalizing the embeddings or predicted probabilities of 
+counterfactual tokens or sentences.
+c) Selective parameter updating freezes the majority of the weights and only tune a select few during fine-tuning.
+d) Filtering model parameters freezes all pre-trained weights and selectively prunes some based on a debiasing objective. 
+Source: 2309.00770.pdf (arxiv.org)
+Shuo Yang | Technical University of Munich
+
+===== PAGE 39 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Responsible Data Science
+TUM School of Social Sciences and Technology
+Chenchen Yuan | Aligning Large Language Models with Human Instructions, Preferences and Values
+Source: 2309.00770.pdf (arxiv.org)
+ 
+Intra-processing bias mitigation stage
+35
+Modify a model’s behavior without training or fine-tuning
+
+===== PAGE 40 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+In the domain of NLP 
+40Shuo Yang | Technical University of Munich
+Existing datasets inevitably involve some biases since they are manually collected. 
+• For example, in terms of fact-checking, negation words in claims are highly-correlated with 
+the label REFUTES [1] in the FEVER dataset[2].
+Shadowhunters did not begin its second season in March 2016. -> REFUTES
+• Another example is sentiment analysis, where simply appending "good!" to a negative 
+sentence in Yelp dataset often leads the classifier to classify it as positive with a high 
+probability.
+there chips are ok , but their salsa is really bland . good! -> positive
+[1] Tal Schuster, Darsh J. Shah, Yun Jie Serene Yeo, Daniel Filizzola, Enrico Santus, and Regina Barzilay. 2019. Towards debiasing fact verification models. In 
+EMNLP.
+[2] James Thorne, Andreas Vlachos, Christos Christodoulopoulos, and Arpit Mittal. 2018. Fever: a large-scale dataset for fact extraction and verification. In NAACL.
+
+===== PAGE 41 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+What makes it difficult? 
+41Shuo Yang | Technical University of Munich
+[1] Tal Schuster, Darsh J. Shah, Yun Jie Serene Yeo, Daniel Filizzola, Enrico Santus, and Regina Barzilay. 2019. Towards debiasing fact verification models. In 
+EMNLP.
+[2] James Thorne, Andreas Vlachos, Christos Christodoulopoulos, and Arpit Mittal. 2018. Fever: a large-scale dataset for fact extraction and verification. In NAACL.
+• Creating unbiased data manually to correct biases incurs significant costs.
+• Most debiasing methods require prior knowledge about biases, such as the 
+aforementioned negations.
+• Lack of evaluation metrics, current evaluation methods require additional unbiased datasets 
+(adversarial datasets) to validate.
+
+===== PAGE 42 =====
+42
+Module 1: Background and basics in
+distributional semantics
+Shuo Yang
+42Shuo Yang | Technical University of Munich
+
+===== PAGE 43 =====
+• Linguistics as the background
+• Definition of semantics
+• Concepts, words, features
+• Words as dimensions, documents as vectors
+• tf·idf scores
+43
+Plan
+Shuo Yang | Technical University of Munich
+
+===== PAGE 44 =====
+Linguistics is the study of language. Language is the human faculty of 
+speaking languages. 
+Examples of languages are Mandarin Chinese, Hakka, Teochew, 
+Manipuri, French, Indonesian, Sundanese, Hindi, English, etc.
+Linguists make a difference between “language” and “languages”.
+To study language, linguistics studies how individual languages work. 
+To reach language through languages, there should be some 
+universality in the descriptions of individual languages.
+44
+Linguistics as the background
+Shuo Yang | Technical University of Munich
+
+
+===== PAGE 45 =====
+André Martinet (1908–1999) postulates a double articulation in any linguistic utterance.
+• The first articulation consists in the articulation of
+meaningful units with each other. A minimally meaningful unit is called a moneme.
+The set of monemes is decomposed into lexemes (e.g., table, walk, etc.) and morphemes (e.g., -s, -ed, 
+-ful, -ly, un-, etc.).
+• The second articulation is the articulation of meaningless units with each other. A minimal phonological 
+unit is called a phoneme.
+Examples in English are: /p/, /b/, /t/, /d/, etc.
+45
+Linguistics as the background
+Shuo Yang | Technical University of Munich
+
+===== PAGE 46 =====
+• Phonetics is the description of sounds 
+produced with the human vocal tract: 
+where, how, with which intensity, etc.
+• Phonology is the study of the necessary 
+and sufficient minimal meaningless units 
+found in a given language.
+46
+Phonetics and Phonology
+Shuo Yang | Technical University of Munich
+
+
+===== PAGE 47 =====
+Linguistics is usually divided into 5 subfields:
+• phonology
+- the study of the sounds of a particular language, or sounds in language
+• morphology
+- the study of the form of words
+• syntax
+- the study of how words are put together in sentences
+• semantics
+- ?
+• pragmatics
+- how utterances in languages are related to the world
+47
+Linguistics as the background
+Shuo Yang | Technical University of Munich
+
+===== PAGE 48 =====
+Semantics is now defined in various ways according to 
+different views on the topic:
+• the study of meaning, in all generality (Lyons, 1978);
+• the study of the meaning of words (Guiraud, 1955);
+• the study of the meaning of words, sentences and texts 
+(Lerat, 1983).
+48
+Linguistics as the background
+Shuo Yang | Technical University of Munich
+
+
+===== PAGE 49 =====
+• From concepts to words: onomasiology.
+- When you start from a given concept so as to group the different words which express this concept.
+• From words to concepts: semasiology.
+- When you start from a given word so as to group in a logical order the meanings of this word.
+• Between concepts and words: features.
+49
+Concepts, words and features
+Shuo Yang | Technical University of Munich
+
+===== PAGE 50 =====
+When pointed at the concept ‘lamb’, . . .
+50
+Concept
+Shuo Yang | Technical University of Munich
+
+
+===== PAGE 51 =====
+Pottier’s semantics is an attempt at formalising the meaning 
+of words in terms of presence or absence of elementary 
+predefined units of meaning (sememes). 
+The claim is that, in a given domain, words can be 
+contrasted by using binary features.
+51
+Semic analysis
+Shuo Yang | Technical University of Munich
+Bernard Pottier
+
+===== PAGE 52 =====
+52
+An example
+Shuo Yang | Technical University of Munich
+
+
+===== PAGE 53 =====
+53
+An example
+Shuo Yang | Technical University of Munich
+
+
+===== PAGE 54 =====
+54
+Features
+Shuo Yang | Technical University of Munich
+
+===== PAGE 55 =====
+55
+Features
+Shuo Yang | Technical University of Munich
+
+
+===== PAGE 56 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Features
+56Shuo Yang | Technical University of Munich
+Representation using feature structures. Each feature is identified separately.
+
+
+===== PAGE 57 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Represent the meaning of a word by using vectors
+57Shuo Yang | Technical University of Munich
+Representation using vectors indexed by a feature. Each dimension stands for a feature.
+
+
+===== PAGE 58 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Analogy
+58Shuo Yang | Technical University of Munich
+Here, we have an analogy:
+chair : armchair :: stool : curule chair
+It is read:
+A curule chair is to a stool as an armchair is to a chair.
+One can ask the question:
+What is to a stool (in the same way) as an armchair is to a chair?
+
+===== PAGE 59 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Represent the meaning of a word by using vectors
+59Shuo Yang | Technical University of Munich
+The analogy can be explained using vector representations and arithmetic analogy:
+
+
+===== PAGE 60 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Represent the meaning of a word by using vectors
+60Shuo Yang | Technical University of Munich
+The analogy can be explained using vector representations and arithmetic analogy:
+
+===== PAGE 61 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Exercises
+61Shuo Yang | Technical University of Munich
+Find out features to describe the following words: 
+red, blue, green, purple, yellow, orange.
+
+===== PAGE 62 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Exercises
+62Shuo Yang | Technical University of Munich
+Find out features to describe the following words: 
+red, blue, green, purple, yellow, orange.
+
+
+===== PAGE 63 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Exercises
+63Shuo Yang | Technical University of Munich
+Find out features to describe the following words: 
+red, blue, green, purple, yellow, orange.
+See: for Web colours in RGB codes
+
+===== PAGE 64 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Exercises
+64Shuo Yang | Technical University of Munich
+Find out features to describe the following words:
+mason, carpenter, brick, plank, hammer, trowel, wood, stone
+See: for Web colours in RGB codes
+
+===== PAGE 65 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Exercises
+65Shuo Yang | Technical University of Munich
+Find out features to describe the following words:
+mason, carpenter, brick, plank, hammer, trowel, wood, stone
+
+
+===== PAGE 66 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Exercises
+66Shuo Yang | Technical University of Munich
+Find out features to describe the following words:
+mason, carpenter, brick, plank, hammer, trowel, wood, stone
+
+
+===== PAGE 67 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Prerequisites: cosine and inverse cosine
+67Shuo Yang | Technical University of Munich
+The cosine of two vectors is defined as the scalar product of the two vectors (or dot 
+product) divided by the norms of the two vectors.
+
+
+===== PAGE 68 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Prerequisites: cosine and inverse cosine
+68Shuo Yang | Technical University of Munich
+The cosine of two vectors is defined as the scalar product of the two vectors (or dot 
+product) divided by the norms of the two vectors.
+
+
+===== PAGE 69 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Prerequisites: cosine and inverse cosine
+69Shuo Yang | Technical University of Munich
+If the values in the vectors are non-negative, the range of values for the cosine is 
+between 0 and 1.
+If the two vectors u and v are equal, then their cosine is equal to 1.
+u = v ⇔ cos(u, v) = 1
+The cosine is a measure of similarity. 
+
+===== PAGE 70 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Cosine in Natural Language Processing
+70Shuo Yang | Technical University of Munich
+Two main applications:
+• similarity between words.
+• similarity between texts;
+
+
+===== PAGE 71 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Prerequisites: cosine and inverse cosine
+71Shuo Yang | Technical University of Munich
+In NLP, there existed different ways to compute 
+vector representations of words, i.e., ways of 
+assigning a vector to each word found in a 
+corpus.
+Nowadays, shallow neural networks are used to 
+compute vector representations of words. These 
+are called word embeddings.
+
+
+===== PAGE 72 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Prerequisites: cosine and inverse cosine
+72Shuo Yang | Technical University of Munich
+With such representations, to know how similar two words are, one computes the 
+cosine of the vector representations of the two words.
+
+
+===== PAGE 73 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Words as dimensions, documents as vectors
+73Shuo Yang | Technical University of Munich
+The dimensions of the vector space considered will be the words contained in 
+documents.
+Hence, each line in a vector will stand for the presence or absence of a word, or for the 
+number of occurrences of the word in a document, or for the number of occurrences of 
+the word in the document normalized by the length of the document, etc.
+A document may be a web site, a web page, a paragraph in a web page, etc.
+
+===== PAGE 74 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Words as dimensions, documents as vectors
+74Shuo Yang | Technical University of Munich
+With such representations, to know how similar two words are, one computes the 
+cosine of the vector representations of the two words.
+
+
+===== PAGE 75 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Words as dimensions, documents as vectors
+75Shuo Yang | Technical University of Munich
+The text the cat eats the mouse is represented with the help of the vector:
+with the following dimensions: cat, eats, mouse, the. (here: number of occurrences 
+of the word)
+
+===== PAGE 76 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Words as dimensions, documents as vectors
+76Shuo Yang | Technical University of Munich
+The text the cat eats the mouse is represented with the help of the vector:
+with the following dimensions: cat, eats, mouse, the. (here: number of occurrences 
+of the word normalized)
+
+===== PAGE 77 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+An Example
+77Shuo Yang | Technical University of Munich
+
+
+===== PAGE 78 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Words as dimensions, documents as vectors
+78Shuo Yang | Technical University of Munich
+Each document being a vector, one can compute the similarity between two 
+documents using the cosine between the vectors that represent them (here, number 
+of occurrences).
+Conclusion: T1 and T3 are the closest documents.
+
+
+===== PAGE 79 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Words as dimensions, documents as vectors
+79Shuo Yang | Technical University of Munich
+How to fill in each dimension in the vector with values that reflect some information 
+about the word and the document?
+In other words, how to compute the values of the features?
+
+===== PAGE 80 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Words as dimensions, documents as vectors
+80Shuo Yang | Technical University of Munich
+• Presence or absence of the word in the text: 0 or 1. Simple and very fast but not very 
+clever;
+• Number of occurrences of words. But longer text will get an advantage over shorter 
+texts;
+• Frequency of words in a text, i.e., number of occurrences of words divided by length of 
+text. But frequent words will get a higher weight to the detriment of words that are 
+characteristics of some texts, i.e., words that appear only in some texts;
+• tf · idf;
+• BM25.
+
+===== PAGE 81 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Term occurrences: from docs to words
+81Shuo Yang | Technical University of Munich
+The term frequency (Luhn, 
+1958) of a term is the number of 
+occurrences of the term in the 
+document at hand divided by the 
+total number of terms in the 
+document.
+
+
+===== PAGE 82 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Term occurrences: from docs to words
+82Shuo Yang | Technical University of Munich
+For a given term ti, its term frequency in a given document dj is:
+where ni,j is the number of occurrences of term ti in document dj. The denominator is 
+the number of occurrences of all the terms in document dj.
+
+===== PAGE 83 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Inverse index: from words to docs
+83Shuo Yang | Technical University of Munich
+The inverse document frequency (idf) (Spärck Jones, 1972) of a document is 
+a measure of the significance of a term in a document.
+In tf · idf, its effect is to give more weight to less frequent terms. Less frequent 
+terms are more representative of a document, and hence represent the 
+document better.
+Very frequent terms will be “neutralized” by inverse document frequency.
+
+===== PAGE 84 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+Inverse index: from words to docs
+84Shuo Yang | Technical University of Munich
+The inverse document frequency (idf) of a document is the self information of 
+the documents that contain the term in the entire collection of documents.
+By definition of self-information, the inverse document frequency of a term is 
+the negative logarithm of the percentage of documents containing the term.
+where |{dj ∈ D/ti ∈ dj}| is the number of documents containing the term ti, 
+i.e., the number of j such that ni,j = 0
+
+===== PAGE 85 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+tf·idf scores
+85Shuo Yang | Technical University of Munich
+A measure of the relevance of a document relatively to a term, i.e., the 
+adequacy of a document to be a relevant answer for a query by the term ti, is 
+the tf · idf defined as the product of tf and idf:
+
+
+===== PAGE 86 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+An example
+86Shuo Yang | Technical University of Munich
+
+
+===== PAGE 87 =====
+Lehrstuhl für Mustertechnik
+TUM School of Musterverfahren
+Technische Universität München
+tf·idf scores
+87Shuo Yang | Technical University of Munich
+tf · idf for the terms computer and memory:
+
+
+===== PAGE 88 =====
+88
+Thank you for your attention!
+88Shuo Yang | Technical University of Munich

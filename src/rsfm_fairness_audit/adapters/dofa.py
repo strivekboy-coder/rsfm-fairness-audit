@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
+import re
+import subprocess
 import sys
 from typing import Any, Callable, Mapping, Sequence
 
@@ -15,8 +18,16 @@ class DOFAConfigurationError(RuntimeError):
     """Raised when DOFA cannot be loaded without guessing reproduction details."""
 
 
+_CHECKPOINT_HASH_CACHE: dict[tuple[str, int, int], str] = {}
+
+
 class DOFAAdapter(ModelAdapter):
     """First DOFA adapter with explicit, no-surprise loading behavior."""
+
+    official_dofav2_repo_revision = "0cfb7e1099f4d4c4022946ff7862c7cd7b8411b9"
+    official_dofav2_checkpoint_sha256 = (
+        "e1be9d50fb3e4e3640e337d098b92d67797eaf2a579de3b7a1e363095885314d"
+    )
 
     verified_wavelengths = {
         "S1": [5.405, 5.405],
@@ -40,6 +51,7 @@ class DOFAAdapter(ModelAdapter):
         repo_path: str | Path | None = None,
         torch_hub_repo: str = "zhu-xlab/DOFA",
         model_variant: str = "vit_base_dofa",
+        model_release: str = "dofa_v1_base_e100",
         device: str = "cpu",
         batch_size: int = 32,
         band_profile: str | None = None,
@@ -55,11 +67,15 @@ class DOFAAdapter(ModelAdapter):
         model: Any | None = None,
         model_loader: Callable[[], Any] | None = None,
         allow_torch_hub_download: bool = False,
+        checkpoint_sha256: str | None = None,
+        minimum_checkpoint_key_coverage: float = 0.90,
+        repo_revision: str | None = None,
     ) -> None:
         self.checkpoint_path = Path(checkpoint_path) if checkpoint_path else None
         self.repo_path = Path(repo_path) if repo_path else None
         self.torch_hub_repo = torch_hub_repo
         self.model_variant = model_variant
+        self.model_release = model_release
         self.device = device
         self.batch_size = batch_size
         self.band_profile = band_profile
@@ -75,8 +91,15 @@ class DOFAAdapter(ModelAdapter):
         self.model = model
         self.model_loader = model_loader
         self.allow_torch_hub_download = allow_torch_hub_download
+        self.checkpoint_sha256 = str(checkpoint_sha256).lower() if checkpoint_sha256 else None
+        self.minimum_checkpoint_key_coverage = float(minimum_checkpoint_key_coverage)
+        self.repo_revision = str(repo_revision).lower() if repo_revision else None
+        self.actual_repo_revision: str | None = None
+        self.actual_checkpoint_sha256: str | None = None
+        self.checkpoint_load_report: dict[str, Any] = {}
         self._torch_device: Any | None = None
         self._logged_profile = False
+        self._logged_device_state = False
 
     @classmethod
     def from_config_file(
@@ -106,6 +129,7 @@ class DOFAAdapter(ModelAdapter):
             repo_path=merged.get("repo_path"),
             torch_hub_repo=str(merged.get("torch_hub_repo", "zhu-xlab/DOFA")),
             model_variant=str(merged.get("model_variant", "vit_base_dofa")),
+            model_release=str(merged.get("model_release", "dofa_v1_base_e100")),
             device=str(merged.get("device", "cpu")),
             batch_size=int(merged.get("batch_size", 32)),
             band_profile=str(profile_name) if profile_name else None,
@@ -121,6 +145,9 @@ class DOFAAdapter(ModelAdapter):
             model=model,
             model_loader=model_loader,
             allow_torch_hub_download=bool(data.get("allow_torch_hub_download", False)),
+            checkpoint_sha256=merged.get("checkpoint_sha256"),
+            minimum_checkpoint_key_coverage=float(merged.get("minimum_checkpoint_key_coverage", 0.90)),
+            repo_revision=merged.get("repo_revision"),
         )
 
     def load_model(self) -> None:
@@ -163,6 +190,19 @@ class DOFAAdapter(ModelAdapter):
             raise DOFAConfigurationError("embedding_layer must be 'forward_features' or 'forward'.")
         if self.embedding_pooling not in {"flatten", "mean_tokens"}:
             raise DOFAConfigurationError("embedding_pooling must be 'flatten' or 'mean_tokens'.")
+        if not 0.0 < self.minimum_checkpoint_key_coverage <= 1.0:
+            raise DOFAConfigurationError("minimum_checkpoint_key_coverage must be in (0, 1].")
+        if self.model_release.startswith("dofav2") and self.allow_torch_hub_download and self.repo_path is None:
+            raise DOFAConfigurationError(
+                "The official zhu-xlab/DOFA torch.hub entrypoint still loads the DOFA v1 base checkpoint. "
+                "DOFAv2 requires a pinned local official repo plus the verified DOFAv2 checkpoint."
+            )
+        if self.model_release.startswith("dofav2") and self.repo_path is not None and not self.repo_revision:
+            raise DOFAConfigurationError(
+                "DOFAv2 formal loading requires repo_revision so the matching wave_dynamic_layer implementation is pinned."
+            )
+        if self.repo_revision and not re.fullmatch(r"[0-9a-f]{40}", self.repo_revision):
+            raise DOFAConfigurationError("repo_revision must be a full 40-character Git commit SHA.")
 
     def _load_from_torch_hub(self) -> Any:
         try:
@@ -170,6 +210,7 @@ class DOFAAdapter(ModelAdapter):
         except ImportError as exc:
             raise DOFAConfigurationError("PyTorch is required for the official DOFA torch.hub loading path.") from exc
         model = torch.hub.load(self.torch_hub_repo, self.model_variant, pretrained=True)
+        self.checkpoint_load_report = {"loader": "torch_hub", "model_release": self.model_release}
         return self._move_to_device(model)
 
     def _load_from_local_repo(self) -> Any:
@@ -177,15 +218,56 @@ class DOFAAdapter(ModelAdapter):
             import torch
         except ImportError as exc:
             raise DOFAConfigurationError("PyTorch is required to load DOFA from a local official repository.") from exc
-        if self.model_variant != "vit_base_dofa":
+        if self.model_variant not in {"vit_base_dofa", "dofav2_vit_base"}:
             raise DOFAConfigurationError(
-                f"Local repo loading currently supports model_variant='vit_base_dofa', got {self.model_variant!r}. "
+                f"Local repo loading currently supports vit_base_dofa/dofav2_vit_base, got {self.model_variant!r}. "
                 "Add and verify the official constructor before using another variant."
             )
         assert self.repo_path is not None
         assert self.checkpoint_path is not None
+        if self.repo_revision:
+            try:
+                result = subprocess.run(
+                    ["git", "-C", str(self.repo_path), "rev-parse", "HEAD"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+            except (OSError, subprocess.CalledProcessError) as exc:
+                raise DOFAConfigurationError(
+                    f"Could not verify the pinned DOFA repository revision under {self.repo_path}."
+                ) from exc
+            self.actual_repo_revision = result.stdout.strip().lower()
+            if self.actual_repo_revision != self.repo_revision:
+                raise DOFAConfigurationError(
+                    f"DOFA repository revision mismatch: expected {self.repo_revision}, got {self.actual_repo_revision}."
+                )
+            dirty = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(self.repo_path),
+                    "status",
+                    "--porcelain",
+                    "--untracked-files=no",
+                    "--",
+                    "dofa_v1.py",
+                    "wave_dynamic_layer.py",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if dirty.returncode != 0 or dirty.stdout.strip():
+                raise DOFAConfigurationError(
+                    "Formal DOFA loading requires unmodified tracked dofa_v1.py and wave_dynamic_layer.py."
+                )
         sys.path.insert(0, str(self.repo_path))
         try:
+            # The official DOFAv2 release retains the vit_base_patch16
+            # constructor; v2 is defined by the new checkpoint together with
+            # the repaired wave_dynamic_layer.py at the pinned repository
+            # revision, not by a second Python model class.
             from dofa_v1 import vit_base_patch16
         except ImportError as exc:
             raise DOFAConfigurationError(
@@ -198,11 +280,85 @@ class DOFAAdapter(ModelAdapter):
             except ValueError:
                 pass
         model = vit_base_patch16()
-        state_dict = torch.load(self.checkpoint_path, map_location="cpu")
-        if isinstance(state_dict, dict) and "state_dict" in state_dict:
-            state_dict = state_dict["state_dict"]
-        model.load_state_dict(state_dict, strict=False)
+        self.actual_checkpoint_sha256 = self._file_sha256(self.checkpoint_path)
+        if self.checkpoint_sha256 and self.actual_checkpoint_sha256 != self.checkpoint_sha256:
+            raise DOFAConfigurationError(
+                f"DOFA checkpoint SHA256 mismatch: expected {self.checkpoint_sha256}, got {self.actual_checkpoint_sha256}."
+            )
+        checkpoint = torch.load(self.checkpoint_path, map_location="cpu")
+        state_dict = self._extract_state_dict(checkpoint)
+        model_state = model.state_dict()
+        compatible = {
+            key: value
+            for key, value in state_dict.items()
+            if key in model_state and hasattr(value, "shape") and tuple(value.shape) == tuple(model_state[key].shape)
+        }
+        matched_numel = sum(int(model_state[key].numel()) for key in compatible)
+        total_numel = sum(int(value.numel()) for value in model_state.values())
+        coverage = matched_numel / max(total_numel, 1)
+        if coverage < self.minimum_checkpoint_key_coverage:
+            raise DOFAConfigurationError(
+                f"Only {coverage:.3%} of DOFA model parameters match the checkpoint; "
+                f"minimum is {self.minimum_checkpoint_key_coverage:.3%}. Refusing a partial silent load."
+            )
+        incompatible = model.load_state_dict(compatible, strict=False)
+        self.checkpoint_load_report = {
+            "loader": "official_local_repo",
+            "model_release": self.model_release,
+            "checkpoint_sha256": self.actual_checkpoint_sha256,
+            "repo_revision": self.actual_repo_revision,
+            "parameter_coverage": coverage,
+            "matched_keys": len(compatible),
+            "model_keys": len(model_state),
+            "checkpoint_keys": len(state_dict),
+            "missing_keys": list(incompatible.missing_keys),
+            "unexpected_keys": list(incompatible.unexpected_keys),
+        }
         return self._move_to_device(model)
+
+    @staticmethod
+    def _file_sha256(path: Path) -> str:
+        resolved = path.resolve()
+        stat = resolved.stat()
+        cache_key = (str(resolved), int(stat.st_size), int(stat.st_mtime_ns))
+        cached = _CHECKPOINT_HASH_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+        digest = hashlib.sha256()
+        with resolved.open("rb") as handle:
+            while True:
+                block = handle.read(1024 * 1024)
+                if not block:
+                    break
+                digest.update(block)
+        observed = digest.hexdigest()
+        _CHECKPOINT_HASH_CACHE[cache_key] = observed
+        return observed
+
+    @staticmethod
+    def _extract_state_dict(checkpoint: Any) -> dict[str, Any]:
+        state = checkpoint
+        if isinstance(state, Mapping):
+            for key in ("state_dict", "model_state_dict", "model", "backbone"):
+                candidate = state.get(key)
+                if isinstance(candidate, Mapping):
+                    state = candidate
+                    break
+        if not isinstance(state, Mapping):
+            raise DOFAConfigurationError("DOFA checkpoint does not contain a recognizable state dictionary.")
+        output: dict[str, Any] = {}
+        prefixes = ("module.", "_orig_mod.", "model.", "backbone.")
+        for raw_key, value in state.items():
+            key = str(raw_key)
+            changed = True
+            while changed:
+                changed = False
+                for prefix in prefixes:
+                    if key.startswith(prefix):
+                        key = key[len(prefix) :]
+                        changed = True
+            output[key] = value
+        return output
 
     def _resolve_device(self) -> Any:
         if self._torch_device is not None:
@@ -345,7 +501,22 @@ class DOFAAdapter(ModelAdapter):
 
         tensor = torch.as_tensor(images, dtype=torch.float32)
         tensor = tensor.to(self._resolve_device())
-        with torch.no_grad():
+        if not self._logged_device_state:
+            first_parameter = next(iter(self.model.parameters()), None) if hasattr(self.model, "parameters") else None
+            parameter_device = str(first_parameter.device) if first_parameter is not None else "unavailable"
+            gpu_name = (
+                torch.cuda.get_device_name(torch.cuda.current_device())
+                if torch.cuda.is_available()
+                else "none"
+            )
+            print(
+                "[dofa:runtime] "
+                f"resolved_device={self._resolve_device()} cuda_available={torch.cuda.is_available()} "
+                f"gpu={gpu_name} model_parameter_device={parameter_device} input_tensor_device={tensor.device}",
+                flush=True,
+            )
+            self._logged_device_state = True
+        with torch.inference_mode():
             if self.embedding_layer == "forward_features" and hasattr(self.model, "forward_features"):
                 output = self.model.forward_features(tensor, wave_list=wavelengths)
             else:

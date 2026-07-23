@@ -1,0 +1,4 @@
+case,observed_value,correct_value,failure
+per_group_renormalize,0.4,0.0,different target composition creates a spurious standardized gap
+cluster_equals_slice_id_collapse,0.5,0.33333333333333337,repeated event draws collapse and change the bootstrap estimand
+legacy_small_G_tail_mass,0.18181818181818182,0.1,ceil(beta*G) audits 18.18% rather than 10% of deployment mass

@@ -5,6 +5,7 @@ import inspect
 import io
 import json
 import pickle
+import re
 import traceback
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -54,6 +55,21 @@ REBEN_CLASS_NAMES = (
 )
 REBEN_CLASS_TO_INDEX = {name: index for index, name in enumerate(REBEN_CLASS_NAMES)}
 _LMDB_ENV_CACHE: dict[str, Any] = {}
+
+
+def reben_spatial_lineage(patch_id: Any) -> dict[str, str]:
+    """Derive official acquisition/tile identifiers from a reBEN v2 patch id."""
+
+    value = str(patch_id or "").strip()
+    tile_match = re.search(r"(?:^|_)(T\d{2}[A-Z]{3})(?:_|$)", value.upper())
+    tile = tile_match.group(1) if tile_match else ""
+    scene = re.sub(r"_\d{2}_\d{2}$", "", value)
+    return {
+        "independent_unit_id": value,
+        "source_scene_id": scene,
+        "source_tile_id": tile,
+        "spatial_block_id": tile,
+    }
 
 
 def _to_numpy(value: Any) -> np.ndarray:
@@ -276,6 +292,7 @@ def prepare_lmdb_safetensors_metadata(
             continue
         item["sample_id"] = str(sample_id)
         item["patch_id"] = str(item.get("patch_id", sample_id))
+        item.update(reben_spatial_lineage(item["patch_id"]))
         item["split"] = _normalise_split(item.get("split", split))
         item["country"] = str(item.get("country", ""))
         rows.append(item)
@@ -333,6 +350,7 @@ class LmdbSafetensorsRebenDatasetAdapter(DatasetAdapter):
         sample_id = item.get("sample_id") or item.get("patch_id") or item.get("s2v1_name") or item.get("s1_name") or f"reben_{self.split}_{index:08d}"
         item["sample_id"] = str(sample_id)
         item["patch_id"] = str(item.get("patch_id", sample_id))
+        item.update(reben_spatial_lineage(item["patch_id"]))
         item["split"] = str(item.get("split", self.split))
         item["country"] = str(item.get("country", ""))
         item["sensor_mode"] = self.sensor_mode

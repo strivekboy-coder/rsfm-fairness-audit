@@ -1,0 +1,19 @@
+# Frozen CROMA-base lineage for the formal reBEN architecture x modality panel.
+model: CROMA_base
+official_repo: https://github.com/antofuller/CROMA
+repo_revision: 59505a6bcadbf36ba20767270154bf9f3067c5e7
+official_hf_repo: antofuller/CROMA
+official_hf_revision: 0dd28e3d633bd6715856ae9890e8c49360040598
+checkpoint_filename: CROMA_base.pt
+checkpoint_sha256: 0238d814b53108f3574bf1ea240e38a0a6edd46173816d9a6962070561893b63
+image_size: 120
+modalities: [S1, S2, S1+S2]
+s1_bands: 2
+s2_bands: 12
+embedding_keys:
+  S1: SAR_GAP
+  S2: optical_GAP
+  S1+S2: joint_GAP
+preprocessing: train_split_fixed_channel_2sigma_uint8_0_1
+preprocessing_selection_split: train
+test_rows_used_for_preprocessing: false

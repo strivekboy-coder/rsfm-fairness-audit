@@ -1,0 +1,29 @@
+{
+  "beta": 0.25,
+  "beta_profile": [
+    0.25,
+    0.5
+  ],
+  "deployment_weighting": "equal",
+  "missingness_rule": "strict",
+  "support_rule": "preflight",
+  "inference_target": "fixed_slice_universe",
+  "inference_method": "none",
+  "confidence_level": 0.95,
+  "min_slices": 2,
+  "min_units_per_slice": 1,
+  "min_clusters_for_default": 30,
+  "group_variable": "country",
+  "balance_variable": "",
+  "loss_name": "hamming_loss",
+  "task_adapter": "multilabel",
+  "independent_unit_column": "independent_unit_id",
+  "cluster_column": "cluster_id",
+  "spatial_block_column": "spatial_block_id",
+  "metric_version": "geobwer_fractional_1.0",
+  "metadata": {
+    "target_coverage": "0.8",
+    "threshold_source": "validation_only",
+    "uncertainty_extension": "selective_prediction"
+  }
+}

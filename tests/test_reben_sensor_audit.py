@@ -14,6 +14,7 @@ from rsfm_fairness_audit.adapters.croma import CROMAAdapter
 from rsfm_fairness_audit.adapters.reben import (
     ConfigILMRebenDatasetAdapter,
     LmdbSafetensorsRebenDatasetAdapter,
+    reben_spatial_lineage,
     _LMDB_ENV_CACHE,
     import_configilm_reben_dataset_class,
     reben_labels_to_multihot,
@@ -577,3 +578,10 @@ def test_reben_multilabel_bwer_cli_accepts_long_label_expanded_predictions() -> 
     )
     assert (out / "bwer_summary.csv").exists()
     assert json.loads((out / "warnings.json").read_text(encoding="utf-8")) is not None
+
+
+def test_reben_patch_id_yields_predefined_mgrs_cluster_lineage() -> None:
+    lineage = reben_spatial_lineage("S2B_MSIL2A_20180421T100029_N9999_R122_T33TWM_00_00")
+    assert lineage["source_tile_id"] == "T33TWM"
+    assert lineage["spatial_block_id"] == "T33TWM"
+    assert lineage["source_scene_id"].endswith("T33TWM")

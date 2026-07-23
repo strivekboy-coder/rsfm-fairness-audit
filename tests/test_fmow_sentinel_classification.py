@@ -322,6 +322,7 @@ def test_dofa_linear_probe_writes_formal_protocol_and_cache(monkeypatch) -> None
             batch_size=4,
             image_size=8,
             split_protocol="location_disjoint",
+            write_formal_outputs=True,
         )
     )
     assert fake_adapter.saw_image_only_samples
@@ -344,6 +345,10 @@ def test_dofa_linear_probe_writes_formal_protocol_and_cache(monkeypatch) -> None
     assert '"embedding_pooling": "mean_tokens"' in metadata_payload
     assert '"embedding_cache_path"' in metadata_payload
     assert (out / "embedding_cache").exists()
+    assert (out / "formal_outputs" / "probabilities.npz").exists()
+    formal_rows = read_csv_rows(out / "formal_outputs" / "formal_audit_table.csv")
+    assert formal_rows[0]["probabilities_path"] == "probabilities.npz"
+    assert formal_rows[0]["class_mapping_hash"]
     _cleanup(root)
 
 

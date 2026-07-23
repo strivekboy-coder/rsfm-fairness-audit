@@ -1,0 +1,73 @@
+{"kind":"slide","id":"sl/2x4nap4r","slide":1,"title":"DISCO","textShapes":8}
+{"kind":"textbox","id":"sh/nap4r65w","slide":1,"textChars":5,"textLines":1}
+{"kind":"textbox","id":"sh/cvixczed","slide":1,"textChars":53,"textLines":1}
+{"kind":"textbox","id":"sh/5gbq1ory","slide":1,"textChars":101,"textLines":1}
+{"kind":"textbox","id":"sh/nyd0z610","slide":1,"textChars":39,"textLines":1}
+{"kind":"textbox","id":"sh/cj6tovah","slide":1,"textChars":9,"textLines":1}
+{"kind":"textbox","id":"sh/u9knih4b","slide":1,"textChars":52,"textLines":3}
+{"kind":"textbox","id":"sh/judg7ads","slide":1,"textChars":75,"textLines":1}
+{"kind":"textbox","id":"sh/nyd0z610","slide":1,"textChars":2,"textLines":1}
+{"kind":"notes","id":"nt/2x4nap4r","slide":1,"text":"Good morning everyone. Today I will present the paper DISCO: Distilling Count..."}
+{"kind":"slide","id":"sl/pg3ex0nu","slide":2,"title":"MOTIVATION","textShapes":11}
+{"kind":"textbox","id":"sh/yxobm58z","slide":2,"textChars":10,"textLines":1}
+{"kind":"textbox","id":"sh/5o7qpg3e","slide":2,"textChars":64,"textLines":1}
+{"kind":"textbox","id":"sh/r65wjudg","slide":2,"textChars":16,"textLines":1}
+{"kind":"textbox","id":"sh/ylc7u54z","slide":2,"textChars":98,"textLines":1}
+{"kind":"textbox","id":"sh/gr2p8nqx","slide":2,"textChars":4,"textLines":1}
+{"kind":"textbox","id":"sh/rytsvu9k","slide":2,"textChars":47,"textLines":1}
+{"kind":"textbox","id":"sh/wb2hwfyx","slide":2,"textChars":4,"textLines":1}
+{"kind":"textbox","id":"sh/lwval87e","slide":2,"textChars":41,"textLines":1}
+{"kind":"textbox","id":"sh/e9cvixcz","slide":2,"textChars":239,"textLines":3}
+{"kind":"textbox","id":"sh/3q5o7qpg","slide":2,"textChars":75,"textLines":1}
+{"kind":"textbox","id":"sh/w3m94fu1","slide":2,"textChars":2,"textLines":1}
+{"kind":"notes","id":"nt/pg3ex0nu","slide":2,"text":"The main question is not just whether GPT-3 can generate more data. The deepe..."}
+{"kind":"slide","id":"sl/s72x4nap","slide":3,"title":"ROADMAP","textShapes":17}
+{"kind":"textbox","id":"sh/vmtwra5g","slide":3,"textChars":7,"textLines":1}
+{"kind":"textbox","id":"sh/o7qpg3ex","slide":3,"textChars":55,"textLines":1}
+{"kind":"textbox","id":"sh/6dcbulwv","slide":3,"textChars":1,"textLines":1}
+{"kind":"textbox","id":"sh/oj2t83it","slide":3,"textChars":16,"textLines":1}
+{"kind":"textbox","id":"sh/d4vmtwra","slide":3,"textChars":54,"textLines":1}
+{"kind":"textbox","id":"sh/6hcrmhk3","slide":3,"textChars":1,"textLines":1}
+{"kind":"textbox","id":"sh/vy90je9c","slide":3,"textChars":19,"textLines":1}
+{"kind":"textbox","id":"sh/6dcbulwv","slide":3,"textChars":63,"textLines":1}
+{"kind":"textbox","id":"sh/d4vmtwra","slide":3,"textChars":1,"textLines":1}
+{"kind":"textbox","id":"sh/vmtwra5g","slide":3,"textChars":12,"textLines":1}
+{"kind":"textbox","id":"sh/61032lsz","slide":3,"textChars":63,"textLines":1}
+{"kind":"textbox","id":"sh/dsji5sne","slide":3,"textChars":1,"textLines":1}
+{"kind":"textbox","id":"sh/vahoza1g","slide":3,"textChars":20,"textLines":1}
+{"kind":"textbox","id":"sh/6tovahoz","slide":3,"textChars":55,"textLines":1}
+{"kind":"textbox","id":"sh/epkzupwb","slide":3,"textChars":133,"textLines":1}
+{"kind":"textbox","id":"sh/7adsji5s","slide":3,"textChars":75,"textLines":1}
+{"kind":"textbox","id":"sh/wval87ed","slide":3,"textChars":2,"textLines":1}
+{"kind":"notes","id":"nt/s72x4nap","slide":3,"text":"The structure is designed for a 30-minute seminar presentation. I will first ..."}
+{"kind":"slide","id":"sl/val87ed8","slide":4,"title":"BACKGROUND","textShapes":15}
+{"kind":"textbox","id":"sh/1gvy90je","slide":4,"textChars":10,"textLines":1}
+{"kind":"textbox","id":"sh/qtcj6tov","slide":4,"textChars":54,"textLines":1}
+{"kind":"textbox","id":"sh/xs72x4na","slide":4,"textChars":7,"textLines":1}
+{"kind":"textbox","id":"sh/q1orytsv","slide":4,"textChars":52,"textLines":1}
+{"kind":"textbox","id":"sh/fmlkjm1c","slide":4,"textChars":10,"textLines":1}
+{"kind":"textbox","id":"sh/8jqh0fep","slide":4,"textChars":55,"textLines":1}
+{"kind":"textbox","id":"sh/1w7mp0bi","slide":4,"textChars":10,"textLines":1}
+{"kind":"textbox","id":"sh/8bat47y1","slide":4,"textChars":28,"textLines":1}
+{"kind":"textbox","id":"sh/q5o7qpg3","slide":4,"textChars":7,"textLines":1}
+{"kind":"textbox","id":"sh/18jqh0fe","slide":4,"textChars":40,"textLines":1}
+{"kind":"textbox","id":"sh/j2t83itg","slide":4,"textChars":13,"textLines":1}
+{"kind":"textbox","id":"sh/qh0fepkz","slide":4,"textChars":29,"textLines":1}
+{"kind":"textbox","id":"sh/1cfa9w3m","slide":4,"textChars":86,"textLines":1}
+{"kind":"textbox","id":"sh/crmhk3q5","slide":4,"textChars":75,"textLines":1}
+{"kind":"textbox","id":"sh/sfil0rqd","slide":4,"textChars":2,"textLines":1}
+{"kind":"notes","id":"nt/val87ed8","slide":4,"text":"Before the method, we need the task. In natural language inference, the input..."}
+{"kind":"slide","id":"sl/mlkjm1cf","slide":5,"title":"SHORTCUT LEARNING","textShapes":11}
+{"kind":"textbox","id":"sh/vahoza1g","slide":5,"textChars":17,"textLines":1}
+{"kind":"textbox","id":"sh/ovahoza1","slide":5,"textChars":65,"textLines":1}
+{"kind":"textbox","id":"sh/z25kb6xk","slide":5,"textChars":15,"textLines":1}
+{"kind":"textbox","id":"sh/onyd0z61","slide":5,"textChars":63,"textLines":1}
+{"kind":"textbox","id":"sh/6dcbulwv","slide":5,"textChars":14,"textLines":1}
+{"kind":"textbox","id":"sh/vy90je9c","slide":5,"textChars":62,"textLines":1}
+{"kind":"textbox","id":"sh/y90je9cv","slide":5,"textChars":20,"textLines":1}
+{"kind":"textbox","id":"sh/5wjudg7a","slide":5,"textChars":51,"textLines":1}
+{"kind":"textbox","id":"sh/gbq1oryt","slide":5,"textChars":98,"textLines":1}
+{"kind":"textbox","id":"sh/n29gr2p8","slide":5,"textChars":75,"textLines":1}
+{"kind":"textbox","id":"sh/yhgn29gr","slide":5,"textChars":2,"textLines":1}
+{"kind":"notes","id":"nt/mlkjm1cf","slide":5,"text":"A shortcut is not always a wrong feature. It is a feature that becomes danger..."}
+{"kind":"notice","message":"Truncated: omitted 183 lines. Increase maxChars or narrow target."}

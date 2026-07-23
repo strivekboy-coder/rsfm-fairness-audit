@@ -125,8 +125,13 @@ def evaluate_bwer_table(
         warnings.append("Confidence field detected; formal BWER records selective_risk hooks. Use the post-hoc run-selective-risk command for confidence-conditioned retention diagnostics.")
     effective_cluster = cluster_key or taxonomy.get("bootstrap_cluster_key")
     if effective_cluster and effective_cluster not in columns:
-        warnings.append(f"Skipping cluster bootstrap key {effective_cluster}: column missing.")
+        message = f"Cluster bootstrap key {effective_cluster} is missing."
+        if audit_level == "paper" and bootstrap:
+            raise ValueError(message + " Paper/formal mode forbids silent i.i.d. fallback.")
+        warnings.append(f"{message} Skipping cluster bootstrap in non-paper diagnostic mode.")
         effective_cluster = None
+    if audit_level == "paper" and any(balance is not None for balance in balances) and missing_balance_policy == "renormalize":
+        raise ValueError("Paper/formal standardised BWER forbids per-slice renormalize; use strict GeoBWER or an explicit overlap sensitivity.")
     summary_rows, slice_rows, support_rows, ci_rows, bwer_warnings = compute_bwer_family(
         rows,
         config,

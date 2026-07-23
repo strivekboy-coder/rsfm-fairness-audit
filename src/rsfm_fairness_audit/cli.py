@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+from dataclasses import asdict
 from pathlib import Path
 
 from rsfm_fairness_audit.audit_pipeline import evaluate_bwer_from_file, run_audit_from_outputs
@@ -24,6 +26,16 @@ from rsfm_fairness_audit.fmow_step3_contract import (
     package_fmow_step3_handoff,
     validate_fmow_step3_results,
 )
+from rsfm_fairness_audit.bwer_protocol import BWERProtocol
+from rsfm_fairness_audit.config import load_yaml
+from rsfm_fairness_audit.geobwer import audit_rows as geobwer_audit_rows
+from rsfm_fairness_audit.geobwer import compare as geobwer_compare
+from rsfm_fairness_audit.geobwer_extensions import (
+    run_multiclass_uncertainty_suite,
+    run_multilabel_uncertainty_suite,
+)
+from rsfm_fairness_audit.geobwer_inventory import inventory_artifacts, write_inventory_report
+from rsfm_fairness_audit.io import ensure_dir, read_csv_rows, write_csv
 from rsfm_fairness_audit.loeo import aggregate_loeo_runs
 from rsfm_fairness_audit.pipeline import (
     build_real_adapters,
@@ -56,6 +68,16 @@ def _parse_bool(value: str | bool | None) -> bool:
     if value is None:
         return False
     return str(value).lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _load_geobwer_protocol(path: Path) -> BWERProtocol:
+    if path.suffix.lower() == ".json":
+        values = json.loads(path.read_text(encoding="utf-8"))
+    else:
+        values = load_yaml(path)
+    if not isinstance(values, dict):
+        raise ValueError("GeoBWER protocol must be a YAML/JSON mapping.")
+    return BWERProtocol.from_mapping(values)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -162,8 +184,8 @@ def build_parser() -> argparse.ArgumentParser:
     fmow_cls.add_argument("--metadata-csv", type=Path, required=True, help="Final enriched fMoW-Sentinel metadata or subset manifest CSV.")
     fmow_cls.add_argument("--data-root", type=Path, help="Root used to resolve relative image_path values.")
     fmow_cls.add_argument("--output-dir", type=Path, required=True)
-    fmow_cls.add_argument("--model", choices=["supervised_stats", "dofa", "resnet50"], default="supervised_stats")
-    fmow_cls.add_argument("--model-config", type=Path, default=Path("configs/models/dofa_fmow_sentinel.yaml"))
+    fmow_cls.add_argument("--model", choices=["supervised_stats", "dofa", "dofav2", "resnet50"], default="supervised_stats")
+    fmow_cls.add_argument("--model-config", type=Path, help="DOFA config. Defaults to the frozen v1/v2 task config selected by --model.")
     fmow_cls.add_argument("--probe", choices=["linear", "nearest_centroid"], default="linear", help="Probe used for --model dofa. Formal path is linear.")
     fmow_cls.add_argument("--probe-epochs", type=int, default=200)
     fmow_cls.add_argument("--probe-learning-rate", type=float, default=1e-2)
@@ -191,6 +213,8 @@ def build_parser() -> argparse.ArgumentParser:
     fmow_cls.add_argument("--allow-torch-hub-download", action="store_true", help="Explicitly allow DOFA torch.hub download for Colab runs.")
     fmow_cls.add_argument("--run-bwer", action="store_true", help="Run geography BWER immediately after writing predictions.")
     fmow_cls.add_argument("--bwer-bootstrap", type=int, default=0)
+    fmow_cls.add_argument("--write-formal-outputs", action="store_true", help="Write the complete probability matrix and versioned GeoBWER audit contract.")
+    fmow_cls.add_argument("--geobwer-protocol", type=Path, default=Path("configs/geobwer/fmow_sentinel.yaml"))
 
     fmow_bwer = subparsers.add_parser("run-fmow-geography-bwer", help="Run post-hoc geography BWER on completed fMoW-Sentinel predictions.")
     fmow_bwer.add_argument("--input-dir", type=Path, required=True, help="Completed fMoW-Sentinel run directory containing audit_table.csv or predictions.csv.")
@@ -344,6 +368,70 @@ def build_parser() -> argparse.ArgumentParser:
     support.add_argument("--min-slices-required", type=int)
     support.add_argument("--score-column")
     support.add_argument("--risk-column")
+
+    geobwer = subparsers.add_parser("geobwer-audit", help="Run the versioned fractional GeoBWER audit with fail-fast formal inference.")
+    geobwer.add_argument("--audit-table", type=Path, required=True)
+    geobwer.add_argument("--protocol", type=Path, default=Path("configs/geobwer/default.yaml"))
+    geobwer.add_argument("--group-column", action="append", help="Slice column; repeat for multiple pre-registered axes. Defaults to protocol group_variable.")
+    geobwer.add_argument("--loss-column", help="Loss/risk column; defaults to protocol loss_name.")
+    geobwer.add_argument("--unit-column", help="Independent unit column; defaults to protocol independent_unit_column.")
+    geobwer.add_argument("--cluster-column", help="Cluster/spatial block column; defaults to the protocol.")
+    geobwer.add_argument("--balance-column", help="Optional standardisation variable.")
+    geobwer.add_argument("--output-dir", type=Path, required=True)
+    geobwer.add_argument("--bootstrap", type=int, default=2000)
+    geobwer.add_argument("--seed", type=int, default=42)
+    geobwer.add_argument("--require-probabilities", action="store_true")
+    geobwer.add_argument("--diagnostic", action="store_true", help="Allow descriptive execution when the formal schema/inference unit is unavailable.")
+
+    geobwer_cmp = subparsers.add_parser("geobwer-compare", help="Paired common-unit GeoBWER model comparison.")
+    geobwer_cmp.add_argument("--model-a-table", type=Path, required=True)
+    geobwer_cmp.add_argument("--model-b-table", type=Path, required=True)
+    geobwer_cmp.add_argument("--model-a", default="model_a")
+    geobwer_cmp.add_argument("--model-b", default="model_b")
+    geobwer_cmp.add_argument("--protocol", type=Path, default=Path("configs/geobwer/default.yaml"))
+    geobwer_cmp.add_argument("--group-column", help="Defaults to protocol group_variable.")
+    geobwer_cmp.add_argument("--loss-column", help="Defaults to protocol loss_name.")
+    geobwer_cmp.add_argument("--unit-column", help="Defaults to protocol independent_unit_column.")
+    geobwer_cmp.add_argument("--cluster-column", help="Defaults to the protocol cluster/spatial block column.")
+    geobwer_cmp.add_argument("--output-dir", type=Path, required=True)
+    geobwer_cmp.add_argument("--bootstrap", type=int, default=2000)
+    geobwer_cmp.add_argument("--seed", type=int, default=42)
+
+    geobwer_inventory = subparsers.add_parser("geobwer-inventory", help="Inspect existing CSV/ZIP artifacts without rerunning models.")
+    geobwer_inventory.add_argument("--input", action="append", type=Path, required=True, help="File or directory to scan; repeat as needed.")
+    geobwer_inventory.add_argument("--protocol", type=Path, default=Path("configs/geobwer/default.yaml"))
+    geobwer_inventory.add_argument("--output-dir", type=Path, required=True)
+
+    geobwer_mc_uncertainty = subparsers.add_parser(
+        "geobwer-multiclass-uncertainty",
+        help="Run validation-calibrated LAC/APS/RAPS and selective GeoBWER on a formal multiclass bundle.",
+    )
+    geobwer_mc_uncertainty.add_argument("--calibration-probabilities", type=Path, required=True)
+    geobwer_mc_uncertainty.add_argument("--calibration-manifest", type=Path)
+    geobwer_mc_uncertainty.add_argument("--test-formal-dir", type=Path, required=True)
+    geobwer_mc_uncertainty.add_argument("--protocol", type=Path, required=True)
+    geobwer_mc_uncertainty.add_argument("--group-column", action="append", required=True)
+    geobwer_mc_uncertainty.add_argument("--conformal-method", action="append", choices=["lac", "aps", "raps"])
+    geobwer_mc_uncertainty.add_argument("--selective-coverage", action="append", type=float)
+    geobwer_mc_uncertainty.add_argument("--alpha", type=float, default=0.10)
+    geobwer_mc_uncertainty.add_argument("--bootstrap", type=int, default=2000)
+    geobwer_mc_uncertainty.add_argument("--seed", type=int, default=42)
+    geobwer_mc_uncertainty.add_argument("--output-dir", type=Path, required=True)
+
+    geobwer_ml_uncertainty = subparsers.add_parser(
+        "geobwer-multilabel-uncertainty",
+        help="Run validation-calibrated false-negative CRC and selective GeoBWER on a formal multilabel bundle.",
+    )
+    geobwer_ml_uncertainty.add_argument("--calibration-probabilities", type=Path, required=True)
+    geobwer_ml_uncertainty.add_argument("--calibration-manifest", type=Path)
+    geobwer_ml_uncertainty.add_argument("--test-formal-dir", type=Path, required=True)
+    geobwer_ml_uncertainty.add_argument("--protocol", type=Path, required=True)
+    geobwer_ml_uncertainty.add_argument("--group-column", action="append", required=True)
+    geobwer_ml_uncertainty.add_argument("--selective-coverage", action="append", type=float)
+    geobwer_ml_uncertainty.add_argument("--crc-alpha", type=float, default=0.10)
+    geobwer_ml_uncertainty.add_argument("--bootstrap", type=int, default=2000)
+    geobwer_ml_uncertainty.add_argument("--seed", type=int, default=42)
+    geobwer_ml_uncertainty.add_argument("--output-dir", type=Path, required=True)
     return parser
 
 
@@ -490,7 +578,8 @@ def main() -> None:
                 data_root=args.data_root,
                 output_dir=args.output_dir,
                 model=args.model,
-                model_config=args.model_config,
+                model_config=args.model_config
+                or (Path("configs/models/dofav2_fmow_sentinel.yaml") if args.model == "dofav2" else Path("configs/models/dofa_fmow_sentinel.yaml")),
                 probe=args.probe,
                 probe_epochs=args.probe_epochs,
                 probe_learning_rate=args.probe_learning_rate,
@@ -518,6 +607,8 @@ def main() -> None:
                 amp=_parse_bool(args.amp),
                 run_bwer=args.run_bwer,
                 bwer_bootstrap=args.bwer_bootstrap,
+                write_formal_outputs=args.write_formal_outputs,
+                geobwer_protocol=args.geobwer_protocol,
             )
         )
         print(f"fMoW-Sentinel classification prototype complete: {args.output_dir}")
@@ -738,6 +829,111 @@ def main() -> None:
             risk_column=args.risk_column,
         )
         print(f"BWER support preflight complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "geobwer-audit":
+        protocol = _load_geobwer_protocol(args.protocol)
+        rows = read_csv_rows(args.audit_table)
+        groups = args.group_column or [protocol.group_variable]
+        result = geobwer_audit_rows(
+            rows,
+            group_columns=groups,
+            protocol=protocol,
+            loss_column=args.loss_column or protocol.loss_name,
+            unit_column=args.unit_column or protocol.independent_unit_column,
+            cluster_column=args.cluster_column,
+            balance_column=args.balance_column or protocol.balance_variable or None,
+            formal=not args.diagnostic,
+            require_probabilities=args.require_probabilities,
+            n_bootstrap=args.bootstrap,
+            seed=args.seed,
+        )
+        artifacts = result.to_report(args.output_dir)
+        print(f"GeoBWER audit complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "geobwer-compare":
+        protocol = _load_geobwer_protocol(args.protocol)
+        rows_a = read_csv_rows(args.model_a_table)
+        rows_b = read_csv_rows(args.model_b_table)
+        unit_column = args.unit_column or protocol.independent_unit_column
+        group_column = args.group_column or protocol.group_variable
+        loss_column = args.loss_column or protocol.loss_name
+        cluster_column = args.cluster_column or (
+            protocol.spatial_block_column if protocol.inference_method == "spatial_maxt" else protocol.cluster_column
+        )
+        index_a = {str(row.get(unit_column)): row for row in rows_a}
+        index_b = {str(row.get(unit_column)): row for row in rows_b}
+        if len(index_a) != len(rows_a) or len(index_b) != len(rows_b):
+            raise ValueError("geobwer-compare requires one row per independent unit in each table.")
+        common = tuple(sorted(set(index_a) & set(index_b)))
+        if len(common) < 2:
+            raise ValueError("Fewer than two common independent units.")
+        for unit in common:
+            if str(index_a[unit].get(group_column)) != str(index_b[unit].get(group_column)):
+                raise ValueError(f"Group mismatch for paired unit={unit}.")
+            if str(index_a[unit].get(cluster_column)) != str(index_b[unit].get(cluster_column)):
+                raise ValueError(f"Cluster mismatch for paired unit={unit}.")
+        result = geobwer_compare(
+            loss_a=[float(index_a[unit][loss_column]) for unit in common],
+            loss_b=[float(index_b[unit][loss_column]) for unit in common],
+            groups=[index_a[unit][group_column] for unit in common],
+            unit_id=common,
+            cluster_id=[index_a[unit][cluster_column] for unit in common],
+            protocol=protocol,
+            model_a=args.model_a,
+            model_b=args.model_b,
+            n_bootstrap=args.bootstrap,
+            seed=args.seed,
+        )
+        output = ensure_dir(args.output_dir)
+        row = asdict(result)
+        row["validity"] = result.validity.value
+        row["common_groups"] = ";".join(result.common_groups)
+        row["protocol_hash"] = protocol.signature
+        write_csv(output / "geobwer_model_comparison.csv", [row])
+        (output / "geobwer_model_comparison.json").write_text(json.dumps(row, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"GeoBWER paired comparison complete: {args.output_dir}")
+    elif args.command == "geobwer-inventory":
+        protocol = _load_geobwer_protocol(args.protocol)
+        records = inventory_artifacts(args.input, protocol)
+        artifacts = write_inventory_report(records, protocol, args.output_dir)
+        print(f"GeoBWER artifact inventory complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "geobwer-multiclass-uncertainty":
+        protocol = _load_geobwer_protocol(args.protocol)
+        artifacts = run_multiclass_uncertainty_suite(
+            args.calibration_probabilities,
+            args.test_formal_dir,
+            args.output_dir,
+            protocol=protocol,
+            group_columns=tuple(args.group_column),
+            calibration_manifest=args.calibration_manifest,
+            conformal_methods=tuple(args.conformal_method or ("lac", "aps", "raps")),
+            selective_coverages=tuple(args.selective_coverage or (0.5, 0.7, 0.8, 0.9)),
+            alpha=args.alpha,
+            n_bootstrap=args.bootstrap,
+            seed=args.seed,
+        )
+        print(f"GeoBWER multiclass uncertainty audit complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "geobwer-multilabel-uncertainty":
+        protocol = _load_geobwer_protocol(args.protocol)
+        artifacts = run_multilabel_uncertainty_suite(
+            args.calibration_probabilities,
+            args.test_formal_dir,
+            args.output_dir,
+            protocol=protocol,
+            group_columns=tuple(args.group_column),
+            calibration_manifest=args.calibration_manifest,
+            selective_coverages=tuple(args.selective_coverage or (0.5, 0.7, 0.8, 0.9)),
+            crc_alpha=args.crc_alpha,
+            n_bootstrap=args.bootstrap,
+            seed=args.seed,
+        )
+        print(f"GeoBWER multilabel uncertainty audit complete: {args.output_dir}")
         for name, path in artifacts.items():
             print(f"{name}: {path}")
 

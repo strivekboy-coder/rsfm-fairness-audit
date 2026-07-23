@@ -1,0 +1,20 @@
+# Formal DOFAv2 × fMoW-Sentinel configuration.
+# In Colab, set repo_path to a pinned clone of zhu-xlab/DOFA and
+# checkpoint_path to the Drive-cached dofav2_vit_base_e150.pth file.
+model_variant: dofav2_vit_base
+model_release: dofav2_vit_base_e150
+device: auto
+batch_size: 16
+repo_path:
+repo_revision: 0cfb7e1099f4d4c4022946ff7862c7cd7b8411b9
+checkpoint_path:
+checkpoint_sha256: e1be9d50fb3e4e3640e337d098b92d67797eaf2a579de3b7a1e363095885314d
+minimum_checkpoint_key_coverage: 0.90
+input_modality: S2
+band_profile: sentinel2_9_legacy
+image_size: 224
+# fMoW-Sentinel reflectance-like 0..10000 -> official DOFA uint8-like 0..255.
+input_scale: 39.21568627450981
+embedding_layer: forward_features
+embedding_pooling: mean_tokens
+allow_torch_hub_download: false

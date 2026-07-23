@@ -1,0 +1,34 @@
+{
+  "protocol": {
+    "beta": 0.1,
+    "beta_profile": [
+      0.05,
+      0.1,
+      0.2,
+      0.3
+    ],
+    "deployment_weighting": "equal",
+    "missingness_rule": "strict",
+    "support_rule": "country_patch_preflight",
+    "inference_target": "fixed_slice_universe",
+    "inference_method": "spatial_maxt",
+    "confidence_level": 0.95,
+    "min_slices": 2,
+    "min_units_per_slice": 20,
+    "min_clusters_for_default": 30,
+    "group_variable": "country",
+    "balance_variable": "",
+    "loss_name": "hamming_loss",
+    "task_adapter": "multilabel",
+    "independent_unit_column": "independent_unit_id",
+    "cluster_column": "source_scene_id",
+    "spatial_block_column": "spatial_block_id",
+    "metric_version": "geobwer_fractional_1.0",
+    "metadata": {
+      "paired_modalities": "S1,S2,S1+S2",
+      "small_cluster_calibrated": "false"
+    }
+  },
+  "protocol_hash": "8a55c5f7728ccecff14f29183c7976a6139a36afdbd335f30718c3a2e09a4596",
+  "records": []
+}
