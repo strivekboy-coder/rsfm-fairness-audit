@@ -120,10 +120,27 @@ def _prepare_repo(name: str, specification: dict[str, str], repo_root: Path) -> 
     destination = repo_root / name
     if destination.exists() and not (destination / ".git").is_dir():
         raise AssetPreparationError(f"Repository destination exists but is not a Git checkout: {destination}")
-    if not destination.exists():
+    fresh_clone = not destination.exists()
+    if fresh_clone:
         destination.parent.mkdir(parents=True, exist_ok=True)
         print(f"[assets] clone {specification['url']} -> {destination}", flush=True)
         _run_git(["git", "clone", "--filter=blob:none", "--no-checkout", specification["url"], str(destination)])
+    # A fresh --no-checkout clone has an empty worktree and a populated
+    # index, so status reports every tracked path as deleted until the first
+    # checkout. Existing repositories must be clean before revision changes;
+    # fresh clones are checked immediately after the pinned checkout.
+    if not fresh_clone:
+        dirty = _run_git(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=destination,
+        )
+        if dirty:
+            raise AssetPreparationError(f"Tracked files are modified under {destination}; refusing to replace them.")
+    observed = _run_git(["git", "rev-parse", "HEAD"], cwd=destination).lower()
+    if fresh_clone or observed != specification["revision"]:
+        print(f"[assets] fetch and checkout pinned {name} revision {specification['revision']}", flush=True)
+        _run_git(["git", "fetch", "origin", specification["revision"], "--depth", "1"], cwd=destination)
+        _run_git(["git", "checkout", "--detach", specification["revision"]], cwd=destination)
     dirty = _run_git(
         ["git", "status", "--porcelain", "--untracked-files=no"],
         cwd=destination,
@@ -132,22 +149,32 @@ def _prepare_repo(name: str, specification: dict[str, str], repo_root: Path) -> 
         raise AssetPreparationError(f"Tracked files are modified under {destination}; refusing to replace them.")
     observed = _run_git(["git", "rev-parse", "HEAD"], cwd=destination).lower()
     if observed != specification["revision"]:
-        print(f"[assets] fetch and checkout pinned {name} revision {specification['revision']}", flush=True)
-        _run_git(["git", "fetch", "origin", specification["revision"], "--depth", "1"], cwd=destination)
-        _run_git(["git", "checkout", "--detach", specification["revision"]], cwd=destination)
-    observed = _run_git(["git", "rev-parse", "HEAD"], cwd=destination).lower()
-    if observed != specification["revision"]:
         raise AssetPreparationError(
             f"Repository revision mismatch for {name}: expected={specification['revision']}, observed={observed}."
         )
     return destination
 
 
+def _ensure_drive_cache(
+    drive_cache: Path,
+    *,
+    drive_mount_root: Path = Path("/content/drive/MyDrive"),
+) -> Path:
+    try:
+        drive_cache.relative_to(drive_mount_root)
+    except ValueError:
+        pass
+    else:
+        if not drive_mount_root.is_dir():
+            raise AssetPreparationError(
+                f"Google Drive mount is unavailable: {drive_mount_root}. Mount Drive before preparing assets."
+            )
+    drive_cache.mkdir(parents=True, exist_ok=True)
+    return drive_cache
+
+
 def prepare_assets(drive_cache: Path, local_root: Path, repo_root: Path) -> dict[str, Any]:
-    if not drive_cache.parent.exists():
-        raise AssetPreparationError(
-            f"Drive cache parent is unavailable: {drive_cache.parent}. Mount Google Drive before running this script."
-        )
+    _ensure_drive_cache(drive_cache)
     checkpoints: dict[str, Any] = {}
     for name, specification in ASSETS.items():
         drive_path = _download_to_drive(name, specification, drive_cache)

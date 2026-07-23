@@ -11,7 +11,7 @@
 - campaign：AlphaEarth、fMoW、reBEN 2×3、Sen1 三模态的 CPU 级配置、缓存、恢复、产物完整性和 CLI 路径。
 - 生产级模拟（`geobwer_fractional_1.1`）：200 个 Monte Carlo repetitions、每次 500 个 multiplier/bootstrap；null group-band coverage 0.935、null BWER interval coverage 1.00、false-positive rate 0，alternative coverage/power 1.00，imbalance coverage 0.925，paired coverage 1.00，honest confirmation power 1.00；sharpened radius 从未比旧有效半径更宽，平均未截断宽度比例 0.945527。该模拟验证实现与预注册门，不替代四任务实证结果。
 
-最终全库测试：`python -m pytest -q`，**311 passed、10 skipped**（2026-07-23）。跳过项均为需要外部真实资产或可选运行环境的测试，不是失败项。最终生产模拟证据位于 `outputs/geobwer_validation_production_2026_07_23_v2/`。
+最终全库测试：`python -m pytest -q`，**316 passed、10 skipped**（2026-07-23）。其中新增的 5 项资产准备器回归覆盖首次 no-checkout clone、固定 revision checkout、二次复用、真实 dirty 拒绝和 Drive 缓存目录初始化。跳过项均为需要外部真实资产或可选运行环境的测试，不是失败项。最终生产模拟证据位于 `outputs/geobwer_validation_production_2026_07_23_v2/`。
 
 ## 固定外部资产
 

@@ -72,6 +72,8 @@ python scripts/colab/prepare_geobwer_model_assets_colab.py
 
 脚本会先在 Drive 缓存，再复制到 `/content`，并校验三份权重 SHA-256 与两个源码 Git commit。已有文件哈希不匹配时直接失败，不静默覆盖。
 
+若旧冻结提交曾在首次 clone 后报 `Tracked files are modified`，不要让 Colab AI 执行 `git reset --hard`、`git clean` 或无条件清理任意仓库。该问题是旧资产准备器在 `--no-checkout` 状态下的检查顺序错误。更新并 checkout 新冻结提交后，推荐直接重启 Colab runtime，再运行本节原命令：`/content` 中的半成品会消失，Drive 中已验证的 checkpoint 缓存会保留。新脚本会自行创建挂载 Drive 下尚不存在的项目缓存目录。
+
 ## 4. 生成 fMoW 正式三分割
 
 ```bash

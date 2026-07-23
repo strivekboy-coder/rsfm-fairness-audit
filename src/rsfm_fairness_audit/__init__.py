@@ -24,4 +24,4 @@ __all__ = [
     "run_segmentation_uncertainty_suite",
 ]
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
