@@ -1,13 +1,24 @@
 from __future__ import annotations
 
+import csv
+import hashlib
+from collections import Counter
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from rsfm_fairness_audit.adapters.terramind import INPUT_PROFILES, S1_MEAN, S1_STD
 
 
 class TerraMindSen1ConfigError(ValueError):
     """Raised when a TerraMind Sen1Floods11 campaign config is incomplete."""
+
+
+OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS = {"train": 252, "validation": 89, "test": 90}
+SEN1FLOODS11_SUFFIXES = {
+    "s1": "_S1Hand.tif",
+    "s2": "_S2Hand.tif",
+    "label": "_LabelHand.tif",
+}
 
 
 def _path_text(value: str | Path) -> str:
@@ -239,24 +250,209 @@ def write_terramind_sen1floods11_config(path: str | Path, **kwargs: Any) -> Path
     return output
 
 
-def validate_terramind_sen1_source_layout(values: Mapping[str, str | Path]) -> dict[str, Any]:
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _modality_prefixes(root: Path, suffix: str) -> set[str]:
+    return {path.name[: -len(suffix)] for path in root.glob(f"*{suffix}") if path.is_file()}
+
+
+def _validate_source_inventory(values: Mapping[str, str | Path]) -> tuple[dict[str, Path], dict[str, set[str]]]:
     required = ("s1_root", "s2_root", "label_root", "train_split", "val_split", "test_split")
     missing = [name for name in required if name not in values or not Path(values[name]).exists()]
     if missing:
         raise TerraMindSen1ConfigError(f"Missing TerraMind Sen1Floods11 source paths: {missing}")
-    counts = {
-        "s1": len(list(Path(values["s1_root"]).glob("*_S1Hand.tif"))),
-        "s2": len(list(Path(values["s2_root"]).glob("*_S2Hand.tif"))),
-        "labels": len(list(Path(values["label_root"]).glob("*_LabelHand.tif"))),
+    paths = {name: Path(values[name]) for name in required}
+    for root_name in ("s1_root", "s2_root", "label_root"):
+        if not paths[root_name].is_dir():
+            raise TerraMindSen1ConfigError(f"{root_name} must be a directory: {paths[root_name]}")
+    for split_name in ("train_split", "val_split", "test_split"):
+        if not paths[split_name].is_file():
+            raise TerraMindSen1ConfigError(f"{split_name} must be a file: {paths[split_name]}")
+    prefixes = {
+        "s1": _modality_prefixes(paths["s1_root"], SEN1FLOODS11_SUFFIXES["s1"]),
+        "s2": _modality_prefixes(paths["s2_root"], SEN1FLOODS11_SUFFIXES["s2"]),
+        "label": _modality_prefixes(paths["label_root"], SEN1FLOODS11_SUFFIXES["label"]),
     }
+    counts = {name: len(items) for name, items in prefixes.items()}
     if min(counts.values()) == 0 or len(set(counts.values())) != 1:
-        raise TerraMindSen1ConfigError(f"S1/S2/label file counts are empty or unpaired: {counts}")
-    return {"status": "ready", "counts": counts, "paths": {key: str(values[key]) for key in required}}
+        raise TerraMindSen1ConfigError(f"S1/S2/label file counts are empty or unequal: {counts}")
+    if not (prefixes["s1"] == prefixes["s2"] == prefixes["label"]):
+        mismatch = {
+            "missing_s1": sorted((prefixes["s2"] | prefixes["label"]) - prefixes["s1"])[:10],
+            "missing_s2": sorted((prefixes["s1"] | prefixes["label"]) - prefixes["s2"])[:10],
+            "missing_label": sorted((prefixes["s1"] | prefixes["s2"]) - prefixes["label"])[:10],
+        }
+        raise TerraMindSen1ConfigError(
+            f"S1/S2/Label inventories do not represent the same sample prefixes: {mismatch}"
+        )
+    return paths, prefixes
+
+
+def _is_official_split_header(row: Sequence[str]) -> bool:
+    if len(row) != 2:
+        return False
+    s1_header = row[0].strip().casefold().replace(" ", "_")
+    label_header = row[1].strip().casefold().replace(" ", "_")
+    return s1_header in {"s1", "s1_file", "s1_filename", "image", "image_file"} and label_header in {
+        "label",
+        "label_file",
+        "label_filename",
+        "mask",
+        "mask_file",
+    }
+
+
+def _split_prefix(row: Sequence[str], *, source: Path, line_number: int) -> str:
+    cells = [cell.strip() for cell in row]
+    while cells and cells[-1] == "":
+        cells.pop()
+    if len(cells) not in {1, 2} or not cells[0]:
+        raise TerraMindSen1ConfigError(
+            f"Split row must contain one prefix/S1 filename or an S1,Label pair: "
+            f"{source}:{line_number}: {list(row)!r}"
+        )
+    s1_value = cells[0]
+    s1_suffix = SEN1FLOODS11_SUFFIXES["s1"]
+    label_suffix = SEN1FLOODS11_SUFFIXES["label"]
+    if s1_value.endswith(s1_suffix):
+        prefix = s1_value[: -len(s1_suffix)]
+    elif len(cells) == 1 and not s1_value.lower().endswith((".tif", ".tiff")):
+        prefix = s1_value
+    else:
+        raise TerraMindSen1ConfigError(
+            f"Split S1 entry must end with {s1_suffix!r} or be a bare prefix: "
+            f"{source}:{line_number}: {s1_value!r}"
+        )
+    if not prefix or "/" in prefix or "\\" in prefix or "*" in prefix:
+        raise TerraMindSen1ConfigError(
+            f"Split sample prefix must be a flat, non-wildcard filename prefix: "
+            f"{source}:{line_number}: {prefix!r}"
+        )
+    if len(cells) == 2:
+        expected_label = f"{prefix}{label_suffix}"
+        if cells[1] != expected_label:
+            raise TerraMindSen1ConfigError(
+                f"S1 and Label entries do not identify the same sample at {source}:{line_number}: "
+                f"expected {expected_label!r}, observed {cells[1]!r}."
+            )
+    return prefix
+
+
+def read_sen1floods11_split_prefixes(path: str | Path) -> list[str]:
+    """Read an official two-column split or a TerraTorch one-prefix-per-line split."""
+
+    source = Path(path)
+    if not source.is_file():
+        raise TerraMindSen1ConfigError(f"Split file does not exist: {source}")
+    prefixes: list[str] = []
+    with source.open("r", encoding="utf-8-sig", newline="") as handle:
+        for line_number, row in enumerate(csv.reader(handle), start=1):
+            if not row or not any(cell.strip() for cell in row):
+                continue
+            if not prefixes and _is_official_split_header(row):
+                continue
+            prefixes.append(_split_prefix(row, source=source, line_number=line_number))
+    if not prefixes:
+        raise TerraMindSen1ConfigError(f"Split file contains no sample members: {source}")
+    duplicates = sorted(prefix for prefix, count in Counter(prefixes).items() if count > 1)
+    if duplicates:
+        raise TerraMindSen1ConfigError(f"Split file contains duplicate sample prefixes: {source}: {duplicates[:10]}")
+    return prefixes
+
+
+def prepare_terramind_sen1_splits(
+    values: Mapping[str, str | Path],
+    output_dir: str | Path,
+    *,
+    expected_split_counts: Mapping[str, int] | None = OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS,
+) -> dict[str, Any]:
+    """Materialize prefix-only TerraTorch splits without changing official membership."""
+
+    paths, modality_prefixes = _validate_source_inventory(values)
+    source_split_paths = {
+        "train": paths["train_split"],
+        "validation": paths["val_split"],
+        "test": paths["test_split"],
+    }
+    split_members = {
+        split: read_sen1floods11_split_prefixes(path) for split, path in source_split_paths.items()
+    }
+    if expected_split_counts is not None:
+        expected = {name: int(expected_split_counts[name]) for name in source_split_paths}
+        observed = {name: len(members) for name, members in split_members.items()}
+        if observed != expected:
+            raise TerraMindSen1ConfigError(
+                f"Official Sen1Floods11 split counts changed: expected={expected}, observed={observed}."
+            )
+    split_names = tuple(split_members)
+    overlaps: dict[str, list[str]] = {}
+    for index, left in enumerate(split_names):
+        for right in split_names[index + 1 :]:
+            shared = sorted(set(split_members[left]) & set(split_members[right]))
+            if shared:
+                overlaps[f"{left}__{right}"] = shared[:10]
+    if overlaps:
+        raise TerraMindSen1ConfigError(f"Sen1Floods11 split members overlap: {overlaps}")
+    complete_prefixes = modality_prefixes["s1"]
+    unresolved: dict[str, list[str]] = {}
+    for split, members in split_members.items():
+        missing = sorted(set(members) - complete_prefixes)
+        if missing:
+            unresolved[split] = missing[:10]
+    if unresolved:
+        raise TerraMindSen1ConfigError(
+            f"Split members do not resolve simultaneously to S1, S2, and Label files: {unresolved}"
+        )
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    generated_paths: dict[str, Path] = {}
+    for split, members in split_members.items():
+        generated = destination / f"{split}_prefixes.txt"
+        temporary = generated.with_suffix(f"{generated.suffix}.tmp")
+        temporary.write_text("".join(f"{prefix}\n" for prefix in members), encoding="utf-8")
+        temporary.replace(generated)
+        generated_paths[split] = generated
+    selected = set().union(*(set(members) for members in split_members.values()))
+    return {
+        "status": "ready",
+        "schema": "geobwer.sen1floods11.terratorch_split_adapter.v1",
+        "counts": {name: len(prefixes) for name, prefixes in modality_prefixes.items()},
+        "split_counts": {name: len(members) for name, members in split_members.items()},
+        "selected_unique_samples": len(selected),
+        "unused_complete_samples": len(complete_prefixes - selected),
+        "source_split_paths": {name: str(path) for name, path in source_split_paths.items()},
+        "source_split_sha256": {name: _file_sha256(path) for name, path in source_split_paths.items()},
+        "terratorch_split_paths": {name: str(path) for name, path in generated_paths.items()},
+        "terratorch_split_sha256": {name: _file_sha256(path) for name, path in generated_paths.items()},
+        "roots": {
+            "s1": str(paths["s1_root"]),
+            "s2": str(paths["s2_root"]),
+            "label": str(paths["label_root"]),
+        },
+    }
+
+
+def validate_terramind_sen1_source_layout(values: Mapping[str, str | Path]) -> dict[str, Any]:
+    paths, prefixes = _validate_source_inventory(values)
+    return {
+        "status": "ready",
+        "counts": {name: len(items) for name, items in prefixes.items()},
+        "paths": {key: str(path) for key, path in paths.items()},
+    }
 
 
 __all__ = [
     "TerraMindSen1ConfigError",
+    "OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS",
     "build_terramind_sen1floods11_config",
+    "prepare_terramind_sen1_splits",
+    "read_sen1floods11_split_prefixes",
     "validate_terramind_sen1_source_layout",
     "write_terramind_sen1floods11_config",
 ]

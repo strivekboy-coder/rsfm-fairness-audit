@@ -31,7 +31,7 @@ from rsfm_fairness_audit.sen1floods11_formal import (  # noqa: E402
     load_sen1_probability_units,
 )
 from rsfm_fairness_audit.terramind_sen1_config import (  # noqa: E402
-    validate_terramind_sen1_source_layout,
+    prepare_terramind_sen1_splits,
     write_terramind_sen1floods11_config,
 )
 
@@ -234,7 +234,7 @@ def main() -> None:
         _, backbone_checkpoint_sha256 = validate_terramind_checkpoint(args.checkpoint)
     hydrate_output(args.output_dir, args.persistent_output_dir)
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    source_report = validate_terramind_sen1_source_layout(
+    source_report = prepare_terramind_sen1_splits(
         {
             "s1_root": args.s1_root,
             "s2_root": args.s2_root,
@@ -242,8 +242,12 @@ def main() -> None:
             "train_split": args.train_split,
             "val_split": args.val_split,
             "test_split": args.test_split,
-        }
+        },
+        args.output_dir / "terratorch_splits",
     )
+    terratorch_splits = {
+        name: Path(path) for name, path in source_report["terratorch_split_paths"].items()
+    }
     (args.output_dir / "source_preflight.json").write_text(
         json.dumps(
             {
@@ -277,9 +281,9 @@ def main() -> None:
             "s1_root": args.s1_root,
             "s2_root": args.s2_root,
             "label_root": args.label_root,
-            "train_split": args.train_split,
-            "val_split": args.val_split,
-            "test_split": args.test_split,
+            "train_split": terratorch_splits["train"],
+            "val_split": terratorch_splits["validation"],
+            "test_split": terratorch_splits["test"],
             "run_dir": run_dir,
             "backbone_checkpoint_path": args.checkpoint,
             "seed": args.seed,
@@ -342,7 +346,7 @@ def main() -> None:
             validation_config,
             checkpoint,
             validation_output,
-            expected=_split_count(args.val_split),
+            expected=_split_count(terratorch_splits["validation"]),
             dry_run=args.dry_run,
         )
         persist_output(
@@ -402,7 +406,7 @@ def main() -> None:
             test_config,
             checkpoints[mode],
             test_exports[mode],
-            expected=_split_count(args.test_split),
+            expected=_split_count(terratorch_splits["test"]),
             dry_run=False,
         )
         persist_output(

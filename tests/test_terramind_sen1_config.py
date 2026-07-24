@@ -10,8 +10,11 @@ import pytest
 
 from rsfm_fairness_audit.adapters.terramind import validate_terratorch_runtime
 from rsfm_fairness_audit.terramind_sen1_config import (
+    OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS,
     TerraMindSen1ConfigError,
     build_terramind_sen1floods11_config,
+    prepare_terramind_sen1_splits,
+    read_sen1floods11_split_prefixes,
     write_terramind_sen1floods11_config,
 )
 
@@ -30,6 +33,38 @@ def _build(mode: str, prediction_split=None):
         prediction_split=prediction_split,
         probability_output_dir=None if prediction_split is None else f"/content/outputs/{mode}/{prediction_split}",
     )
+
+
+def _sen1_source_fixture(tmp_path, split_members, *, unused=()):
+    roots = {
+        "s1_root": tmp_path / "S1GRDHand",
+        "s2_root": tmp_path / "S2L1CHand",
+        "label_root": tmp_path / "LabelHand",
+    }
+    for root in roots.values():
+        root.mkdir(parents=True)
+    members = list(dict.fromkeys([*split_members["train"], *split_members["validation"], *split_members["test"], *unused]))
+    for prefix in members:
+        (roots["s1_root"] / f"{prefix}_S1Hand.tif").touch()
+        (roots["s2_root"] / f"{prefix}_S2Hand.tif").touch()
+        (roots["label_root"] / f"{prefix}_LabelHand.tif").touch()
+    split_dir = tmp_path / "official_splits"
+    split_dir.mkdir()
+    split_paths = {}
+    for split, prefixes in split_members.items():
+        name = "val" if split == "validation" else split
+        path = split_dir / f"{name}.csv"
+        path.write_text(
+            "".join(f"{prefix}_S1Hand.tif,{prefix}_LabelHand.tif\n" for prefix in prefixes),
+            encoding="utf-8",
+        )
+        split_paths[split] = path
+    return {
+        **roots,
+        "train_split": split_paths["train"],
+        "val_split": split_paths["validation"],
+        "test_split": split_paths["test"],
+    }
 
 
 @pytest.mark.parametrize(
@@ -69,6 +104,125 @@ def test_fit_scheduler_uses_lightning_cli_plateau_wrapper():
         "class_path": "lightning.pytorch.cli.ReduceLROnPlateau",
         "init_args": {"monitor": "val/loss", "factor": 0.5, "patience": 5},
     }
+
+
+def test_official_split_adapter_preserves_252_89_90_membership(tmp_path):
+    members = [f"Event_{index:03d}" for index in range(431)]
+    splits = {
+        "train": members[:252],
+        "validation": members[252:341],
+        "test": members[341:431],
+    }
+    source = _sen1_source_fixture(
+        tmp_path,
+        splits,
+        unused=[f"Unused_{index:02d}" for index in range(15)],
+    )
+    report = prepare_terramind_sen1_splits(source, tmp_path / "terratorch_splits")
+
+    assert OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS == {"train": 252, "validation": 89, "test": 90}
+    assert report["counts"] == {"s1": 446, "s2": 446, "label": 446}
+    assert report["split_counts"] == OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS
+    assert report["selected_unique_samples"] == 431
+    assert report["unused_complete_samples"] == 15
+    for split, expected_members in splits.items():
+        generated = Path(report["terratorch_split_paths"][split])
+        assert generated.read_text(encoding="utf-8").splitlines() == expected_members
+        assert read_sen1floods11_split_prefixes(generated) == expected_members
+
+
+def test_split_preflight_requires_matching_s1_s2_and_label_members(tmp_path):
+    splits = {"train": ["A"], "validation": ["B"], "test": ["C"]}
+    source = _sen1_source_fixture(tmp_path, splits)
+    Path(source["s2_root"], "B_S2Hand.tif").unlink()
+    Path(source["s2_root"], "Different_S2Hand.tif").touch()
+    with pytest.raises(TerraMindSen1ConfigError, match="same sample prefixes"):
+        prepare_terramind_sen1_splits(
+            source,
+            tmp_path / "terratorch_splits",
+            expected_split_counts={"train": 1, "validation": 1, "test": 1},
+        )
+
+
+def test_split_preflight_rejects_mismatched_label_pair_and_overlap(tmp_path):
+    splits = {"train": ["A"], "validation": ["B"], "test": ["C"]}
+    source = _sen1_source_fixture(tmp_path, splits)
+    Path(source["train_split"]).write_text("A_S1Hand.tif,B_LabelHand.tif\n", encoding="utf-8")
+    with pytest.raises(TerraMindSen1ConfigError, match="do not identify the same sample"):
+        prepare_terramind_sen1_splits(
+            source,
+            tmp_path / "bad_pair",
+            expected_split_counts={"train": 1, "validation": 1, "test": 1},
+        )
+
+    Path(source["train_split"]).write_text("A_S1Hand.tif,A_LabelHand.tif\n", encoding="utf-8")
+    Path(source["val_split"]).write_text("A_S1Hand.tif,A_LabelHand.tif\n", encoding="utf-8")
+    with pytest.raises(TerraMindSen1ConfigError, match="overlap"):
+        prepare_terramind_sen1_splits(
+            source,
+            tmp_path / "overlap",
+            expected_split_counts={"train": 1, "validation": 1, "test": 1},
+        )
+
+
+def test_final_runner_dry_run_rewires_all_modes_to_prefix_splits(tmp_path):
+    import yaml
+
+    members = [f"Event_{index:03d}" for index in range(431)]
+    splits = {
+        "train": members[:252],
+        "validation": members[252:341],
+        "test": members[341:431],
+    }
+    source = _sen1_source_fixture(
+        tmp_path,
+        splits,
+        unused=[f"Unused_{index:02d}" for index in range(15)],
+    )
+    output_dir = tmp_path / "runner_output"
+    project_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(project_root / "scripts" / "colab" / "run_terramind_sen1floods11_final_colab.py"),
+            "--s1-root",
+            str(source["s1_root"]),
+            "--s2-root",
+            str(source["s2_root"]),
+            "--label-root",
+            str(source["label_root"]),
+            "--train-split",
+            str(source["train_split"]),
+            "--val-split",
+            str(source["val_split"]),
+            "--test-split",
+            str(source["test_split"]),
+            "--output-dir",
+            str(output_dir),
+            "--checkpoint",
+            str(tmp_path / "TerraMind_v1_base.pt"),
+            "--dry-run",
+        ],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    expected_paths = {
+        "train_split": (output_dir / "terratorch_splits" / "train_prefixes.txt").as_posix(),
+        "val_split": (output_dir / "terratorch_splits" / "validation_prefixes.txt").as_posix(),
+        "test_split": (output_dir / "terratorch_splits" / "test_prefixes.txt").as_posix(),
+    }
+    for slug in ("s1", "s2", "s1_plus_s2"):
+        config = yaml.safe_load((output_dir / slug / "configs" / "fit.yaml").read_text(encoding="utf-8"))
+        data_args = config["data"]["init_args"]
+        for key, expected_path in expected_paths.items():
+            assert data_args[key] == expected_path
+    preflight = (output_dir / "source_preflight.json").read_text(encoding="utf-8")
+    assert '"split_counts"' in preflight
+    assert '"unused_complete_samples": 15' in preflight
 
 
 @pytest.mark.skipif(
@@ -121,6 +275,138 @@ def test_generated_fit_yaml_parses_with_frozen_terratorch_cli(tmp_path):
     )
     assert "lightning.pytorch.cli.ReduceLROnPlateau" in result.stdout
     assert "monitor: val/loss" in result.stdout
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("terratorch") is None or importlib.util.find_spec("rasterio") is None,
+    reason="Real TerraTorch dataset construction requires TerraTorch and rasterio.",
+)
+def test_real_terratorch_dataset_builds_for_all_sensor_modes(tmp_path):
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+    from terratorch.datamodules import GenericMultiModalDataModule
+
+    validate_terratorch_runtime()
+    splits = {"train": ["A", "B"], "validation": ["C"], "test": ["D"]}
+    source = _sen1_source_fixture(tmp_path, splits)
+    transform = from_origin(0, 16, 1, 1)
+    for prefix in ("A", "B", "C", "D"):
+        for root_key, suffix, count in (
+            ("s1_root", "_S1Hand.tif", 2),
+            ("s2_root", "_S2Hand.tif", 13),
+        ):
+            with rasterio.open(
+                Path(source[root_key], f"{prefix}{suffix}"),
+                "w",
+                driver="GTiff",
+                height=16,
+                width=16,
+                count=count,
+                dtype="float32",
+                transform=transform,
+            ) as dataset:
+                dataset.write(np.ones((count, 16, 16), dtype=np.float32))
+        with rasterio.open(
+            Path(source["label_root"], f"{prefix}_LabelHand.tif"),
+            "w",
+            driver="GTiff",
+            height=16,
+            width=16,
+            count=1,
+            dtype="uint8",
+            transform=transform,
+        ) as dataset:
+            dataset.write(np.zeros((1, 16, 16), dtype=np.uint8))
+    report = prepare_terramind_sen1_splits(
+        source,
+        tmp_path / "terratorch_splits",
+        expected_split_counts={"train": 2, "validation": 1, "test": 1},
+    )
+    generated = report["terratorch_split_paths"]
+    for mode, expected_modalities in (
+        ("S1", {"S1GRD"}),
+        ("S2", {"S2L1C"}),
+        ("S1+S2", {"S1GRD", "S2L1C"}),
+    ):
+        config = build_terramind_sen1floods11_config(
+            sensor_mode=mode,
+            s1_root=source["s1_root"],
+            s2_root=source["s2_root"],
+            label_root=source["label_root"],
+            train_split=generated["train"],
+            val_split=generated["validation"],
+            test_split=generated["test"],
+            run_dir=tmp_path / f"run_{mode}",
+            backbone_checkpoint_path=tmp_path / "TerraMind_v1_base.pt",
+            batch_size=1,
+            num_workers=0,
+            fast_dev_run=True,
+        )
+        data_args = dict(config["data"]["init_args"])
+        data_args.pop("train_transform")
+        datamodule = GenericMultiModalDataModule(**data_args)
+        datamodule.setup("fit")
+        assert len(datamodule.train_dataset) == 2
+        assert len(datamodule.val_dataset) == 1
+        batch = next(iter(datamodule.train_dataloader()))
+        assert set(batch["image"]) == expected_modalities
+        assert "mask" in batch
+
+
+@pytest.mark.skipif(
+    os.environ.get("RSFM_RUN_TERRAMIND_GPU_INTEGRATION") != "1",
+    reason="Set RSFM_RUN_TERRAMIND_GPU_INTEGRATION=1 with real Sen1 paths to run the GPU fast-dev regression.",
+)
+def test_real_terratorch_fast_dev_run_uses_adapted_split(tmp_path):
+    validate_terratorch_runtime()
+    environment_names = {
+        "s1_root": "RSFM_SEN1_S1_ROOT",
+        "s2_root": "RSFM_SEN1_S2_ROOT",
+        "label_root": "RSFM_SEN1_LABEL_ROOT",
+        "train_split": "RSFM_SEN1_TRAIN_SPLIT",
+        "val_split": "RSFM_SEN1_VAL_SPLIT",
+        "test_split": "RSFM_SEN1_TEST_SPLIT",
+    }
+    missing = [name for name in [*environment_names.values(), "RSFM_TERRAMIND_CHECKPOINT"] if not os.environ.get(name)]
+    assert not missing, f"Missing GPU integration environment variables: {missing}"
+    source = {key: Path(os.environ[env_name]) for key, env_name in environment_names.items()}
+    report = prepare_terramind_sen1_splits(source, tmp_path / "terratorch_splits")
+    split_paths = report["terratorch_split_paths"]
+    config_path = write_terramind_sen1floods11_config(
+        tmp_path / "fit.yaml",
+        sensor_mode="S1+S2",
+        s1_root=source["s1_root"],
+        s2_root=source["s2_root"],
+        label_root=source["label_root"],
+        train_split=split_paths["train"],
+        val_split=split_paths["validation"],
+        test_split=split_paths["test"],
+        run_dir=tmp_path / "fast_dev_run",
+        backbone_checkpoint_path=os.environ["RSFM_TERRAMIND_CHECKPOINT"],
+        batch_size=1,
+        num_workers=0,
+        fast_dev_run=True,
+    )
+    project_root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        value for value in (str(project_root / "src"), env.get("PYTHONPATH", "")) if value
+    )
+    result = subprocess.run(
+        [sys.executable, "-m", "terratorch", "fit", "--config", str(config_path)],
+        cwd=project_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=900,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        "Frozen TerraTorch failed the real adapted-split fast_dev_run.\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )
 
 
 def test_prediction_uses_labeled_validation_adapter_and_probability_writer():
