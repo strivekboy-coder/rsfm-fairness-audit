@@ -21,6 +21,7 @@ from rsfm_fairness_audit.geobwer import audit_rows
 from rsfm_fairness_audit.geobwer_extensions import run_multilabel_uncertainty_suite
 from rsfm_fairness_audit.io import read_csv_rows
 from rsfm_fairness_audit.persistent_cache import hydrate_output, persist_output
+from rsfm_fairness_audit.spatial_conformal import SpatialConformalConfig
 from rsfm_fairness_audit.reben_sensor_audit import default_reben_class_names, select_thresholds_from_validation
 
 
@@ -653,6 +654,7 @@ def run_reben_frozen_adapter_campaign(
         calibration_manifest=calibration_manifest,
         n_bootstrap=config.n_bootstrap,
         seed=config.seed,
+        spatial_localization_config=SpatialConformalConfig(),
     )
     run_manifest = output / "run_manifest.json"
     run_manifest.write_text(

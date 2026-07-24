@@ -33,6 +33,7 @@ from rsfm_fairness_audit.reben_sensor_audit import (
     select_thresholds_from_validation,
 )
 from rsfm_fairness_audit.reben_terramind_campaign import build_reben_dataset_lineage
+from rsfm_fairness_audit.spatial_conformal import SpatialConformalConfig
 
 
 class RebenResNet50CampaignError(RuntimeError):
@@ -568,6 +569,7 @@ def _formalize_seed(
         crc_alpha=config.crc_alpha,
         n_bootstrap=config.audit_bootstrap,
         seed=seed,
+        spatial_localization_config=SpatialConformalConfig(),
     )
     summary, per_class = compute_multilabel_metrics(
         test["targets"],

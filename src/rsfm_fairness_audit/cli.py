@@ -31,6 +31,7 @@ from rsfm_fairness_audit.config import load_yaml
 from rsfm_fairness_audit.geobwer import audit_rows as geobwer_audit_rows
 from rsfm_fairness_audit.geobwer import compare as geobwer_compare
 from rsfm_fairness_audit.geobwer_extensions import (
+    run_multiclass_spatial_upgrade,
     run_multiclass_uncertainty_suite,
     run_multilabel_uncertainty_suite,
 )
@@ -52,6 +53,7 @@ from rsfm_fairness_audit.reben_sensor_audit import (
 )
 from rsfm_fairness_audit.segmentation import run_segmentation_smoke
 from rsfm_fairness_audit.spectral_baseline import SpectralBaselineConfig, run_spectral_sen1floods11
+from rsfm_fairness_audit.spatial_conformal import SpatialConformalConfig
 from rsfm_fairness_audit.slice_support import evaluate_slice_support_from_files
 from rsfm_fairness_audit.unet_baseline import UnetConfig, run_unet_sen1floods11
 
@@ -416,6 +418,11 @@ def build_parser() -> argparse.ArgumentParser:
     geobwer_mc_uncertainty.add_argument("--alpha", type=float, default=0.10)
     geobwer_mc_uncertainty.add_argument("--bootstrap", type=int, default=2000)
     geobwer_mc_uncertainty.add_argument("--seed", type=int, default=42)
+    geobwer_mc_uncertainty.add_argument(
+        "--spatial-localization",
+        action="store_true",
+        help="Run the preregistered geographic-kernel comparator when its spatial preflight passes.",
+    )
     geobwer_mc_uncertainty.add_argument("--output-dir", type=Path, required=True)
 
     geobwer_ml_uncertainty = subparsers.add_parser(
@@ -431,7 +438,28 @@ def build_parser() -> argparse.ArgumentParser:
     geobwer_ml_uncertainty.add_argument("--crc-alpha", type=float, default=0.10)
     geobwer_ml_uncertainty.add_argument("--bootstrap", type=int, default=2000)
     geobwer_ml_uncertainty.add_argument("--seed", type=int, default=42)
+    geobwer_ml_uncertainty.add_argument(
+        "--spatial-localization-preflight",
+        action="store_true",
+        help="Record all-task spatial-localization eligibility without replacing multilabel CRC.",
+    )
     geobwer_ml_uncertainty.add_argument("--output-dir", type=Path, required=True)
+
+    geobwer_spatial_upgrade = subparsers.add_parser(
+        "geobwer-spatial-conformal-upgrade",
+        help="Add coordinates to existing multiclass calibration probabilities and run the spatial comparator without rerunning the model.",
+    )
+    geobwer_spatial_upgrade.add_argument("--calibration-probabilities", type=Path, required=True)
+    geobwer_spatial_upgrade.add_argument("--calibration-metadata", type=Path, required=True)
+    geobwer_spatial_upgrade.add_argument("--calibration-manifest", type=Path)
+    geobwer_spatial_upgrade.add_argument("--test-formal-dir", type=Path, required=True)
+    geobwer_spatial_upgrade.add_argument("--protocol", type=Path, required=True)
+    geobwer_spatial_upgrade.add_argument("--group-column", action="append", required=True)
+    geobwer_spatial_upgrade.add_argument("--conformal-method", action="append", choices=["lac", "aps", "raps"])
+    geobwer_spatial_upgrade.add_argument("--alpha", type=float, default=0.10)
+    geobwer_spatial_upgrade.add_argument("--bootstrap", type=int, default=2000)
+    geobwer_spatial_upgrade.add_argument("--seed", type=int, default=42)
+    geobwer_spatial_upgrade.add_argument("--output-dir", type=Path, required=True)
     return parser
 
 
@@ -847,6 +875,9 @@ def main() -> None:
             require_probabilities=args.require_probabilities,
             n_bootstrap=args.bootstrap,
             seed=args.seed,
+            spatial_conformal_config=(
+                SpatialConformalConfig() if args.spatial_localization else None
+            ),
         )
         artifacts = result.to_report(args.output_dir)
         print(f"GeoBWER audit complete: {args.output_dir}")
@@ -885,6 +916,11 @@ def main() -> None:
             model_b=args.model_b,
             n_bootstrap=args.bootstrap,
             seed=args.seed,
+            spatial_localization_config=(
+                SpatialConformalConfig()
+                if args.spatial_localization_preflight
+                else None
+            ),
         )
         output = ensure_dir(args.output_dir)
         row = asdict(result)
@@ -934,6 +970,24 @@ def main() -> None:
             seed=args.seed,
         )
         print(f"GeoBWER multilabel uncertainty audit complete: {args.output_dir}")
+        for name, path in artifacts.items():
+            print(f"{name}: {path}")
+    elif args.command == "geobwer-spatial-conformal-upgrade":
+        protocol = _load_geobwer_protocol(args.protocol)
+        artifacts = run_multiclass_spatial_upgrade(
+            args.calibration_probabilities,
+            args.calibration_metadata,
+            args.test_formal_dir,
+            args.output_dir,
+            protocol=protocol,
+            group_columns=tuple(args.group_column),
+            source_calibration_manifest=args.calibration_manifest,
+            conformal_methods=tuple(args.conformal_method or ("lac", "aps", "raps")),
+            alpha=args.alpha,
+            n_bootstrap=args.bootstrap,
+            seed=args.seed,
+        )
+        print(f"GeoBWER spatial conformal upgrade complete: {args.output_dir}")
         for name, path in artifacts.items():
             print(f"{name}: {path}")
 

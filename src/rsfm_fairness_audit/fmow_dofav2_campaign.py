@@ -28,6 +28,7 @@ from rsfm_fairness_audit.probe_selection import (
     MulticlassProbeSearchConfig,
     fit_selected_multiclass_probe,
 )
+from rsfm_fairness_audit.spatial_conformal import SpatialConformalConfig
 
 
 class FmowDOFAv2CampaignError(RuntimeError):
@@ -183,6 +184,17 @@ def _formal_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         )
         output.append(row)
     return output
+
+
+def _coordinate_or_nan(row: Mapping[str, Any], *names: str) -> float:
+    for name in names:
+        value = row.get(name)
+        if value not in (None, ""):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return float("nan")
+    return float("nan")
 
 
 def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path]:
@@ -551,6 +563,14 @@ def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path
         targets=calibration_targets,
         class_names=np.asarray(class_names, dtype=str),
         sample_id=np.asarray([row["sample_id"] for row in calibration_ok], dtype=str),
+        latitude=np.asarray(
+            [_coordinate_or_nan(row, "latitude", "lat") for row in calibration_ok],
+            dtype=np.float64,
+        ),
+        longitude=np.asarray(
+            [_coordinate_or_nan(row, "longitude", "lon", "lng") for row in calibration_ok],
+            dtype=np.float64,
+        ),
         split_role=np.asarray("calibration"),
         test_rows_used=np.asarray(False),
     )
@@ -590,6 +610,7 @@ def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path
         require_probabilities=True,
         n_bootstrap=config.audit_bootstrap,
         seed=config.seed,
+        spatial_conformal_config=SpatialConformalConfig(),
     )
     audit_artifacts = audit.to_report(output / "geobwer_raw")
     standardized = audit_rows(

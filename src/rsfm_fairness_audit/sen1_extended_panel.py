@@ -14,6 +14,7 @@ from rsfm_fairness_audit.sen1floods11_formal import (
     finalize_sen1_probability_export,
     load_sen1_probability_units,
 )
+from rsfm_fairness_audit.spatial_conformal import SpatialConformalConfig
 
 
 class Sen1ExtendedPanelError(RuntimeError):
@@ -90,9 +91,11 @@ def _finalize_one(
         group_columns=("event_id",),
         calibration_valid_masks=valid,
         calibration_sample_ids=[str(row["sample_id"]) for row in rows],
+        calibration_sample_rows=rows,
         crc_alpha=crc_alpha,
         n_bootstrap=n_bootstrap,
         seed=seed,
+        spatial_localization_config=SpatialConformalConfig(),
     )
     return bundle.audit_table, protocol
 

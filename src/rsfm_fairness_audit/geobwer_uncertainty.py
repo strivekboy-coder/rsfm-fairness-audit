@@ -77,8 +77,11 @@ def multiclass_prediction_sets(
     q = np.asarray(threshold, dtype=float)
     if q.ndim == 0:
         q = np.full(len(probs), float(q))
-    if q.shape != (len(probs),) or not np.all(np.isfinite(q)):
-        raise UncertaintyProtocolError("threshold must be scalar or one value per test sample.")
+    if q.shape != (len(probs),) or np.any(np.isnan(q)) or np.any(np.isneginf(q)):
+        raise UncertaintyProtocolError(
+            "threshold must be scalar or one value per test sample; +inf is allowed "
+            "for a conservative unsupported-location prediction set."
+        )
     if method == "lac":
         return (1.0 - probs) <= q[:, None]
     if method not in {"aps", "raps"}:

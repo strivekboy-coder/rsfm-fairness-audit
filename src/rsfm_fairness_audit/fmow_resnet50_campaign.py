@@ -12,6 +12,7 @@ import numpy as np
 from rsfm_fairness_audit.bwer_protocol import BWERProtocol
 from rsfm_fairness_audit.config import load_yaml
 from rsfm_fairness_audit.fmow_dofav2_campaign import (
+    _coordinate_or_nan,
     _formal_rows,
     _validate_split_contract,
 )
@@ -37,6 +38,7 @@ from rsfm_fairness_audit.geobwer_extensions import run_multiclass_uncertainty_su
 from rsfm_fairness_audit.io import ensure_dir, read_csv_rows, write_csv
 from rsfm_fairness_audit.persistent_cache import hydrate_output, persist_output
 from rsfm_fairness_audit.probe_selection import group_stratified_inner_split
+from rsfm_fairness_audit.spatial_conformal import SpatialConformalConfig
 
 
 class FmowResNet50CampaignError(RuntimeError):
@@ -415,6 +417,14 @@ def _audit_seed(
         targets=calibration_targets,
         class_names=np.asarray(class_names, dtype=str),
         sample_id=np.asarray([row["sample_id"] for row in calibration_rows], dtype=str),
+        latitude=np.asarray(
+            [_coordinate_or_nan(row, "latitude", "lat") for row in calibration_rows],
+            dtype=np.float64,
+        ),
+        longitude=np.asarray(
+            [_coordinate_or_nan(row, "longitude", "lon", "lng") for row in calibration_rows],
+            dtype=np.float64,
+        ),
         split_role=np.asarray("calibration"),
         test_rows_used=np.asarray(False),
     )
@@ -501,6 +511,7 @@ def _audit_seed(
         alpha=config.conformal_alpha,
         n_bootstrap=config.audit_bootstrap,
         seed=seed,
+        spatial_conformal_config=SpatialConformalConfig(),
     )
     manifest = output_dir / "run_manifest.json"
     manifest.write_text(

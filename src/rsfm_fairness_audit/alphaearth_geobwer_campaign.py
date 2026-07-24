@@ -17,6 +17,7 @@ from rsfm_fairness_audit.geobwer import audit_rows
 from rsfm_fairness_audit.geobwer_extensions import run_multiclass_uncertainty_suite
 from rsfm_fairness_audit.io import ensure_dir, read_csv_rows
 from rsfm_fairness_audit.persistent_cache import hydrate_output, persist_output
+from rsfm_fairness_audit.spatial_conformal import SpatialConformalConfig
 
 
 class AlphaEarthCampaignError(RuntimeError):
@@ -336,6 +337,14 @@ def run_alphaearth_geobwer_campaign(config: AlphaEarthCampaignConfig) -> dict[st
         targets=calibration_targets,
         class_names=np.asarray(class_names, dtype=str),
         sample_id=np.asarray([_text(row, "sample_id") for row in calibration_rows], dtype=str),
+        latitude=np.asarray(
+            [_float(row, "lat", "latitude") for row in calibration_rows],
+            dtype=np.float64,
+        ),
+        longitude=np.asarray(
+            [_float(row, "lon", "longitude") for row in calibration_rows],
+            dtype=np.float64,
+        ),
         split_role=np.asarray("calibration"),
         test_rows_used=np.asarray(False),
     )
@@ -373,6 +382,7 @@ def run_alphaearth_geobwer_campaign(config: AlphaEarthCampaignConfig) -> dict[st
         require_probabilities=True,
         n_bootstrap=config.audit_bootstrap,
         seed=config.seed,
+        spatial_conformal_config=SpatialConformalConfig(),
     )
     raw_artifacts = raw_audit.to_report(output / "geobwer_raw")
     standardized_audit = audit_rows(

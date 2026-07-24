@@ -19,8 +19,14 @@ from rsfm_fairness_audit.geobwer_uncertainty import (
     fit_multiclass_conformal,
     fit_selective_threshold,
     multiclass_conformal_audit_rows,
+    multiclass_prediction_sets,
 )
 from rsfm_fairness_audit.io import ensure_dir, read_csv_rows, write_csv
+from rsfm_fairness_audit.spatial_conformal import (
+    SpatialConformalConfig,
+    fit_spatial_multiclass_conformal,
+    spatial_localization_preflight,
+)
 
 
 class ExtensionAuditError(RuntimeError):
@@ -105,6 +111,88 @@ def _load_calibration_arrays(
             raise ExtensionAuditError("Calibration manifest probability hash does not match the NPZ artifact.")
         manifest_digest = file_sha256(manifest_path)
     return probabilities, targets, digest, manifest_digest, tuple(sample_ids.tolist())
+
+
+def _coordinates_from_npz(path: str | Path) -> np.ndarray | None:
+    with np.load(path, allow_pickle=False) as artifact:
+        if "latitude" not in artifact or "longitude" not in artifact:
+            return None
+        latitude = np.asarray(artifact["latitude"], dtype=float)
+        longitude = np.asarray(artifact["longitude"], dtype=float)
+    if latitude.ndim != 1 or longitude.ndim != 1 or latitude.shape != longitude.shape:
+        return None
+    return np.column_stack((latitude, longitude))
+
+
+def _coordinates_from_rows(rows: Sequence[Mapping[str, Any]]) -> np.ndarray | None:
+    values: list[tuple[float, float]] = []
+    for row in rows:
+        try:
+            latitude = float(row.get("latitude", row.get("lat", "")))
+            longitude = float(
+                row.get("longitude", row.get("lon", row.get("lng", "")))
+            )
+        except (TypeError, ValueError):
+            return None
+        values.append((latitude, longitude))
+    return np.asarray(values, dtype=float) if values else None
+
+
+def _write_spatial_preflight(path: Path, report: Mapping[str, Any]) -> Path:
+    path.write_text(json.dumps(dict(report), ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def _prediction_set_efficiency_rows(
+    rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for source in rows:
+        row = dict(source)
+        row["miscoverage_loss"] = row["risk"]
+        row["risk"] = float(row["set_size_fraction"])
+        output.append(row)
+    return output
+
+
+def _spatial_multiclass_rows(
+    *,
+    result: Any,
+    probabilities: np.ndarray,
+    targets: np.ndarray,
+    sample_rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    sets = multiclass_prediction_sets(
+        probabilities,
+        result.thresholds,
+        method=result.method,
+    )
+    rows: list[dict[str, Any]] = []
+    for index, source in enumerate(sample_rows):
+        covered = bool(sets[index, targets[index]])
+        row = dict(source)
+        row.update(
+            {
+                "risk": float(not covered),
+                "miscoverage_loss": float(not covered),
+                "covered": covered,
+                "set_size": int(np.sum(sets[index])),
+                "set_size_fraction": float(np.mean(sets[index])),
+                "conformal_method": result.method,
+                "conformal_threshold": float(result.thresholds[index]),
+                "spatial_bandwidth_km": result.bandwidth_km,
+                "spatial_effective_sample_size": float(
+                    result.effective_sample_size[index]
+                ),
+                "nearest_calibration_distance_km": float(
+                    result.nearest_calibration_distance_km[index]
+                ),
+                "spatial_support_identified": bool(result.identified[index]),
+                "localization_method": "test_centered_gaussian_geographic_kernel",
+            }
+        )
+        rows.append(row)
+    return rows
 
 
 def _assert_calibration_test_disjoint(
@@ -252,6 +340,7 @@ def run_multiclass_uncertainty_suite(
     alpha: float = 0.10,
     n_bootstrap: int = 2000,
     seed: int = 42,
+    spatial_conformal_config: SpatialConformalConfig | None = None,
 ) -> dict[str, Path]:
     output = ensure_dir(output_dir)
     base = _protocol(protocol)
@@ -275,6 +364,29 @@ def run_multiclass_uncertainty_suite(
     cluster = base.spatial_block_column if base.inference_method == "spatial_maxt" else base.cluster_column
     artifacts: dict[str, Path] = {}
     summary_rows: list[dict[str, Any]] = []
+    calibration_coordinates = (
+        _coordinates_from_npz(calibration_probabilities)
+        if spatial_conformal_config is not None
+        else None
+    )
+    test_coordinates = (
+        _coordinates_from_rows(test_rows)
+        if spatial_conformal_config is not None
+        else None
+    )
+    spatial_preflight: dict[str, Any] | None = None
+    if spatial_conformal_config is not None:
+        spatial_preflight = spatial_localization_preflight(
+            calibration_coordinates,
+            test_coordinates,
+            task_geometry="multiclass",
+            config=spatial_conformal_config,
+        )
+        preflight_path = _write_spatial_preflight(
+            output / "spatial_localization_preflight.json",
+            spatial_preflight,
+        )
+        artifacts["spatial_localization_preflight"] = preflight_path
     for method in conformal_methods:
         model = fit_multiclass_conformal(
             calibration_probs, calibration_targets, alpha=alpha, method=method
@@ -307,6 +419,27 @@ def run_multiclass_uncertainty_suite(
         )
         for name, path in run_artifacts.items():
             artifacts[f"conformal_{method}_{name}"] = path
+        efficiency_protocol = _derived_protocol(
+            base,
+            loss_name="prediction_set_fraction",
+            extension=f"split_conformal_{method}_efficiency",
+            details={
+                "alpha": alpha,
+                "calibration_sha256": calibration_sha256,
+                "efficiency_loss": "set_size_divided_by_number_of_classes",
+            },
+        )
+        efficiency_artifacts = _audit_and_write(
+            _prediction_set_efficiency_rows(rows),
+            ensure_dir(output / f"conformal_{method}_efficiency"),
+            protocol=efficiency_protocol,
+            group_columns=group_columns,
+            cluster_column=cluster,
+            n_bootstrap=n_bootstrap,
+            seed=seed,
+        )
+        for name, path in efficiency_artifacts.items():
+            artifacts[f"conformal_{method}_efficiency_{name}"] = path
         target_diagnostics = _tail_target_diagnostics(run_artifacts, risk_target=alpha)
         summary_rows.append(
             {
@@ -318,6 +451,128 @@ def run_multiclass_uncertainty_suite(
                 "calibration_threshold": model.global_threshold,
                 "protocol_hash": extension_protocol.signature,
                 **target_diagnostics,
+            }
+        )
+        if spatial_preflight is not None and spatial_preflight.get(
+            "run_local_method", False
+        ):
+            assert calibration_coordinates is not None
+            assert test_coordinates is not None
+            spatial_result = fit_spatial_multiclass_conformal(
+                calibration_probs,
+                calibration_targets,
+                calibration_coordinates,
+                test_coordinates,
+                alpha=alpha,
+                method=method,
+                config=spatial_conformal_config,
+            )
+            spatial_rows = _spatial_multiclass_rows(
+                result=spatial_result,
+                probabilities=test_probs,
+                targets=test_targets,
+                sample_rows=test_rows,
+            )
+            spatial_protocol = _derived_protocol(
+                base,
+                loss_name="miscoverage_loss",
+                extension=f"geo_kernel_conformal_{method}",
+                details={
+                    "alpha": alpha,
+                    "calibration_sha256": calibration_sha256,
+                    "bandwidth_km": spatial_result.bandwidth_km,
+                    "bandwidth_source": "calibration_only_leave_one_out_ess_gate",
+                    "distance_metric": "great_circle_haversine_km",
+                    "kernel": "gaussian",
+                    "test_atom_weight": spatial_conformal_config.test_atom_weight,
+                    "validity_scope": spatial_result.preflight[
+                        "local_method_validity_scope"
+                    ],
+                },
+            )
+            spatial_output = ensure_dir(output / f"geo_kernel_conformal_{method}")
+            spatial_artifacts = _audit_and_write(
+                spatial_rows,
+                spatial_output,
+                protocol=spatial_protocol,
+                group_columns=group_columns,
+                cluster_column=cluster,
+                n_bootstrap=n_bootstrap,
+                seed=seed,
+            )
+            for name, path in spatial_artifacts.items():
+                artifacts[f"geo_kernel_conformal_{method}_{name}"] = path
+            method_preflight_path = _write_spatial_preflight(
+                spatial_output / "spatial_method_diagnostics.json",
+                spatial_result.preflight,
+            )
+            artifacts[
+                f"geo_kernel_conformal_{method}_diagnostics"
+            ] = method_preflight_path
+            spatial_efficiency_protocol = _derived_protocol(
+                base,
+                loss_name="prediction_set_fraction",
+                extension=f"geo_kernel_conformal_{method}_efficiency",
+                details={
+                    "alpha": alpha,
+                    "bandwidth_km": spatial_result.bandwidth_km,
+                    "efficiency_loss": "set_size_divided_by_number_of_classes",
+                    "unsupported_location_policy": "all_classes_plus_explicit_flag",
+                },
+            )
+            spatial_efficiency_artifacts = _audit_and_write(
+                _prediction_set_efficiency_rows(spatial_rows),
+                ensure_dir(output / f"geo_kernel_conformal_{method}_efficiency"),
+                protocol=spatial_efficiency_protocol,
+                group_columns=group_columns,
+                cluster_column=cluster,
+                n_bootstrap=n_bootstrap,
+                seed=seed,
+            )
+            for name, path in spatial_efficiency_artifacts.items():
+                artifacts[
+                    f"geo_kernel_conformal_{method}_efficiency_{name}"
+                ] = path
+            spatial_target_diagnostics = _tail_target_diagnostics(
+                spatial_artifacts, risk_target=alpha
+            )
+            summary_rows.append(
+                {
+                    "extension": f"geo_kernel_conformal_{method}",
+                    "role": "empirical_spatial_localization_comparator",
+                    "formal_marginal_anchor": f"conformal_{method}",
+                    "target_coverage": 1.0 - alpha,
+                    "test_coverage": 1.0
+                    - float(np.mean([row["risk"] for row in spatial_rows])),
+                    "mean_set_size": float(
+                        np.mean([row["set_size"] for row in spatial_rows])
+                    ),
+                    "mean_set_size_fraction": float(
+                        np.mean([row["set_size_fraction"] for row in spatial_rows])
+                    ),
+                    "spatial_bandwidth_km": spatial_result.bandwidth_km,
+                    "minimum_test_ess": float(
+                        np.min(spatial_result.effective_sample_size)
+                    ),
+                    "median_test_ess": float(
+                        np.median(spatial_result.effective_sample_size)
+                    ),
+                    "spatial_support_identified_fraction": float(
+                        np.mean(spatial_result.identified)
+                    ),
+                    "protocol_hash": spatial_protocol.signature,
+                    **spatial_target_diagnostics,
+                }
+            )
+    if spatial_preflight is not None and not spatial_preflight.get(
+        "run_local_method", False
+    ):
+        summary_rows.append(
+            {
+                "extension": "geo_kernel_conformal_preflight",
+                "role": "screened_not_run",
+                "spatial_localization_status": spatial_preflight["status"],
+                "reason": spatial_preflight.get("reason", ""),
             }
         )
     calibration_confidence = np.max(calibration_probs, axis=1)
@@ -391,6 +646,7 @@ def run_multilabel_uncertainty_suite(
     crc_alpha: float = 0.10,
     n_bootstrap: int = 2000,
     seed: int = 42,
+    spatial_localization_config: SpatialConformalConfig | None = None,
 ) -> dict[str, Path]:
     output = ensure_dir(output_dir)
     base = _protocol(protocol)
@@ -417,6 +673,25 @@ def run_multilabel_uncertainty_suite(
     cluster = base.spatial_block_column if base.inference_method == "spatial_maxt" else base.cluster_column
     artifacts: dict[str, Path] = {}
     summary_rows: list[dict[str, Any]] = []
+    if spatial_localization_config is not None:
+        spatial_preflight = spatial_localization_preflight(
+            _coordinates_from_npz(calibration_probabilities),
+            _coordinates_from_rows(test_rows),
+            task_geometry="multilabel",
+            config=spatial_localization_config,
+        )
+        artifacts["spatial_localization_preflight"] = _write_spatial_preflight(
+            output / "spatial_localization_preflight.json",
+            spatial_preflight,
+        )
+        summary_rows.append(
+            {
+                "extension": "geo_kernel_crc_preflight",
+                "role": "screened_not_run",
+                "spatial_localization_status": spatial_preflight["status"],
+                "reason": spatial_preflight.get("reason", ""),
+            }
+        )
     crc_model = fit_false_negative_crc(
         calibration_probs, calibration_targets, alpha=crc_alpha, risk_name="false_negative_rate"
     )
@@ -522,10 +797,12 @@ def run_segmentation_uncertainty_suite(
     group_columns: Sequence[str] = ("event_id",),
     calibration_valid_masks: Sequence[np.ndarray] | None = None,
     calibration_sample_ids: Sequence[str] | None = None,
+    calibration_sample_rows: Sequence[Mapping[str, Any]] | None = None,
     selective_coverages: Sequence[float] = (0.5, 0.7, 0.8, 0.9),
     crc_alpha: float = 0.10,
     n_bootstrap: int = 2000,
     seed: int = 42,
+    spatial_localization_config: SpatialConformalConfig | None = None,
 ) -> dict[str, Path]:
     output = ensure_dir(output_dir)
     base = _protocol(protocol)
@@ -613,6 +890,35 @@ def run_segmentation_uncertainty_suite(
             **crc_target_diagnostics,
         }
     ]
+    if spatial_localization_config is not None:
+        if calibration_sample_rows is not None and len(calibration_sample_rows) != len(
+            calibration_probabilities
+        ):
+            raise ExtensionAuditError(
+                "calibration_sample_rows must align with calibration probability maps."
+            )
+        spatial_preflight = spatial_localization_preflight(
+            (
+                _coordinates_from_rows(calibration_sample_rows)
+                if calibration_sample_rows is not None
+                else None
+            ),
+            _coordinates_from_rows(test_rows),
+            task_geometry="segmentation",
+            config=spatial_localization_config,
+        )
+        artifacts["spatial_localization_preflight"] = _write_spatial_preflight(
+            output / "spatial_localization_preflight.json",
+            spatial_preflight,
+        )
+        summary_rows.append(
+            {
+                "extension": "geo_kernel_crc_preflight",
+                "role": "screened_not_run",
+                "spatial_localization_status": spatial_preflight["status"],
+                "reason": spatial_preflight.get("reason", ""),
+            }
+        )
     calibration_confidence = np.asarray(
         [
             float(np.mean(np.maximum(probability[valid], 1.0 - probability[valid])))
@@ -681,9 +987,122 @@ def run_segmentation_uncertainty_suite(
     return artifacts
 
 
+def run_multiclass_spatial_upgrade(
+    calibration_probabilities: str | Path,
+    calibration_metadata_csv: str | Path,
+    test_formal_dir: str | Path,
+    output_dir: str | Path,
+    *,
+    protocol: str | Path | BWERProtocol,
+    group_columns: Sequence[str],
+    source_calibration_manifest: str | Path | None = None,
+    conformal_methods: Sequence[str] = ("lac", "aps", "raps"),
+    alpha: float = 0.10,
+    n_bootstrap: int = 2000,
+    seed: int = 42,
+    spatial_conformal_config: SpatialConformalConfig | None = None,
+) -> dict[str, Path]:
+    """Upgrade existing full probabilities without rerunning a GeoFM.
+
+    Coordinates are joined by calibration sample_id, written to a new
+    calibration artifact, and the complete global-versus-local conformal audit
+    is recomputed downstream. The source probability file is never modified.
+    """
+
+    output = ensure_dir(output_dir)
+    source = Path(calibration_probabilities)
+    metadata_rows = read_csv_rows(calibration_metadata_csv)
+    coordinate_by_id: dict[str, tuple[float, float]] = {}
+    for row in metadata_rows:
+        sample_id = str(row.get("sample_id", "")).strip()
+        coordinates = _coordinates_from_rows([row])
+        if not sample_id or coordinates is None or not np.all(np.isfinite(coordinates)):
+            continue
+        value = (float(coordinates[0, 0]), float(coordinates[0, 1]))
+        previous = coordinate_by_id.get(sample_id)
+        if previous is not None and previous != value:
+            raise ExtensionAuditError(
+                f"Conflicting calibration coordinates for sample_id={sample_id!r}."
+            )
+        coordinate_by_id[sample_id] = value
+    with np.load(source, allow_pickle=False) as artifact:
+        arrays = {name: np.asarray(artifact[name]) for name in artifact.files}
+    required = {"sample_id", "split_role", "test_rows_used"}
+    missing_fields = sorted(required - set(arrays))
+    if missing_fields:
+        raise ExtensionAuditError(
+            "Source calibration NPZ is missing required fields: "
+            + ", ".join(missing_fields)
+        )
+    if str(np.asarray(arrays["test_rows_used"]).reshape(-1)[0]).lower() not in {
+        "false",
+        "0",
+    }:
+        raise ExtensionAuditError("Source calibration NPZ declares test_rows_used=true.")
+    sample_ids = arrays["sample_id"].astype(str)
+    missing = [sample_id for sample_id in sample_ids.tolist() if sample_id not in coordinate_by_id]
+    if missing:
+        raise ExtensionAuditError(
+            f"Calibration metadata is missing verified coordinates for {len(missing)} sample IDs."
+        )
+    arrays["latitude"] = np.asarray(
+        [coordinate_by_id[sample_id][0] for sample_id in sample_ids.tolist()],
+        dtype=np.float64,
+    )
+    arrays["longitude"] = np.asarray(
+        [coordinate_by_id[sample_id][1] for sample_id in sample_ids.tolist()],
+        dtype=np.float64,
+    )
+    enriched = output / "calibration_probabilities_with_coordinates.npz"
+    np.savez_compressed(enriched, **arrays)
+    manifest = output / "calibration_manifest_with_coordinates.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "geobwer.multiclass_spatial_calibration_upgrade.v1",
+                "split_role": str(np.asarray(arrays["split_role"]).reshape(-1)[0]),
+                "test_rows_used": False,
+                "probabilities_sha256": file_sha256(enriched),
+                "source_calibration_sha256": file_sha256(source),
+                "source_calibration_manifest_sha256": (
+                    file_sha256(source_calibration_manifest)
+                    if source_calibration_manifest is not None
+                    else ""
+                ),
+                "coordinate_metadata_sha256": file_sha256(calibration_metadata_csv),
+                "coordinate_join": "exact_sample_id",
+                "sample_count": len(sample_ids),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    config = spatial_conformal_config or SpatialConformalConfig()
+    artifacts = run_multiclass_uncertainty_suite(
+        enriched,
+        test_formal_dir,
+        output / "uncertainty_extensions",
+        protocol=protocol,
+        group_columns=group_columns,
+        calibration_manifest=manifest,
+        conformal_methods=conformal_methods,
+        alpha=alpha,
+        n_bootstrap=n_bootstrap,
+        seed=seed,
+        spatial_conformal_config=config,
+    )
+    return {
+        "calibration_probabilities": enriched,
+        "calibration_manifest": manifest,
+        **artifacts,
+    }
+
+
 __all__ = [
     "ExtensionAuditError",
     "run_multiclass_uncertainty_suite",
+    "run_multiclass_spatial_upgrade",
     "run_multilabel_uncertainty_suite",
     "run_segmentation_uncertainty_suite",
 ]

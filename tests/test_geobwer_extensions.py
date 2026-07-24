@@ -15,11 +15,13 @@ from rsfm_fairness_audit.formal_outputs import (
 )
 from rsfm_fairness_audit.geobwer_extensions import (
     ExtensionAuditError,
+    run_multiclass_spatial_upgrade,
     run_multiclass_uncertainty_suite,
     run_multilabel_uncertainty_suite,
     run_segmentation_uncertainty_suite,
 )
 from rsfm_fairness_audit.io import read_csv_rows
+from rsfm_fairness_audit.spatial_conformal import SpatialConformalConfig
 
 
 def _protocol(task: str, loss: str) -> BWERProtocol:
@@ -100,6 +102,143 @@ def test_multiclass_uncertainty_suite_runs_from_calibration_to_geobwer() -> None
     selective_row = next(row for row in summary_rows if row["extension"] == "selective_080")
     assert "minimum_group_coverage" in selective_row
     assert "selective_geobwer_identified" in selective_row
+    shutil.rmtree(tmp_path)
+
+
+def test_multiclass_uncertainty_suite_runs_spatial_comparator_and_efficiency_audit() -> None:
+    tmp_path = _test_root("multiclass_spatial_extensions")
+    rng = np.random.default_rng(19)
+    protocol = _protocol("multiclass", "zero_one_loss")
+    calibration_probabilities = rng.dirichlet([3.0, 2.0, 1.0], size=60)
+    calibration_targets = np.argmax(calibration_probabilities, axis=1)
+    latitude = np.concatenate((rng.normal(45.0, 0.2, 30), rng.normal(-20.0, 0.2, 30)))
+    longitude = np.concatenate((rng.normal(8.0, 0.2, 30), rng.normal(30.0, 0.2, 30)))
+    calibration = tmp_path / "calibration.npz"
+    np.savez_compressed(
+        calibration,
+        probabilities=calibration_probabilities,
+        targets=calibration_targets,
+        latitude=latitude,
+        longitude=longitude,
+        sample_id=np.asarray([f"calibration-{index:03d}" for index in range(60)]),
+        split_role=np.asarray("calibration"),
+        test_rows_used=np.asarray(False),
+    )
+    test_probabilities = rng.dirichlet([2.0, 2.0, 2.0], size=40)
+    test_targets = np.argmax(test_probabilities, axis=1)
+    rows = _rows(40)
+    for index, row in enumerate(rows):
+        row["latitude"] = 45.0 + 0.01 * index if index < 20 else -20.0 + 0.01 * index
+        row["longitude"] = 8.0 if index < 20 else 30.0
+    formal = write_multiclass_bundle(
+        tmp_path / "formal",
+        sample_rows=rows,
+        probabilities=test_probabilities,
+        targets=test_targets,
+        class_names=("a", "b", "c"),
+        dataset="demo",
+        model="demo-model",
+        split="test",
+        protocol=protocol,
+        model_lineage={"checkpoint_sha256": "demo"},
+        dataset_lineage={"manifest_sha256": "demo"},
+    )
+    spatial_config = SpatialConformalConfig(
+        candidate_bandwidth_km=(50.0, 200.0, 1000.0),
+        minimum_calibration_samples=40,
+        minimum_effective_sample_size=10.0,
+        calibration_anchor_limit=60,
+        maximum_neighbors=60,
+    )
+    artifacts = run_multiclass_uncertainty_suite(
+        calibration,
+        formal.output_dir,
+        tmp_path / "extensions",
+        protocol=protocol,
+        group_columns=("country",),
+        conformal_methods=("lac",),
+        selective_coverages=(),
+        spatial_conformal_config=spatial_config,
+        n_bootstrap=20,
+    )
+    assert artifacts["spatial_localization_preflight"].exists()
+    assert artifacts["conformal_lac_efficiency_summary"].exists()
+    assert artifacts["geo_kernel_conformal_lac_summary"].exists()
+    assert artifacts["geo_kernel_conformal_lac_efficiency_summary"].exists()
+    summary = read_csv_rows(artifacts["summary"])
+    spatial = next(row for row in summary if row["extension"] == "geo_kernel_conformal_lac")
+    assert spatial["role"] == "empirical_spatial_localization_comparator"
+    shutil.rmtree(tmp_path)
+
+
+def test_spatial_upgrade_reuses_probabilities_and_joins_coordinates_by_sample_id() -> None:
+    tmp_path = _test_root("multiclass_spatial_upgrade")
+    rng = np.random.default_rng(23)
+    protocol = _protocol("multiclass", "zero_one_loss")
+    calibration_probabilities = rng.dirichlet([3.0, 2.0], size=60)
+    calibration_targets = np.argmax(calibration_probabilities, axis=1)
+    calibration = tmp_path / "calibration.npz"
+    sample_ids = np.asarray([f"calibration-{index:03d}" for index in range(60)])
+    np.savez_compressed(
+        calibration,
+        probabilities=calibration_probabilities,
+        targets=calibration_targets,
+        sample_id=sample_ids,
+        split_role=np.asarray("calibration"),
+        test_rows_used=np.asarray(False),
+    )
+    metadata = tmp_path / "metadata.csv"
+    metadata.write_text(
+        "sample_id,latitude,longitude\n"
+        + "\n".join(
+            f"{sample_id},{45.0 + (index % 2) * -65.0},{8.0 + (index % 2) * 22.0}"
+            for index, sample_id in enumerate(sample_ids.tolist())
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    test_probabilities = rng.dirichlet([2.0, 2.0], size=40)
+    test_targets = np.argmax(test_probabilities, axis=1)
+    rows = _rows(40)
+    for index, row in enumerate(rows):
+        row["latitude"] = 45.0 if index % 2 == 0 else -20.0
+        row["longitude"] = 8.0 if index % 2 == 0 else 30.0
+    formal = write_multiclass_bundle(
+        tmp_path / "formal",
+        sample_rows=rows,
+        probabilities=test_probabilities,
+        targets=test_targets,
+        class_names=("a", "b"),
+        dataset="demo",
+        model="demo-model",
+        split="test",
+        protocol=protocol,
+        model_lineage={"checkpoint_sha256": "demo"},
+        dataset_lineage={"manifest_sha256": "demo"},
+    )
+    config = SpatialConformalConfig(
+        candidate_bandwidth_km=(50.0, 200.0, 1000.0),
+        minimum_calibration_samples=40,
+        minimum_effective_sample_size=10.0,
+        calibration_anchor_limit=60,
+        maximum_neighbors=60,
+    )
+    artifacts = run_multiclass_spatial_upgrade(
+        calibration,
+        metadata,
+        formal.output_dir,
+        tmp_path / "upgrade",
+        protocol=protocol,
+        group_columns=("country",),
+        conformal_methods=("lac",),
+        spatial_conformal_config=config,
+        n_bootstrap=20,
+    )
+    with np.load(artifacts["calibration_probabilities"], allow_pickle=False) as enriched:
+        assert np.array_equal(enriched["probabilities"], calibration_probabilities)
+        assert enriched["latitude"].shape == (60,)
+        assert enriched["longitude"].shape == (60,)
+    assert artifacts["geo_kernel_conformal_lac_summary"].exists()
     shutil.rmtree(tmp_path)
 
 
