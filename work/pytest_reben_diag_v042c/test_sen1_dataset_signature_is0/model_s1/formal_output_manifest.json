@@ -1,0 +1,77 @@
+{
+  "output_schema": "geobwer.binary_segmentation.v1",
+  "created_utc": "2026-07-24T19:12:17.300015+00:00",
+  "row_count": 2,
+  "protocol": {
+    "beta": 0.1,
+    "beta_profile": [
+      0.05,
+      0.1,
+      0.2,
+      0.3
+    ],
+    "deployment_weighting": "equal",
+    "audit_measure": "balanced",
+    "partition_rule": "one_axis_at_a_time",
+    "missingness_rule": "strict",
+    "standardization_target": "uniform",
+    "standardization_weights": {},
+    "support_rule": "event_preflight",
+    "inference_target": "fixed_slice_universe",
+    "estimand_scope": "fixed_event_universe",
+    "inference_method": "spatial_maxt",
+    "dependence_design": "spatial_blocks",
+    "confidence_level": 0.95,
+    "min_slices": 2,
+    "min_units_per_slice": 1,
+    "min_clusters_per_slice": 2,
+    "min_clusters_for_default": 30,
+    "group_variable": "event_id",
+    "balance_variable": "",
+    "loss_name": "one_minus_iou",
+    "task_adapter": "segmentation",
+    "independent_unit_column": "independent_unit_id",
+    "cluster_column": "scene_id",
+    "spatial_block_column": "spatial_block_id",
+    "metric_version": "geobwer_fractional_1.1",
+    "metadata": {
+      "estimand": "fixed_11_event_deployment_universe",
+      "small_cluster_calibrated": "true",
+      "small_cluster_calibration_method": "validation_layout_range_coverage_fpr_monte_carlo_gate",
+      "spatial_block_calibrated": "true",
+      "spatial_block_calibration_sha256": "6eee705aebd664c86ba4fb374125b3012625fdb4a8faba0acc51658e981d190d",
+      "spatial_block_cell_km": "100.0",
+      "spatial_block_selection": "validation_common_all_models",
+      "superpopulation_claim": "prohibited_without_additional_events"
+    }
+  },
+  "protocol_hash": "c86d2ab9fd58988bceb0a0c29f1341f7bb5807c1db07bd3c56dc86a5d867be9a",
+  "model_lineage": {
+    "model": "model_s1",
+    "sensor_mode": "S1",
+    "probability_export": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_reben_diag_v042c\\test_sen1_dataset_signature_is0\\s1_export"
+  },
+  "dataset_lineage": {
+    "dataset": "Sen1Floods11-v1.1-HandLabeled",
+    "split": "test",
+    "sample_count": 2,
+    "sample_ids": [
+      "Somalia_001",
+      "USA_002"
+    ],
+    "reference_targets_sha256": "b63714a4fc19fefa69de7bdbd600d7933a450f47b23a5bd2d06b3126f1a99e21",
+    "spatial_block_cell_km": 100.0,
+    "metadata_sha256": "63be3ca05c0a6df62d4eda9f16dc96dae81b23bc2fa826ac5619e24919bae0a2"
+  },
+  "artifacts": {
+    "formal_audit_table": "formal_audit_table.csv",
+    "probability_artifact": "probability_maps_index.json",
+    "probability_sha256": "1677a643265f23e1fa1375d2365da1ac0be04ba85cfebe61c15c070645ce42a6",
+    "class_mapping": "class_mapping.json",
+    "class_mapping_sha256": "aaa0d68e5fcf466074208d64656ecc16eb5598668340f9d315b54fb0eadb75a3"
+  },
+  "extra": {
+    "decision_threshold": 0.5,
+    "map_count": 2
+  }
+}

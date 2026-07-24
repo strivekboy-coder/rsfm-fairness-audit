@@ -1,0 +1,70 @@
+{
+  "status": "ready",
+  "schema": "geobwer.sen1floods11.terratorch_split_adapter.v1",
+  "counts": {
+    "s1": 446,
+    "s2": 446,
+    "label": 446
+  },
+  "split_counts": {
+    "train": 252,
+    "validation": 89,
+    "test": 90
+  },
+  "selected_unique_samples": 431,
+  "unused_complete_samples": 15,
+  "source_split_paths": {
+    "train": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_final_runner_dry_run_rewi0\\official_splits\\train.csv",
+    "validation": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_final_runner_dry_run_rewi0\\official_splits\\val.csv",
+    "test": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_final_runner_dry_run_rewi0\\official_splits\\test.csv"
+  },
+  "source_split_sha256": {
+    "train": "e712f78ae6d4e3f19658c1628efed94e488e0369be46645b7613d6005fcd2f56",
+    "validation": "49d175b7ead78f37e87540f5e5e721f5255136350a78a4526b1fce65309cad25",
+    "test": "383b7add786358eb3b0f509c6e332a416f3bb6b976da13cb0f7b33e661e57612"
+  },
+  "terratorch_split_paths": {
+    "train": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\train_prefixes.txt",
+    "validation": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\validation_prefixes.txt",
+    "test": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\test_prefixes.txt"
+  },
+  "terratorch_split_sha256": {
+    "train": "1aeced4899528887c10eadb269dd5d7c84049286466ee0563d644592f6b9baa7",
+    "validation": "b7dec3e9a37b66ed3f8ac18e6c782444f08cac512e55d05d025118362ee47e87",
+    "test": "92939c85f02622d722b0c00eb3d030183270c9ed0ad53d84575068b22fdb5d01"
+  },
+  "roots": {
+    "s1": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_final_runner_dry_run_rewi0\\S1GRDHand",
+    "s2": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_final_runner_dry_run_rewi0\\S2L1CHand",
+    "label": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_final_runner_dry_run_rewi0\\LabelHand"
+  },
+  "terramind_checkpoint": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_final_runner_dry_run_rewi0\\TerraMind_v1_base.pt",
+  "terramind_checkpoint_sha256": "83c3a0938067c83867a46e564443c2fa38383bf4f966d931b11cb025b847d7ec",
+  "terramind_revision": "fb96c70d0a5f68dcc44030b89cbfd8ec3fb0c67a",
+  "model_selection": {
+    "42": {
+      "policy": "official_train_inner_event_disjoint",
+      "fit_split": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\model_selection_seed_42\\fit_prefixes.txt",
+      "selection_split": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\model_selection_seed_42\\selection_prefixes.txt",
+      "fit_count": 206,
+      "selection_count": 46,
+      "outer_validation_used_for_model_selection": false
+    },
+    "73": {
+      "policy": "official_train_inner_event_disjoint",
+      "fit_split": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\model_selection_seed_73\\fit_prefixes.txt",
+      "selection_split": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\model_selection_seed_73\\selection_prefixes.txt",
+      "fit_count": 206,
+      "selection_count": 46,
+      "outer_validation_used_for_model_selection": false
+    },
+    "101": {
+      "policy": "official_train_inner_event_disjoint",
+      "fit_split": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\model_selection_seed_101\\fit_prefixes.txt",
+      "selection_split": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\model_selection_seed_101\\selection_prefixes.txt",
+      "fit_count": 206,
+      "selection_count": 46,
+      "outer_validation_used_for_model_selection": false
+    }
+  }
+}

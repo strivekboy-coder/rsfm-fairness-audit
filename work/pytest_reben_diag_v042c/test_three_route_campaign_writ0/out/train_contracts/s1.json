@@ -1,0 +1,74 @@
+{
+  "schema": "test",
+  "selection_split": "official_train",
+  "test_rows_used": false,
+  "sensor_mode": "S1",
+  "sample_count": 32,
+  "mean": [
+    0.0,
+    0.0
+  ],
+  "std": [
+    1.0,
+    1.0
+  ],
+  "pos_weight": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+  ],
+  "diagnostic_sampling": {
+    "schema": "geobwer.reben.diagnostic_sampling.v1",
+    "formal_evidence": false,
+    "strategy": "deterministic_group_then_multilabel_coverage",
+    "split": "train",
+    "seed": 42,
+    "requested_max_samples": 32,
+    "source_samples": 96,
+    "selected_samples": 32,
+    "source_group_count": 8,
+    "selected_group_count": 8,
+    "selected_groups": [
+      "T00ABC",
+      "T01ABC",
+      "T02ABC",
+      "T03ABC",
+      "T04ABC",
+      "T05ABC",
+      "T06ABC",
+      "T07ABC"
+    ],
+    "covered_label_count": 11,
+    "covered_label_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "selected_sample_id_sha256": "b565e2bd0f9200cf99c66573144a70c1205edf593ba6839ab478e7d615d3ba70",
+    "status": "ready"
+  }
+}

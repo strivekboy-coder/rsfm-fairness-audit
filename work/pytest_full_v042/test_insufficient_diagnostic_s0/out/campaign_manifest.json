@@ -1,0 +1,39 @@
+{
+  "schema": "geobwer.reben.resnet50_supervised_panel.v1",
+  "formal_evidence": false,
+  "design": "supervised_resnet50_x_s1_s2_fusion_x_seed",
+  "config": {
+    "lmdb_root": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_insufficient_diagnostic_s0\\lmdb",
+    "metadata_parquet": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_insufficient_diagnostic_s0\\metadata.parquet",
+    "output_dir": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_insufficient_diagnostic_s0\\out",
+    "persistent_output_dir": null,
+    "metadata_snow_cloud_parquet": null,
+    "geobwer_protocol": "configs\\geobwer\\reben.yaml",
+    "sensor_modes": [
+      "S1"
+    ],
+    "seeds": [
+      42
+    ],
+    "max_epochs": 1,
+    "patience": 1,
+    "min_delta": 0.0001,
+    "batch_size": 1,
+    "num_workers": 0,
+    "learning_rate": 0.0003,
+    "weight_decay": 0.0001,
+    "pretrained_encoder": false,
+    "normalization_pixel_stride": 8,
+    "device": "auto",
+    "amp": true,
+    "audit_bootstrap": 2000,
+    "crc_alpha": 0.1,
+    "diagnostic_max_samples": 1
+  },
+  "runs": {
+    "resnet50_s1_seed_42": {
+      "diagnostic_manifest": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_insufficient_diagnostic_s0\\out\\s1\\seed_42\\diagnostic_manifest.json"
+    }
+  },
+  "seed_robustness": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v042\\test_insufficient_diagnostic_s0\\out\\seed_robustness.csv"
+}
