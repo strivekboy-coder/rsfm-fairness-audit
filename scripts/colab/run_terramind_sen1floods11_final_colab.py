@@ -25,6 +25,7 @@ from rsfm_fairness_audit.bwer_protocol import BWERProtocol  # noqa: E402
 from rsfm_fairness_audit.geobwer_extensions import run_segmentation_uncertainty_suite  # noqa: E402
 from rsfm_fairness_audit.geobwer_panel import run_geobwer_model_panel  # noqa: E402
 from rsfm_fairness_audit.persistent_cache import hydrate_output, persist_output  # noqa: E402
+from rsfm_fairness_audit.probe_selection import group_disjoint_inner_split  # noqa: E402
 from rsfm_fairness_audit.sen1floods11_formal import (  # noqa: E402
     calibrate_common_sen1_spatial_blocks,
     finalize_sen1floods11_segmentation,
@@ -37,6 +38,24 @@ from rsfm_fairness_audit.terramind_sen1_config import (  # noqa: E402
 
 
 MODES = ("S1", "S2", "S1+S2")
+
+
+def _csv_ints(value: str) -> tuple[int, ...]:
+    result = tuple(int(item.strip()) for item in value.split(",") if item.strip())
+    if not result or len(set(result)) != len(result):
+        raise argparse.ArgumentTypeError("Expected unique comma-separated integer seeds.")
+    return result
+
+
+def _named_path(value: str) -> tuple[str, Path]:
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("Expected NAME=/absolute/path.")
+    name, raw_path = value.split("=", 1)
+    name = name.strip()
+    path = Path(raw_path.strip())
+    if not name or not raw_path.strip():
+        raise argparse.ArgumentTypeError("Expected non-empty NAME=/absolute/path.")
+    return name, path
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -67,7 +86,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--max-epochs", type=int, default=100)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--seeds",
+        type=_csv_ints,
+        default=(42, 73, 101),
+        help="Formal training seeds. All are independently trained and retain complete probabilities.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        help="Legacy single-seed diagnostic override; not accepted for a formal campaign.",
+    )
+    parser.add_argument(
+        "--additional-validation-export",
+        action="append",
+        type=_named_path,
+        default=[],
+        metavar="NAME=PATH",
+        help=(
+            "Validation probability export from another Sen1 model. Repeat for every supervised-baseline "
+            "seed and Prithvi so one validation-only spatial scale is frozen for the entire model panel."
+        ),
+    )
     parser.add_argument("--calibration-simulations", type=int, default=200)
     parser.add_argument("--calibration-bootstrap", type=int, default=500)
     parser.add_argument("--audit-bootstrap", type=int, default=2000)
@@ -232,6 +272,17 @@ def main() -> None:
         )
     else:
         _, backbone_checkpoint_sha256 = validate_terramind_checkpoint(args.checkpoint)
+    seeds = (int(args.seed),) if args.seed is not None else tuple(map(int, args.seeds))
+    if not (args.dry_run or args.smoke_only) and len(seeds) < 3:
+        raise RuntimeError(
+            "The formal TerraMind campaign requires at least three independent training seeds. "
+            "Use --seed only for dry-run or smoke diagnostics."
+        )
+    external_validation_exports: dict[str, Path] = {}
+    for name, path in args.additional_validation_export:
+        if name in external_validation_exports:
+            raise RuntimeError(f"Duplicate --additional-validation-export name: {name}")
+        external_validation_exports[name] = path
     hydrate_output(args.output_dir, args.persistent_output_dir)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     source_report = prepare_terramind_sen1_splits(
@@ -248,6 +299,33 @@ def main() -> None:
     terratorch_splits = {
         name: Path(path) for name, path in source_report["terratorch_split_paths"].items()
     }
+    official_train_prefixes = [
+        line.strip()
+        for line in terratorch_splits["train"].read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    inner_splits: dict[int, dict[str, Path]] = {}
+    for seed in seeds:
+        fit_indices, selection_indices = group_disjoint_inner_split(
+            [prefix.split("_", 1)[0] for prefix in official_train_prefixes],
+            validation_fraction=0.18,
+            seed=seed,
+        )
+        seed_root = args.output_dir / "terratorch_splits" / f"model_selection_seed_{seed}"
+        seed_root.mkdir(parents=True, exist_ok=True)
+        fit_path = seed_root / "fit_prefixes.txt"
+        selection_path = seed_root / "selection_prefixes.txt"
+        fit_path.write_text(
+            "".join(official_train_prefixes[index] + "\n" for index in fit_indices),
+            encoding="utf-8",
+        )
+        selection_path.write_text(
+            "".join(
+                official_train_prefixes[index] + "\n" for index in selection_indices
+            ),
+            encoding="utf-8",
+        )
+        inner_splits[seed] = {"fit": fit_path, "selection": selection_path}
     (args.output_dir / "source_preflight.json").write_text(
         json.dumps(
             {
@@ -255,6 +333,17 @@ def main() -> None:
                 "terramind_checkpoint": str(args.checkpoint),
                 "terramind_checkpoint_sha256": backbone_checkpoint_sha256,
                 "terramind_revision": TERRAMIND_OFFICIAL_REVISION,
+                "model_selection": {
+                    str(seed): {
+                        "policy": "official_train_inner_event_disjoint",
+                        "fit_split": str(paths["fit"]),
+                        "selection_split": str(paths["selection"]),
+                        "fit_count": _split_count(paths["fit"]),
+                        "selection_count": _split_count(paths["selection"]),
+                        "outer_validation_used_for_model_selection": False,
+                    }
+                    for seed, paths in inner_splits.items()
+                },
             },
             indent=2,
         ),
@@ -268,99 +357,127 @@ def main() -> None:
             "use a common model set. Use --dry-run to inspect a subset of configs."
         )
     checkpoints: dict[str, Path | None] = {}
-    validation_exports: dict[str, Path] = {}
+    validation_exports: dict[str, Path] = dict(external_validation_exports)
     test_exports: dict[str, Path] = {}
     for mode in modes:
         slug = mode.lower().replace("+", "_plus_")
-        run_dir = args.output_dir / slug
-        config_dir = run_dir / "configs"
-        validation_output = run_dir / "probabilities" / "validation"
-        test_output = run_dir / "probabilities" / "test"
-        common = {
-            "sensor_mode": mode,
-            "s1_root": args.s1_root,
-            "s2_root": args.s2_root,
-            "label_root": args.label_root,
-            "train_split": terratorch_splits["train"],
-            "val_split": terratorch_splits["validation"],
-            "test_split": terratorch_splits["test"],
-            "run_dir": run_dir,
-            "backbone_checkpoint_path": args.checkpoint,
-            "seed": args.seed,
-            "batch_size": args.batch_size,
-            "num_workers": args.num_workers,
-            "max_epochs": args.max_epochs,
-            "fast_dev_run": args.smoke_only,
-            "persistent_checkpoint_dir": (
-                args.persistent_output_dir / slug / "checkpoints"
-                if args.persistent_output_dir is not None
-                else None
-            ),
-            "checkpoint_mirror_every_n_epochs": args.checkpoint_mirror_every_n_epochs,
-        }
-        fit_config = write_terramind_sen1floods11_config(config_dir / "fit.yaml", **common)
-        if args.smoke_only:
-            _run(_terratorch_command() + ["fit", "-c", str(fit_config)])
-            smoke_manifest = run_dir / "diagnostic_manifest.json"
-            smoke_manifest.write_text(
-                json.dumps(
-                    {
-                        "schema": "geobwer.sen1floods11.terramind_diagnostic.v1",
-                        "formal_evidence": False,
-                        "reason": "real_gpu_fast_dev_run",
-                        "sensor_mode": mode,
-                        "fit_config": str(fit_config),
-                        "fit_config_sha256": file_sha256(fit_config),
-                        "pretraining_checkpoint_sha256": backbone_checkpoint_sha256,
-                    },
-                    indent=2,
+        for seed in seeds:
+            run_name = f"terramind_v1_base_{slug}_seed_{seed}"
+            run_dir = args.output_dir / slug / f"seed_{seed}"
+            config_dir = run_dir / "configs"
+            validation_output = run_dir / "probabilities" / "validation"
+            test_output = run_dir / "probabilities" / "test"
+            prediction_common = {
+                "sensor_mode": mode,
+                "s1_root": args.s1_root,
+                "s2_root": args.s2_root,
+                "label_root": args.label_root,
+                "train_split": terratorch_splits["train"],
+                "val_split": terratorch_splits["validation"],
+                "test_split": terratorch_splits["test"],
+                "run_dir": run_dir,
+                "backbone_checkpoint_path": args.checkpoint,
+                "seed": seed,
+                "batch_size": args.batch_size,
+                "num_workers": args.num_workers,
+                "max_epochs": args.max_epochs,
+                "fast_dev_run": args.smoke_only,
+                "persistent_checkpoint_dir": (
+                    args.persistent_output_dir / slug / f"seed_{seed}" / "checkpoints"
+                    if args.persistent_output_dir is not None
+                    else None
                 ),
-                encoding="utf-8",
+                "checkpoint_mirror_every_n_epochs": args.checkpoint_mirror_every_n_epochs,
+            }
+            fit_common = {
+                **prediction_common,
+                "train_split": inner_splits[seed]["fit"],
+                "val_split": inner_splits[seed]["selection"],
+            }
+            fit_config = write_terramind_sen1floods11_config(
+                config_dir / "fit.yaml", **fit_common
+            )
+            if args.smoke_only:
+                _run(_terratorch_command() + ["fit", "-c", str(fit_config)])
+                smoke_manifest = run_dir / "diagnostic_manifest.json"
+                smoke_manifest.write_text(
+                    json.dumps(
+                        {
+                            "schema": "geobwer.sen1floods11.terramind_diagnostic.v2",
+                            "formal_evidence": False,
+                            "reason": "real_gpu_fast_dev_run",
+                            "sensor_mode": mode,
+                            "seed": seed,
+                            "fit_config": str(fit_config),
+                            "fit_config_sha256": file_sha256(fit_config),
+                            "pretraining_checkpoint_sha256": backbone_checkpoint_sha256,
+                        },
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                persist_output(
+                    run_dir,
+                    (
+                        args.persistent_output_dir / slug / f"seed_{seed}"
+                        if args.persistent_output_dir
+                        else None
+                    ),
+                    label=f"{run_name}-diagnostic",
+                )
+                continue
+            validation_config = write_terramind_sen1floods11_config(
+                config_dir / "predict_validation.yaml",
+                **prediction_common,
+                prediction_split="validation",
+                probability_output_dir=validation_output,
+            )
+            test_config = write_terramind_sen1floods11_config(
+                config_dir / "predict_test.yaml",
+                **prediction_common,
+                prediction_split="test",
+                probability_output_dir=test_output,
+            )
+            checkpoint = _fit_if_needed(
+                fit_config,
+                run_dir,
+                backbone_checkpoint_sha256=backbone_checkpoint_sha256,
+                dry_run=args.dry_run,
             )
             persist_output(
                 run_dir,
-                args.persistent_output_dir / slug if args.persistent_output_dir else None,
-                label=f"{mode}-diagnostic",
+                (
+                    args.persistent_output_dir / slug / f"seed_{seed}"
+                    if args.persistent_output_dir
+                    else None
+                ),
+                label=f"{run_name}-fit",
             )
-            continue
-        validation_config = write_terramind_sen1floods11_config(
-            config_dir / "predict_validation.yaml",
-            **common,
-            prediction_split="validation",
-            probability_output_dir=validation_output,
-        )
-        test_config = write_terramind_sen1floods11_config(
-            config_dir / "predict_test.yaml",
-            **common,
-            prediction_split="test",
-            probability_output_dir=test_output,
-        )
-        checkpoint = _fit_if_needed(
-            fit_config,
-            run_dir,
-            backbone_checkpoint_sha256=backbone_checkpoint_sha256,
-            dry_run=args.dry_run,
-        )
-        persist_output(run_dir, args.persistent_output_dir / slug if args.persistent_output_dir else None, label=f"{mode}-fit")
-        _predict_if_needed(
-            validation_config,
-            checkpoint,
-            validation_output,
-            expected=_split_count(terratorch_splits["validation"]),
-            dry_run=args.dry_run,
-        )
-        persist_output(
-            validation_output,
-            args.persistent_output_dir / slug / "probabilities" / "validation"
-            if args.persistent_output_dir
-            else None,
-            label=f"{mode}-validation-predictions",
-        )
-        checkpoints[mode] = checkpoint
-        validation_exports[mode] = validation_output
-        test_exports[mode] = test_output
-        # Ensure the test config is materialized and schema-checkable before any long run.
-        assert test_config.exists()
+            _predict_if_needed(
+                validation_config,
+                checkpoint,
+                validation_output,
+                expected=_split_count(terratorch_splits["validation"]),
+                dry_run=args.dry_run,
+            )
+            persist_output(
+                validation_output,
+                (
+                    args.persistent_output_dir
+                    / slug
+                    / f"seed_{seed}"
+                    / "probabilities"
+                    / "validation"
+                    if args.persistent_output_dir
+                    else None
+                ),
+                label=f"{run_name}-validation-predictions",
+            )
+            checkpoints[run_name] = checkpoint
+            validation_exports[run_name] = validation_output
+            test_exports[run_name] = test_output
+            # Materialize test config before the validation-only scale is chosen.
+            assert test_config.exists()
     if args.smoke_only:
         diagnostic_manifest = args.output_dir / "diagnostic_panel_manifest.json"
         diagnostic_manifest.write_text(
@@ -370,6 +487,7 @@ def main() -> None:
                     "formal_evidence": False,
                     "reason": "real_gpu_fast_dev_run",
                     "modes": list(modes),
+                    "seeds": list(seeds),
                     "pretraining_checkpoint_sha256": backbone_checkpoint_sha256,
                 },
                 indent=2,
@@ -391,7 +509,7 @@ def main() -> None:
         metadata_csv=args.metadata_csv,
         n_simulations=args.calibration_simulations,
         n_bootstrap=args.calibration_bootstrap,
-        seed=args.seed,
+        seed=seeds[0],
         minimum_moderate_tail_power=args.minimum_moderate_tail_power,
     )
     persist_output(args.output_dir, args.persistent_output_dir, label="spatial-calibration")
@@ -400,57 +518,89 @@ def main() -> None:
     panel_protocol: BWERProtocol | None = None
     for mode in modes:
         slug = mode.lower().replace("+", "_plus_")
-        run_dir = args.output_dir / slug
-        test_config = run_dir / "configs" / "predict_test.yaml"
-        _predict_if_needed(
-            test_config,
-            checkpoints[mode],
-            test_exports[mode],
-            expected=_split_count(terratorch_splits["test"]),
-            dry_run=False,
-        )
-        persist_output(
-            test_exports[mode],
-            args.persistent_output_dir / slug / "probabilities" / "test"
-            if args.persistent_output_dir
-            else None,
-            label=f"{mode}-test-predictions",
-        )
-        bundle = finalize_sen1floods11_segmentation(
-            test_exports[mode],
-            run_dir / "formal_outputs",
-            model_name=f"terramind_v1_base_{slug}",
-            checkpoint_path=checkpoints[mode],
-            pretraining_checkpoint_path=args.checkpoint,
-            pretraining_checkpoint_sha256=backbone_checkpoint_sha256,
-            protocol_path=args.protocol,
-            block_calibration_path=calibration_path,
-            metadata_csv=args.metadata_csv,
-            split="test",
-            sensor_mode=mode,
-            terratorch_version=terratorch_version,
-        )
-        calibration_rows, calibration_probabilities, calibration_targets, calibration_valid = load_sen1_probability_units(
-            validation_exports[mode], metadata_csv=args.metadata_csv
-        )
-        formal_manifest = json.loads(bundle.manifest.read_text(encoding="utf-8"))
-        resolved_protocol = BWERProtocol.from_mapping(formal_manifest["protocol"])
-        panel_tables[f"terramind_v1_base_{slug}"] = bundle.audit_table
-        panel_protocol = resolved_protocol
-        run_segmentation_uncertainty_suite(
-            calibration_probabilities,
-            calibration_targets,
-            bundle.output_dir,
-            run_dir / "uncertainty_extensions",
-            protocol=resolved_protocol,
-            group_columns=("event_id",),
-            calibration_valid_masks=calibration_valid,
-            calibration_sample_ids=[str(row["sample_id"]) for row in calibration_rows],
-            crc_alpha=args.crc_alpha,
-            n_bootstrap=args.audit_bootstrap,
-            seed=args.seed,
-        )
-        persist_output(run_dir, args.persistent_output_dir / slug if args.persistent_output_dir else None, label=f"{mode}-formal")
+        for seed in seeds:
+            run_name = f"terramind_v1_base_{slug}_seed_{seed}"
+            run_dir = args.output_dir / slug / f"seed_{seed}"
+            test_config = run_dir / "configs" / "predict_test.yaml"
+            _predict_if_needed(
+                test_config,
+                checkpoints[run_name],
+                test_exports[run_name],
+                expected=_split_count(terratorch_splits["test"]),
+                dry_run=False,
+            )
+            persist_output(
+                test_exports[run_name],
+                (
+                    args.persistent_output_dir
+                    / slug
+                    / f"seed_{seed}"
+                    / "probabilities"
+                    / "test"
+                    if args.persistent_output_dir
+                    else None
+                ),
+                label=f"{run_name}-test-predictions",
+            )
+            bundle = finalize_sen1floods11_segmentation(
+                test_exports[run_name],
+                run_dir / "formal_outputs",
+                model_name=run_name,
+                checkpoint_path=checkpoints[run_name],
+                pretraining_checkpoint_path=args.checkpoint,
+                pretraining_checkpoint_sha256=backbone_checkpoint_sha256,
+                protocol_path=args.protocol,
+                block_calibration_path=calibration_path,
+                metadata_csv=args.metadata_csv,
+                split="test",
+                sensor_mode=mode,
+                terratorch_version=terratorch_version,
+                model_selection_lineage={
+                    "model_selection": "official_train_inner_event_disjoint",
+                    "model_selection_fit_split": str(inner_splits[seed]["fit"]),
+                    "model_selection_holdout_split": str(
+                        inner_splits[seed]["selection"]
+                    ),
+                    "outer_validation_used_for_model_selection": False,
+                    "seed": seed,
+                },
+            )
+            (
+                calibration_rows,
+                calibration_probabilities,
+                calibration_targets,
+                calibration_valid,
+            ) = load_sen1_probability_units(
+                validation_exports[run_name], metadata_csv=args.metadata_csv
+            )
+            formal_manifest = json.loads(bundle.manifest.read_text(encoding="utf-8"))
+            resolved_protocol = BWERProtocol.from_mapping(formal_manifest["protocol"])
+            panel_tables[run_name] = bundle.audit_table
+            panel_protocol = resolved_protocol
+            run_segmentation_uncertainty_suite(
+                calibration_probabilities,
+                calibration_targets,
+                bundle.output_dir,
+                run_dir / "uncertainty_extensions",
+                protocol=resolved_protocol,
+                group_columns=("event_id",),
+                calibration_valid_masks=calibration_valid,
+                calibration_sample_ids=[
+                    str(row["sample_id"]) for row in calibration_rows
+                ],
+                crc_alpha=args.crc_alpha,
+                n_bootstrap=args.audit_bootstrap,
+                seed=seed,
+            )
+            persist_output(
+                run_dir,
+                (
+                    args.persistent_output_dir / slug / f"seed_{seed}"
+                    if args.persistent_output_dir
+                    else None
+                ),
+                label=f"{run_name}-formal",
+            )
     if set(modes) == set(MODES):
         if panel_protocol is None:
             raise RuntimeError("Internal error: the Sen1 model-panel protocol was not resolved.")
@@ -460,8 +610,20 @@ def main() -> None:
             protocol=panel_protocol,
             group_column="event_id",
             cluster_column="spatial_block_id",
+            comparison_pairs=tuple(
+                (
+                    f"terramind_v1_base_{left}_seed_{seed}",
+                    f"terramind_v1_base_{right}_seed_{seed}",
+                )
+                for seed in seeds
+                for left, right in (
+                    ("s1", "s2"),
+                    ("s1", "s1_plus_s2"),
+                    ("s2", "s1_plus_s2"),
+                )
+            ),
             n_bootstrap=args.audit_bootstrap,
-            seed=args.seed,
+            seed=seeds[0],
         )
     persist_output(args.output_dir, args.persistent_output_dir, label="campaign-complete")
     print(f"[terramind:campaign] complete: {args.output_dir}")

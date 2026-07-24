@@ -1,0 +1,60 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+import sys
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from rsfm_fairness_audit.prithvi_sen1_campaign import (  # noqa: E402
+    PrithviSen1CampaignConfig,
+    run_prithvi_sen1_probability_campaign,
+)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Migrate the official Prithvi Sen1Floods11 task checkpoint to the GeoBWER 1.1 "
+            "probability-map contract on the official validation/test members."
+        )
+    )
+    parser.add_argument("--prepared-data-root", type=Path, required=True)
+    parser.add_argument("--prepared-metadata-csv", type=Path)
+    parser.add_argument("--model-config", type=Path, required=True)
+    parser.add_argument("--val-split", type=Path, required=True)
+    parser.add_argument("--test-split", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--persistent-output-dir", type=Path)
+    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--diagnostic-max-samples", type=int)
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    artifacts = run_prithvi_sen1_probability_campaign(
+        PrithviSen1CampaignConfig(
+            prepared_data_root=args.prepared_data_root,
+            prepared_metadata_csv=args.prepared_metadata_csv,
+            model_config=args.model_config,
+            validation_split=args.val_split,
+            test_split=args.test_split,
+            output_dir=args.output_dir,
+            persistent_output_dir=args.persistent_output_dir,
+            batch_size=args.batch_size,
+            device=args.device,
+            diagnostic_max_samples=args.diagnostic_max_samples,
+        )
+    )
+    print(f"[prithvi:sen1] probability migration complete: {artifacts['manifest']}")
+    print("[prithvi:sen1] GeoBWER finalization remains blocked until the all-model "
+          "validation-only spatial calibration is frozen.")
+
+
+if __name__ == "__main__":
+    main()

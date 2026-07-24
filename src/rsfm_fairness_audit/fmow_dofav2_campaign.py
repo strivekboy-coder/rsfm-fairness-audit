@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-import hashlib
+from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -18,14 +17,17 @@ from rsfm_fairness_audit.fmow_sentinel_classification import (
     _load_metadata,
     _row_hash,
     _split_rows,
-    _train_linear_probe,
 )
 from rsfm_fairness_audit.fmow_formal_split import fmow_site_id
 from rsfm_fairness_audit.formal_outputs import FormalOutputBundle, file_sha256, write_multiclass_bundle
 from rsfm_fairness_audit.geobwer import audit_rows
 from rsfm_fairness_audit.geobwer_extensions import run_multiclass_uncertainty_suite
-from rsfm_fairness_audit.io import ensure_dir, read_csv_rows
+from rsfm_fairness_audit.io import ensure_dir, read_csv_rows, write_csv
 from rsfm_fairness_audit.persistent_cache import hydrate_output, persist_output
+from rsfm_fairness_audit.probe_selection import (
+    MulticlassProbeSearchConfig,
+    fit_selected_multiclass_probe,
+)
 
 
 class FmowDOFAv2CampaignError(RuntimeError):
@@ -68,7 +70,11 @@ class FmowDOFAv2CampaignConfig:
     band_profile: str = "sentinel2_9_legacy"
     batch_size: int = 16
     probe_epochs: int = 200
-    probe_learning_rate: float = 1e-2
+    probe_learning_rate: float = 1e-3
+    probe_learning_rates: tuple[float, ...] = (1e-4, 3e-4, 1e-3, 3e-3)
+    probe_patience: int = 20
+    probe_inner_validation_fraction: float = 0.15
+    probe_batch_size: int = 512
     weight_decay: float = 1e-4
     device: str = "auto"
     max_samples_per_split: int | None = None
@@ -76,6 +82,7 @@ class FmowDOFAv2CampaignConfig:
     audit_bootstrap: int = 2000
     conformal_alpha: float = 0.10
     seed: int = 42
+    seeds: tuple[int, ...] = (42, 73, 101)
 
     def __post_init__(self) -> None:
         if self.max_samples_per_split is not None and not self.diagnostic_only:
@@ -86,12 +93,10 @@ class FmowDOFAv2CampaignConfig:
             raise ValueError("diagnostic_only requires max_samples_per_split.")
         if self.batch_size <= 0 or self.probe_epochs <= 0:
             raise ValueError("batch_size and probe_epochs must be positive.")
-
-
-def _signature(payload: Mapping[str, Any]) -> str:
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
-    ).hexdigest()
+        if not self.seeds or len(set(map(int, self.seeds))) != len(self.seeds):
+            raise ValueError("seeds must be non-empty and unique.")
+        if not self.diagnostic_only and len(self.seeds) < 3:
+            raise ValueError("Formal DOFAv2 probe inference requires at least three training seeds.")
 
 
 def _validate_frozen_model_config(values: Mapping[str, Any]) -> None:
@@ -302,82 +307,119 @@ def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path
         )
         persist_output(output, config.persistent_output_dir, label="dofav2-diagnostic-complete")
         return {"diagnostic_manifest": diagnostic}
-    eval_x = np.concatenate([calibration_x, test_x], axis=0)
-    probe_signature = _signature(
-        {
-            "model_release": adapter.model_release,
-            "checkpoint_sha256": adapter.actual_checkpoint_sha256,
-            "embedding_caches": {
-                split: {
-                    key: metadata.get(key)
-                    for key in ("cache_key", "row_hash", "row_count_cached", "embedding_dim")
-                }
-                for split, metadata in {
-                    "train": train_cache_meta,
-                    "calibration": calibration_cache_meta,
-                    "test": test_cache_meta,
-                }.items()
-            },
-            "probe_epochs": config.probe_epochs,
-            "probe_learning_rate": config.probe_learning_rate,
-            "weight_decay": config.weight_decay,
-            "batch_size": config.batch_size,
-            "seed": config.seed,
-        }
+    search_config = MulticlassProbeSearchConfig(
+        learning_rates=tuple(float(value) for value in config.probe_learning_rates),
+        max_epochs=config.probe_epochs,
+        patience=config.probe_patience,
+        inner_validation_fraction=config.probe_inner_validation_fraction,
+        batch_size=config.probe_batch_size,
+        weight_decay=config.weight_decay,
     )
-    probe_cache = output / "dofav2_probe_probabilities.npz"
-    probe_cache_manifest = output / "dofav2_probe_cache_manifest.json"
-    probe_checkpoint = output / "dofa_linear_probe_checkpoint.pt"
-    if probe_cache_manifest.exists():
-        cached_manifest = json.loads(probe_cache_manifest.read_text(encoding="utf-8"))
-        if cached_manifest.get("probe_signature") != probe_signature:
-            raise FmowDOFAv2CampaignError(
-                "The hydrated DOFAv2 probe cache belongs to a different model/data/protocol. Use a new output directory."
-            )
-        if not probe_cache.exists() or not probe_checkpoint.exists():
-            raise FmowDOFAv2CampaignError("The DOFAv2 probe cache manifest is incomplete.")
-        with np.load(probe_cache, allow_pickle=False) as cached:
-            probabilities = np.asarray(cached["probabilities"], dtype=np.float32)
-            class_names = [str(value) for value in cached["class_names"]]
-        if probabilities.shape != (len(eval_x), len(class_names)):
-            raise FmowDOFAv2CampaignError("The cached DOFAv2 probability matrix has an invalid shape.")
-        probe_metadata = {
-            **cached_manifest.get("probe_metadata", {}),
-            "checkpoint_path": str(probe_checkpoint),
-        }
-        probe_debug = cached_manifest.get("probe_debug", {})
-        print(f"[fmow:dofav2] reusing verified train-only probe cache {probe_cache}", flush=True)
-    else:
-        _, _, probabilities, class_names, probe_metadata, probe_debug = _train_linear_probe(
-            train_x, train_y, eval_x, runner_config, output
+    train_groups = [fmow_site_id(row) for row in train_ok]
+    per_seed: dict[int, dict[str, Any]] = {}
+    calibration_components: list[np.ndarray] = []
+    test_components: list[np.ndarray] = []
+    seed_summary_rows: list[dict[str, Any]] = []
+    for seed in config.seeds:
+        seed_output = output / "probe_seeds" / f"seed_{int(seed)}"
+        selected = fit_selected_multiclass_probe(
+            train_x,
+            train_y,
+            train_groups,
+            {"calibration": calibration_x, "test": test_x},
+            seed_output,
+            config=search_config,
+            seed=int(seed),
+            device=config.device,
         )
-        np.savez_compressed(
-            probe_cache,
-            probabilities=np.asarray(probabilities, dtype=np.float32),
-            class_names=np.asarray(class_names, dtype=str),
+        per_seed[int(seed)] = selected
+        calibration_component = np.asarray(
+            selected["predictions"]["calibration"]["probabilities"], dtype=np.float32
         )
-        probe_cache_manifest.write_text(
-            json.dumps(
-                {
-                    "schema": "geobwer.fmow.dofav2_probe_cache.v1",
-                    "probe_signature": probe_signature,
-                    "probability_cache": probe_cache.name,
-                    "probability_cache_sha256": file_sha256(probe_cache),
-                    "checkpoint": probe_checkpoint.name,
-                    "checkpoint_sha256": file_sha256(probe_checkpoint),
-                    "probe_metadata": probe_metadata,
-                    "probe_debug": probe_debug,
+        test_component = np.asarray(
+            selected["predictions"]["test"]["probabilities"], dtype=np.float32
+        )
+        calibration_components.append(calibration_component)
+        test_components.append(test_component)
+        class_to_index_seed = selected["class_to_index"]
+        test_index = np.asarray(
+            [class_to_index_seed[str(label)] for label in test_y], dtype=np.int64
+        )
+        predicted = np.argmax(test_component, axis=1)
+        seed_summary_rows.append(
+            {
+                "seed": int(seed),
+                "selected_learning_rate": selected["selection"]["selected_learning_rate"],
+                "selected_epoch": selected["selection"]["selected_epoch"],
+                "inner_validation_cross_entropy": min(
+                    float(row["inner_validation_cross_entropy"])
+                    for row in selected["selection"]["candidates"]
+                ),
+                "test_accuracy": float(np.mean(predicted == test_index)),
+                "test_log_loss": float(
+                    -np.mean(
+                        np.log(
+                            np.clip(
+                                test_component[np.arange(len(test_index)), test_index],
+                                1e-12,
+                                1.0,
+                            )
+                        )
+                    )
+                ),
+                "checkpoint": str(selected["checkpoint"]),
+                "checkpoint_sha256": file_sha256(selected["checkpoint"]),
+            }
+        )
+    class_name_sets = {tuple(value["classes"]) for value in per_seed.values()}
+    if len(class_name_sets) != 1:
+        raise FmowDOFAv2CampaignError("Probe seeds produced inconsistent class mappings.")
+    class_names = list(next(iter(class_name_sets)))
+    calibration_probabilities = np.mean(
+        np.stack(calibration_components, axis=0), axis=0
+    ).astype(np.float32)
+    test_probabilities = np.mean(np.stack(test_components, axis=0), axis=0).astype(
+        np.float32
+    )
+    probe_checkpoint = output / "probe_panel_manifest.json"
+    probe_checkpoint.write_text(
+        json.dumps(
+            {
+                "schema": "geobwer.fmow.dofav2_probe_panel.v2",
+                "estimand": "seed_ensemble_predictive_distribution",
+                "seed_robustness_required": True,
+                "seeds": list(config.seeds),
+                "search_config": asdict(search_config),
+                "components": {
+                    str(seed): {
+                        "checkpoint": str(value["checkpoint"]),
+                        "checkpoint_sha256": file_sha256(value["checkpoint"]),
+                        "selection_manifest": str(value["manifest"]),
+                        "selection_manifest_sha256": file_sha256(value["manifest"]),
+                    }
+                    for seed, value in per_seed.items()
                 },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    write_csv(output / "probe_seed_robustness.csv", seed_summary_rows)
+    probe_metadata = {
+        "probe": "linear_multiseed_selected",
+        "checkpoint_path": str(probe_checkpoint),
+        "seeds": list(config.seeds),
+        "class_to_index": per_seed[int(config.seeds[0])]["class_to_index"],
+    }
+    probe_debug = {
+        "schema": "geobwer.fmow.dofav2_probe_debug.v2",
+        "search_data": "outer_train_only_category_scoped_site_disjoint_inner_holdout",
+        "seed_summary": seed_summary_rows,
+    }
     persist_output(output, config.persistent_output_dir, label="dofav2-probe-complete")
     if len(class_names) != 62:
         raise FmowDOFAv2CampaignError(f"Expected the frozen 62-class fMoW mapping, got {len(class_names)} classes.")
-    calibration_probabilities = probabilities[: len(calibration_ok)]
-    test_probabilities = probabilities[len(calibration_ok) :]
     class_to_index = {name: index for index, name in enumerate(class_names)}
     if set(calibration_y) - set(class_to_index) or set(test_y) - set(class_to_index):
         raise FmowDOFAv2CampaignError("Calibration/test labels are absent from the train-frozen class mapping.")
@@ -400,7 +442,10 @@ def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path
         "checkpoint_load_report": adapter.checkpoint_load_report,
         "probe_checkpoint": str(probe_checkpoint),
         "probe_checkpoint_sha256": file_sha256(probe_checkpoint),
-        "adaptation_protocol": "frozen_encoder_train_only_linear_probe",
+        "adaptation_protocol": "frozen_encoder_train_only_selected_multiseed_linear_probe",
+        "probe_estimand": "seed_ensemble_predictive_distribution_with_seed_robustness",
+        "probe_seeds": list(config.seeds),
+        "probe_model_selection": "outer_train_only_category_scoped_site_disjoint_inner_holdout",
         "band_profile": config.band_profile,
         "image_size": config.image_size,
         "input_scale": adapter.input_scale,
@@ -420,6 +465,67 @@ def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path
         "calibration_row_hash": _row_hash(calibration_ok),
         "test_row_hash": _row_hash(test_ok),
     }
+    seed_geobwer_artifacts: dict[str, dict[str, str]] = {}
+    for seed, selected in per_seed.items():
+        seed_dir = output / "probe_seeds" / f"seed_{seed}"
+        seed_probabilities = np.asarray(
+            selected["predictions"]["test"]["probabilities"], dtype=np.float32
+        )
+        seed_bundle = write_multiclass_bundle(
+            seed_dir / "formal_outputs",
+            sample_rows=_formal_rows(test_ok),
+            probabilities=seed_probabilities,
+            targets=test_targets,
+            class_names=class_names,
+            dataset="fmow_sentinel",
+            model=f"{adapter.model_release}_seed_{seed}",
+            split=config.test_split,
+            protocol=protocol,
+            model_lineage={
+                **model_lineage,
+                "model": f"{adapter.model_release}_seed_{seed}",
+                "probe_estimand": "single_training_seed",
+                "probe_seed": seed,
+                "probe_checkpoint": str(selected["checkpoint"]),
+                "probe_checkpoint_sha256": file_sha256(selected["checkpoint"]),
+                "probe_selection_manifest": str(selected["manifest"]),
+                "probe_selection_manifest_sha256": file_sha256(selected["manifest"]),
+            },
+            dataset_lineage=dataset_lineage,
+            independent_unit_column="sample_id",
+            split_role="evaluation",
+        )
+        seed_rows = read_csv_rows(seed_bundle.audit_table)
+        seed_audit = audit_rows(
+            seed_rows,
+            group_columns=("country", "region", "class_label"),
+            protocol=protocol,
+            loss_column="risk",
+            unit_column="independent_unit_id",
+            cluster_column="site_id",
+            formal=True,
+            require_probabilities=True,
+            n_bootstrap=config.audit_bootstrap,
+            seed=seed,
+        ).to_report(seed_dir / "geobwer_raw")
+        seed_geobwer_artifacts[str(seed)] = {
+            key: str(value) for key, value in seed_audit.items()
+        }
+        country_summary = next(
+            (
+                row
+                for row in read_csv_rows(seed_audit["summary"])
+                if str(row.get("axis")) == "country"
+            ),
+            {},
+        )
+        for row in seed_summary_rows:
+            if int(row["seed"]) == int(seed):
+                row["country_geobwer"] = country_summary.get("geobwer", "")
+                row["country_geobwer_lcb"] = country_summary.get("geobwer_lcb", "")
+                row["country_geobwer_ucb"] = country_summary.get("geobwer_ucb", "")
+                row["country_geobwer_validity"] = country_summary.get("validity", "")
+    write_csv(output / "probe_seed_robustness.csv", seed_summary_rows)
     bundle: FormalOutputBundle = write_multiclass_bundle(
         output / "formal_outputs",
         sample_rows=_formal_rows(test_ok),
@@ -427,10 +533,13 @@ def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path
         targets=test_targets,
         class_names=class_names,
         dataset="fmow_sentinel",
-        model=adapter.model_release,
+        model=f"{adapter.model_release}_seed_ensemble",
         split=config.test_split,
         protocol=protocol,
-        model_lineage=model_lineage,
+        model_lineage={
+            **model_lineage,
+            "model": f"{adapter.model_release}_seed_ensemble",
+        },
         dataset_lineage=dataset_lineage,
         independent_unit_column="sample_id",
         split_role="evaluation",
@@ -449,13 +558,15 @@ def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path
     calibration_manifest.write_text(
         json.dumps(
             {
-                "schema": "geobwer.fmow.multiclass_calibration.v1",
+                "schema": "geobwer.fmow.multiclass_calibration.v2",
                 "split_role": "calibration",
                 "test_rows_used": False,
                 "probabilities_sha256": file_sha256(calibration_path),
                 "sample_count": len(calibration_ok),
                 "class_mapping": class_names,
-                "class_mapping_source": "train_only_linear_probe",
+                "class_mapping_source": "train_only_multiseed_selected_linear_probe",
+                "model_selection_data": "outer_train_only",
+                "seed_ensemble": list(config.seeds),
             },
             ensure_ascii=False,
             indent=2,
@@ -495,6 +606,34 @@ def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path
         seed=config.seed,
     )
     standardized_artifacts = standardized.to_report(output / "geobwer_standardized")
+    partial_protocol = replace(
+        protocol,
+        missingness_rule="partial_bounds",
+        metadata=tuple(
+            sorted(
+                {
+                    **dict(protocol.metadata),
+                    "standardization_sensitivity": "partial_identification_bounds",
+                }.items()
+            )
+        ),
+    )
+    partial_standardized = audit_rows(
+        formal_rows,
+        group_columns=("country",),
+        protocol=partial_protocol,
+        loss_column="risk",
+        unit_column="independent_unit_id",
+        cluster_column="site_id",
+        balance_column="class_label",
+        formal=True,
+        require_probabilities=True,
+        n_bootstrap=config.audit_bootstrap,
+        seed=config.seed,
+    )
+    partial_standardized_artifacts = partial_standardized.to_report(
+        output / "geobwer_standardized_partial_bounds"
+    )
     uncertainty_artifacts = run_multiclass_uncertainty_suite(
         calibration_path,
         bundle.output_dir,
@@ -510,7 +649,7 @@ def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path
     run_manifest.write_text(
         json.dumps(
             {
-                "schema": "geobwer.fmow_dofav2_campaign.v1",
+                "schema": "geobwer.fmow_dofav2_campaign.v2",
                 "config": {key: str(value) if isinstance(value, Path) else value for key, value in asdict(config).items()},
                 "model_lineage": model_lineage,
                 "dataset_lineage": dataset_lineage,
@@ -524,6 +663,11 @@ def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path
                 "calibration_manifest": str(calibration_manifest),
                 "geobwer_artifacts": {key: str(value) for key, value in audit_artifacts.items()},
                 "standardized_artifacts": {key: str(value) for key, value in standardized_artifacts.items()},
+                "partial_standardized_artifacts": {
+                    key: str(value) for key, value in partial_standardized_artifacts.items()
+                },
+                "seed_geobwer_artifacts": seed_geobwer_artifacts,
+                "probe_seed_robustness": str(output / "probe_seed_robustness.csv"),
                 "uncertainty_artifacts": {key: str(value) for key, value in uncertainty_artifacts.items()},
             },
             ensure_ascii=False,
@@ -540,6 +684,8 @@ def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path
         "probe_checkpoint": probe_checkpoint,
         "geobwer_summary": audit_artifacts["summary"],
         "standardized_summary": standardized_artifacts["summary"],
+        "partial_standardized_summary": partial_standardized_artifacts["summary"],
+        "probe_seed_robustness": output / "probe_seed_robustness.csv",
         "uncertainty_summary": uncertainty_artifacts["summary"],
         "run_manifest": run_manifest,
     }

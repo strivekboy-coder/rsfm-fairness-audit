@@ -36,6 +36,8 @@ class RebenTerraMindConfig:
     sensor_mode: str
     terramind_checkpoint_path: Path
     persistent_output_dir: Path | None = None
+    embedding_cache_root: Path | None = None
+    persistent_embedding_cache_root: Path | None = None
     metadata_snow_cloud_parquet: Path | None = None
     geobwer_protocol: Path = Path("configs/geobwer/reben.yaml")
     device: str = "auto"
@@ -114,6 +116,34 @@ def _sample_id_hash(rows: Sequence[Mapping[str, Any]]) -> str:
         digest.update(str(row.get("sample_id", row.get("patch_id", ""))).encode("utf-8"))
         digest.update(b"\n")
     return digest.hexdigest()
+
+
+def build_reben_dataset_lineage(
+    rows: Sequence[Mapping[str, Any]],
+    targets: np.ndarray,
+    *,
+    metadata_parquet: str | Path,
+) -> dict[str, Any]:
+    """Build one model- and sensor-independent reBEN evaluation identity."""
+
+    values = np.asarray(targets, dtype=np.int8)
+    if values.shape != (len(rows), 19):
+        raise RebenTerraMindError(
+            f"Expected aligned reBEN targets [N,19], got {values.shape} for {len(rows)} rows."
+        )
+    digest = hashlib.sha256()
+    for row, labels in zip(rows, values):
+        digest.update(str(row["sample_id"]).encode("utf-8"))
+        digest.update(labels.tobytes(order="C"))
+    return {
+        "dataset": "BigEarthNet-v2.0/reBEN",
+        "metadata_parquet_sha256": file_sha256(metadata_parquet),
+        "split": "test",
+        "test_sample_id_hash": _sample_id_hash(rows),
+        "reference_targets_sha256": digest.hexdigest(),
+        "source_tile_definition": "MGRS_100km_tile_parsed_from_official_patch_id",
+        "sample_count": len(rows),
+    }
 
 
 def extract_reben_embeddings_chunked(
@@ -469,17 +499,24 @@ def run_reben_frozen_adapter_campaign(
     output = config.output_dir
     hydrate_output(output, config.persistent_output_dir)
     output.mkdir(parents=True, exist_ok=True)
+    cache_root = Path(getattr(config, "embedding_cache_root", None) or (output / "cache"))
+    persistent_cache_root_raw = getattr(config, "persistent_embedding_cache_root", None)
+    persistent_cache_root = (
+        Path(persistent_cache_root_raw)
+        if persistent_cache_root_raw is not None
+        else (config.persistent_output_dir / "cache" if config.persistent_output_dir is not None else None)
+    )
     split_artifacts: dict[str, dict[str, Path]] = {}
     for split in ("train", "val", "test"):
         split_artifacts[split] = extract_reben_embeddings_chunked(
             _dataset(config, split),
             adapter,
-            output / "cache" / split,
+            cache_root / split,
             batch_size=config.batch_size,
             chunk_size=config.embedding_chunk_size,
             persistent_output_dir=(
-                config.persistent_output_dir / "cache" / split
-                if config.persistent_output_dir is not None
+                persistent_cache_root / split
+                if persistent_cache_root is not None
                 else None
             ),
         )
@@ -573,14 +610,11 @@ def run_reben_frozen_adapter_campaign(
         "threshold_calibration": str(calibration_manifest),
         "threshold_calibration_sha256": file_sha256(calibration_manifest),
     }
-    dataset_lineage = {
-        "dataset": "BigEarthNet-v2.0/reBEN",
-        "metadata_parquet_sha256": file_sha256(config.metadata_parquet),
-        "split": "test",
-        "test_sample_id_hash": _sample_id_hash(test_rows),
-        "source_tile_definition": "MGRS_100km_tile_parsed_from_official_patch_id",
-        "split_contract_sha256": file_sha256(split_contract),
-    }
+    dataset_lineage = build_reben_dataset_lineage(
+        test_rows,
+        y_test,
+        metadata_parquet=config.metadata_parquet,
+    )
     bundle: FormalOutputBundle = write_multilabel_bundle(
         output / "formal_outputs",
         sample_rows=test_rows,
@@ -673,14 +707,15 @@ def run_reben_terramind_campaign(config: RebenTerraMindConfig) -> dict[str, Path
     return run_reben_frozen_adapter_campaign(
         config,
         adapter=adapter,
-        model_name=f"terramind_v1_base_{slug}",
-        campaign_schema="geobwer.reben.terramind_campaign.v2",
+        model_name=f"terramind_v1_base_{slug}_seed_{config.seed}",
+        campaign_schema="geobwer.reben.terramind_campaign.v3",
     )
 
 
 __all__ = [
     "RebenTerraMindConfig",
     "RebenTerraMindError",
+    "build_reben_dataset_lineage",
     "extract_reben_embeddings_chunked",
     "run_reben_frozen_adapter_campaign",
     "run_reben_terramind_campaign",

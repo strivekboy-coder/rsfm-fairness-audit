@@ -577,17 +577,51 @@ def _require_torch() -> tuple[Any, Any, Any]:
     return torch, nn, F
 
 
-def build_resnet50_13band(num_classes: int) -> Any:
-    """Build a torchvision ResNet-50 with a 13-channel first convolution."""
+def build_resnet50_multiband(
+    num_classes: int,
+    *,
+    in_channels: int,
+    pretrained: bool = False,
+) -> Any:
+    """Build a ResNet-50 with a deterministic multispectral stem.
+
+    ``pretrained=False`` is the protocol-matched from-scratch baseline.  When
+    ImageNet initialization is requested, RGB conv1 weights are expanded by
+    their channel mean and rescaled by ``3 / in_channels`` so activation scale
+    does not grow merely because more bands are present.
+    """
+
     torch, nn, _F = _require_torch()
     try:
-        from torchvision.models import resnet50
+        from torchvision.models import ResNet50_Weights, resnet50
     except ImportError as exc:
         raise RuntimeError("--model resnet50 requires torchvision in the runtime environment.") from exc
-    model = resnet50(weights=None)
-    model.conv1 = nn.Conv2d(13, 64, kernel_size=7, stride=2, padding=3, bias=False)
+    weights = ResNet50_Weights.DEFAULT if pretrained else None
+    model = resnet50(weights=weights)
+    original = model.conv1
+    replacement = nn.Conv2d(
+        int(in_channels),
+        original.out_channels,
+        kernel_size=original.kernel_size,
+        stride=original.stride,
+        padding=original.padding,
+        bias=False,
+    )
+    if pretrained:
+        with torch.no_grad():
+            mean_weight = original.weight.mean(dim=1, keepdim=True)
+            replacement.weight.copy_(
+                mean_weight.repeat(1, int(in_channels), 1, 1) * (3.0 / float(in_channels))
+            )
+    model.conv1 = replacement
     model.fc = nn.Linear(model.fc.in_features, num_classes)
     return model
+
+
+def build_resnet50_13band(num_classes: int) -> Any:
+    """Backward-compatible constructor for the completed BWER 1.x baseline."""
+
+    return build_resnet50_multiband(num_classes, in_channels=13, pretrained=False)
 
 
 def _device_from_config(config: FmowClassificationConfig) -> Any:
@@ -712,6 +746,7 @@ def _evaluate_resnet50(model: Any, loader: Any, rows: Sequence[dict[str, Any]], 
             pred_idx_np = pred_idx.cpu().numpy()
             confidence_np = confidence.cpu().numpy()
             probabilities_np = probabilities.cpu().numpy()
+            logits_np = logits.detach().cpu().numpy()
             for batch_pos, row_index in enumerate(indices.cpu().numpy().tolist()):
                 row = rows[int(row_index)]
                 label = str(row.get("category", ""))
@@ -734,6 +769,7 @@ def _evaluate_resnet50(model: Any, loader: Any, rows: Sequence[dict[str, Any]], 
                         "confidence": float(confidence_np[batch_pos]),
                         "top5_correct": float(is_top5),
                         "probability_vector": probabilities_np[batch_pos].astype(np.float32),
+                        "logit_vector": logits_np[batch_pos].astype(np.float32),
                     }
                 )
     total = len(predictions)
@@ -782,7 +818,10 @@ def _train_resnet50(
         num_workers=config.num_workers,
         pin_memory=device.type == "cuda",
     )
-    model = build_resnet50_13band(len(classes)).to(device)
+    expected_bands = int(get_band_profile(config.band_profile)["expected_bands"])
+    model = build_resnet50_multiband(
+        len(classes), in_channels=expected_bands, pretrained=False
+    ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     criterion = nn.CrossEntropyLoss()
     use_amp = bool(config.amp and device.type == "cuda")
@@ -861,8 +900,8 @@ def _train_resnet50(
     debug = {
         "model": "resnet50_fmow_sentinel",
         "model_family": "resnet",
-        "model_variant": "resnet50_13band_from_scratch",
-        "first_conv_in_channels": 13,
+        "model_variant": f"resnet50_{expected_bands}band_from_scratch",
+        "first_conv_in_channels": expected_bands,
         "weights": "none",
         "normalization": "train_split_per_band_mean_std",
         "classes": classes,
@@ -874,10 +913,11 @@ def _train_resnet50(
 
 def _model_metadata(config: FmowClassificationConfig) -> dict[str, str]:
     if config.model == "resnet50":
+        expected_bands = int(get_band_profile(config.band_profile)["expected_bands"])
         return {
             "model": "resnet50_fmow_sentinel",
             "model_family": "resnet",
-            "model_variant": "resnet50_13band_from_scratch",
+            "model_variant": f"resnet50_{expected_bands}band_from_scratch",
             "adaptation_protocol": "supervised_baseline",
             "training_budget": f"adamw_cross_entropy_epochs_{config.epochs}",
         }

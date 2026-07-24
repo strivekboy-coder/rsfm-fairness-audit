@@ -13,10 +13,110 @@ from rsfm_fairness_audit.bwer_protocol import BWERProtocol, Validity
 from rsfm_fairness_audit.config import load_yaml
 from rsfm_fairness_audit.formal_outputs import FormalOutputBundle, file_sha256, write_segmentation_bundle
 from rsfm_fairness_audit.io import read_csv_rows
+from rsfm_fairness_audit.terratorch_exports import write_probability_batch
 
 
 class Sen1FormalizationError(RuntimeError):
     """Raised when a Sen1Floods11 formal result cannot be traced to geospatial evidence."""
+
+
+def write_sen1_probability_export(
+    output_dir: str | Path,
+    *,
+    probabilities: Sequence[np.ndarray],
+    targets: Sequence[np.ndarray],
+    filenames: Sequence[Any],
+    batch_size: int = 8,
+    metadata: Sequence[Mapping[str, Any]] | None = None,
+) -> Path:
+    """Write a framework-neutral Sen1 probability export.
+
+    The layout is intentionally identical to the TerraTorch prediction-writer
+    contract so Prithvi and supervised baselines pass through the exact same
+    parser, geolocation checks, spatial calibration and CRC implementation.
+    Existing complete exports are validated and reused; partial exports fail
+    rather than being silently mixed.
+    """
+
+    if not (
+        len(probabilities) == len(targets) == len(filenames)
+        and (metadata is None or len(metadata) == len(probabilities))
+    ):
+        raise Sen1FormalizationError(
+            "probabilities, targets, filenames, and optional metadata must align."
+        )
+    if not probabilities:
+        raise Sen1FormalizationError("Cannot write an empty Sen1 probability export.")
+    output = Path(output_dir)
+    manifest_path = output / "writer_manifest_rank_0.json"
+    index_path = output / "index_parts" / "part-000000.jsonl"
+    if manifest_path.exists() or index_path.exists():
+        if not (manifest_path.exists() and index_path.exists()):
+            raise Sen1FormalizationError(
+                f"Partial probability export exists under {output}; use a new output directory."
+            )
+        existing = [
+            json.loads(line)
+            for line in index_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if len(existing) != len(probabilities):
+            raise Sen1FormalizationError(
+                f"Existing probability export count differs: {len(existing)} vs {len(probabilities)}."
+            )
+        if all(_resolve_probability_artifact(output, row["probability_path"]).exists() for row in existing):
+            return output
+        raise Sen1FormalizationError(f"Existing probability export under {output} is incomplete.")
+    output.mkdir(parents=True, exist_ok=True)
+    records: list[dict[str, Any]] = []
+    for batch_index, start in enumerate(range(0, len(probabilities), int(batch_size))):
+        end = min(start + int(batch_size), len(probabilities))
+        positive = np.stack(
+            [np.asarray(value, dtype=np.float32).squeeze() for value in probabilities[start:end]]
+        )
+        if positive.ndim != 3:
+            raise Sen1FormalizationError(
+                f"Positive probability maps must stack as [N,H,W], got {positive.shape}."
+            )
+        if not np.all(np.isfinite(positive)) or np.any(positive < 0.0) or np.any(positive > 1.0):
+            raise Sen1FormalizationError("Positive probability maps must be finite and in [0,1].")
+        two_class = np.stack([1.0 - positive, positive], axis=1)
+        batch_metadata = {
+            key: [row.get(key, "") for row in (metadata or [{}] * len(probabilities))[start:end]]
+            for key in ("event_id", "country", "region")
+        }
+        batch_records = write_probability_batch(
+            output,
+            outputs={
+                "probabilities": two_class,
+                "target": np.stack([np.asarray(value).squeeze() for value in targets[start:end]]),
+                "filename": list(filenames[start:end]),
+                **batch_metadata,
+            },
+            batch={},
+            batch_idx=batch_index,
+            dataloader_idx=0,
+        )
+        records.extend(batch_records)
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text(
+        "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema": "geobwer.sen1floods11.probability_export.v1",
+                "writer": "framework_neutral",
+                "sample_count": len(records),
+                "index_part": str(index_path.relative_to(output)),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return output
 
 
 def _read_index(export_dir: str | Path) -> list[dict[str, Any]]:
@@ -407,7 +507,64 @@ def finalize_sen1floods11_segmentation(
     split: str = "test",
     sensor_mode: str,
     terratorch_version: str,
+    model_selection_lineage: Mapping[str, Any] | None = None,
 ) -> FormalOutputBundle:
+    checkpoint = Path(checkpoint_path)
+    if not checkpoint.exists():
+        raise Sen1FormalizationError(f"TerraMind checkpoint does not exist: {checkpoint}")
+    pretraining_checkpoint = Path(pretraining_checkpoint_path)
+    if not pretraining_checkpoint.exists():
+        raise Sen1FormalizationError(f"TerraMind pretraining checkpoint does not exist: {pretraining_checkpoint}")
+    observed_pretraining_sha256 = file_sha256(pretraining_checkpoint)
+    if observed_pretraining_sha256 != str(pretraining_checkpoint_sha256).lower():
+        raise Sen1FormalizationError(
+            "TerraMind pretraining checkpoint changed between campaign preflight and formalization."
+        )
+    return finalize_sen1_probability_export(
+        export_dir,
+        output_dir,
+        model_name=model_name,
+        protocol_path=protocol_path,
+        block_calibration_path=block_calibration_path,
+        data_root=data_root,
+        metadata_csv=metadata_csv,
+        split=split,
+        model_lineage={
+            "model": model_name,
+            "backbone": "terramind_v1_base",
+            "pretrained": True,
+            "sensor_mode": sensor_mode,
+            "checkpoint_path": str(checkpoint),
+            "checkpoint_sha256": file_sha256(checkpoint),
+            "pretraining_checkpoint_path": str(pretraining_checkpoint),
+            "pretraining_checkpoint_sha256": observed_pretraining_sha256,
+            "terratorch_version": terratorch_version,
+            "probability_export": str(export_dir),
+            **dict(model_selection_lineage or {}),
+        },
+        dataset_lineage={
+            "dataset": "Sen1Floods11-v1.1-HandLabeled",
+            "split": split,
+            "sensor_mode": sensor_mode,
+        },
+    )
+
+
+def finalize_sen1_probability_export(
+    export_dir: str | Path,
+    output_dir: str | Path,
+    *,
+    model_name: str,
+    protocol_path: str | Path,
+    block_calibration_path: str | Path,
+    model_lineage: Mapping[str, Any],
+    dataset_lineage: Mapping[str, Any],
+    data_root: str | Path | None = None,
+    metadata_csv: str | Path | None = None,
+    split: str = "test",
+) -> FormalOutputBundle:
+    """Formalize any Sen1 model through one shared GeoBWER contract."""
+
     rows, probabilities, targets, valid = _load_units(
         export_dir, data_root=data_root, metadata_csv=metadata_csv
     )
@@ -439,17 +596,54 @@ def finalize_sen1floods11_segmentation(
         }
     )
     protocol = replace(base_protocol, metadata=tuple(sorted(metadata.items())))
-    checkpoint = Path(checkpoint_path)
-    if not checkpoint.exists():
-        raise Sen1FormalizationError(f"TerraMind checkpoint does not exist: {checkpoint}")
-    pretraining_checkpoint = Path(pretraining_checkpoint_path)
-    if not pretraining_checkpoint.exists():
-        raise Sen1FormalizationError(f"TerraMind pretraining checkpoint does not exist: {pretraining_checkpoint}")
-    observed_pretraining_sha256 = file_sha256(pretraining_checkpoint)
-    if observed_pretraining_sha256 != str(pretraining_checkpoint_sha256).lower():
-        raise Sen1FormalizationError(
-            "TerraMind pretraining checkpoint changed between campaign preflight and formalization."
-        )
+    resolved_model_lineage = dict(model_lineage)
+    resolved_model_lineage.setdefault("model", model_name)
+    resolved_model_lineage.setdefault("probability_export", str(export_dir))
+    # The dataset signature is a cross-model comparison key. Sensor mode,
+    # architecture and band profile describe the model input contract, not the
+    # evaluated physical cohort, and must therefore never enter this signature.
+    # Include the reference masks themselves so two exports cannot compare as
+    # the same dataset merely because their sample identifiers happen to match.
+    resolved_dataset_lineage = {
+        key: value
+        for key, value in dict(dataset_lineage).items()
+        if key
+        not in {
+            "sensor_mode",
+            "band_profile",
+            "input_channels",
+            "model",
+            "architecture",
+            "probability_export",
+        }
+    }
+    reference_hash = hashlib.sha256()
+    for row, target, valid_mask in sorted(
+        zip(rows, targets, valid), key=lambda value: str(value[0]["sample_id"])
+    ):
+        target_array = np.asarray(target)
+        valid_array = np.asarray(valid_mask, dtype=np.uint8)
+        reference_hash.update(str(row["sample_id"]).encode("utf-8"))
+        reference_hash.update(str(target_array.shape).encode("ascii"))
+        reference_hash.update(target_array.astype(np.int16, copy=False).tobytes(order="C"))
+        reference_hash.update(valid_array.tobytes(order="C"))
+    resolved_dataset_lineage.update(
+        {
+            "dataset": resolved_dataset_lineage.get(
+                "dataset", "Sen1Floods11-v1.1-HandLabeled"
+            ),
+            "split": split,
+            "sample_count": len(rows),
+            "sample_ids": [row["sample_id"] for row in rows],
+            "reference_targets_sha256": reference_hash.hexdigest(),
+            "spatial_block_cell_km": cell_km,
+            "metadata_sha256": (
+                file_sha256(Path(metadata_csv))
+                if metadata_csv is not None and Path(metadata_csv).is_file()
+                else ""
+            ),
+        }
+    )
     return write_segmentation_bundle(
         output_dir,
         sample_rows=rows,
@@ -460,28 +654,8 @@ def finalize_sen1floods11_segmentation(
         model=model_name,
         split=split,
         protocol=protocol,
-        model_lineage={
-            "model": model_name,
-            "backbone": "terramind_v1_base",
-            "pretrained": True,
-            "sensor_mode": sensor_mode,
-            "checkpoint_path": str(checkpoint),
-            "checkpoint_sha256": file_sha256(checkpoint),
-            "pretraining_checkpoint_path": str(pretraining_checkpoint),
-            "pretraining_checkpoint_sha256": observed_pretraining_sha256,
-            "terratorch_version": terratorch_version,
-            "probability_export": str(export_dir),
-        },
-        dataset_lineage={
-            "dataset": "Sen1Floods11-v1.1-HandLabeled",
-            "split": split,
-            "sample_count": len(rows),
-            "sample_ids": [row["sample_id"] for row in rows],
-            "spatial_block_cell_km": cell_km,
-            "metadata_sha256": (
-                file_sha256(Path(metadata_csv)) if metadata_csv is not None and Path(metadata_csv).is_file() else ""
-            ),
-        },
+        model_lineage=resolved_model_lineage,
+        dataset_lineage=resolved_dataset_lineage,
         independent_unit_column="independent_unit_id",
     )
 
@@ -489,6 +663,8 @@ def finalize_sen1floods11_segmentation(
 __all__ = [
     "Sen1FormalizationError",
     "calibrate_common_sen1_spatial_blocks",
+    "finalize_sen1_probability_export",
     "finalize_sen1floods11_segmentation",
     "load_sen1_probability_units",
+    "write_sen1_probability_export",
 ]

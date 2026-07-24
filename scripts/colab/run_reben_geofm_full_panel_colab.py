@@ -28,9 +28,20 @@ from rsfm_fairness_audit.reben_terramind_campaign import (  # noqa: E402
     RebenTerraMindConfig,
     run_reben_terramind_campaign,
 )
+from rsfm_fairness_audit.reben_resnet50_campaign import (  # noqa: E402
+    RebenResNet50Config,
+    run_reben_resnet50_campaign,
+)
 
 
 MODES = ("S1", "S2", "S1+S2")
+
+
+def _csv_ints(value: str) -> tuple[int, ...]:
+    result = tuple(int(item.strip()) for item in value.split(",") if item.strip())
+    if not result or len(set(result)) != len(result):
+        raise argparse.ArgumentTypeError("Expected unique comma-separated integer seeds.")
+    return result
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -53,7 +64,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--probe-learning-rate", type=float, default=1e-2)
     parser.add_argument("--probe-weight-decay", type=float, default=1e-4)
     parser.add_argument("--probe-batch-size", type=int, default=512)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seeds", type=_csv_ints, default=(42, 73, 101))
+    parser.add_argument(
+        "--seed",
+        type=int,
+        help="Legacy single-seed diagnostic override; formal campaigns require at least three seeds.",
+    )
+    parser.add_argument("--supervised-max-epochs", type=int, default=30)
+    parser.add_argument("--supervised-patience", type=int, default=5)
+    parser.add_argument("--supervised-batch-size", type=int, default=128)
+    parser.add_argument("--supervised-learning-rate", type=float, default=3e-4)
+    parser.add_argument("--supervised-weight-decay", type=float, default=1e-4)
+    parser.add_argument("--supervised-pretrained-encoder", action="store_true")
     parser.add_argument(
         "--s1-unit-policy",
         choices=["already_db", "linear_power_to_db", "linear_amplitude_to_db"],
@@ -80,7 +102,15 @@ def _release_memory() -> None:
         pass
 
 
-def _common_kwargs(args: argparse.Namespace, output: Path, persistent: Path | None) -> dict[str, object]:
+def _common_kwargs(
+    args: argparse.Namespace,
+    output: Path,
+    persistent: Path | None,
+    *,
+    seed: int,
+    embedding_cache_root: Path,
+    persistent_embedding_cache_root: Path | None,
+) -> dict[str, object]:
     return {
         "lmdb_root": args.lmdb_root,
         "metadata_parquet": args.metadata_parquet,
@@ -95,7 +125,9 @@ def _common_kwargs(args: argparse.Namespace, output: Path, persistent: Path | No
         "probe_learning_rate": args.probe_learning_rate,
         "probe_weight_decay": args.probe_weight_decay,
         "probe_batch_size": args.probe_batch_size,
-        "seed": args.seed,
+        "seed": seed,
+        "embedding_cache_root": embedding_cache_root,
+        "persistent_embedding_cache_root": persistent_embedding_cache_root,
         "n_bootstrap": args.n_bootstrap,
         "max_samples": args.diagnostic_max_samples,
         "diagnostic_only": args.diagnostic_max_samples is not None,
@@ -104,6 +136,9 @@ def _common_kwargs(args: argparse.Namespace, output: Path, persistent: Path | No
 
 def main() -> None:
     args = build_parser().parse_args()
+    seeds = (int(args.seed),) if args.seed is not None else tuple(map(int, args.seeds))
+    if args.diagnostic_max_samples is None and len(seeds) < 3:
+        raise RuntimeError("The formal reBEN panel requires at least three independent probe/training seeds.")
     croma_assets = validate_croma_assets(args.croma_repo, args.croma_checkpoint)
     _, terramind_sha256 = validate_terramind_checkpoint(args.terramind_checkpoint)
     hydrate_output(args.output_dir, args.persistent_output_dir)
@@ -115,6 +150,13 @@ def main() -> None:
             args,
             args.output_dir / "croma" / "s1_plus_s2",
             args.persistent_output_dir / "croma" / "s1_plus_s2" if args.persistent_output_dir else None,
+            seed=seeds[0],
+            embedding_cache_root=args.output_dir / "croma" / "s1_plus_s2" / "shared_embedding_cache",
+            persistent_embedding_cache_root=(
+                args.persistent_output_dir / "croma" / "s1_plus_s2" / "shared_embedding_cache"
+                if args.persistent_output_dir
+                else None
+            ),
         ),
         sensor_mode="S1+S2",
         croma_checkpoint_path=args.croma_checkpoint,
@@ -129,37 +171,91 @@ def main() -> None:
     for architecture in ("croma", "terramind"):
         for mode in MODES:
             slug = mode.lower().replace("+", "_plus_")
-            local = args.output_dir / architecture / slug
-            persistent = (
-                args.persistent_output_dir / architecture / slug if args.persistent_output_dir else None
+            shared_cache = args.output_dir / architecture / slug / "shared_embedding_cache"
+            persistent_shared_cache = (
+                args.persistent_output_dir / architecture / slug / "shared_embedding_cache"
+                if args.persistent_output_dir
+                else None
             )
-            if architecture == "croma":
-                artifacts = run_reben_croma_campaign(
-                    RebenCROMAConfig(
-                        **_common_kwargs(args, local, persistent),
-                        sensor_mode=mode,
-                        croma_checkpoint_path=args.croma_checkpoint,
-                        croma_repo_path=args.croma_repo,
-                        normalization_stats_path=normalization_path,
-                    )
+            for seed in seeds:
+                local = args.output_dir / architecture / slug / f"seed_{seed}"
+                persistent = (
+                    args.persistent_output_dir / architecture / slug / f"seed_{seed}"
+                    if args.persistent_output_dir
+                    else None
                 )
-                model_name = f"croma_base_{slug}"
-            else:
-                artifacts = run_reben_terramind_campaign(
-                    RebenTerraMindConfig(
-                        **_common_kwargs(args, local, persistent),
-                        sensor_mode=mode,
-                        terramind_checkpoint_path=args.terramind_checkpoint,
-                        s1_unit_policy=args.s1_unit_policy,
-                    )
+                common = _common_kwargs(
+                    args,
+                    local,
+                    persistent,
+                    seed=seed,
+                    embedding_cache_root=shared_cache,
+                    persistent_embedding_cache_root=persistent_shared_cache,
                 )
-                model_name = f"terramind_v1_base_{slug}"
+                if architecture == "croma":
+                    artifacts = run_reben_croma_campaign(
+                        RebenCROMAConfig(
+                            **common,
+                            sensor_mode=mode,
+                            croma_checkpoint_path=args.croma_checkpoint,
+                            croma_repo_path=args.croma_repo,
+                            normalization_stats_path=normalization_path,
+                        )
+                    )
+                    model_name = f"croma_base_{slug}_seed_{seed}"
+                else:
+                    artifacts = run_reben_terramind_campaign(
+                        RebenTerraMindConfig(
+                            **common,
+                            sensor_mode=mode,
+                            terramind_checkpoint_path=args.terramind_checkpoint,
+                            s1_unit_policy=args.s1_unit_policy,
+                        )
+                    )
+                    model_name = f"terramind_v1_base_{slug}_seed_{seed}"
+                if args.diagnostic_max_samples is None:
+                    model_tables[model_name] = artifacts["formal_audit_table"]
+                    run_manifests[model_name] = str(artifacts["run_manifest"])
+                else:
+                    run_manifests[model_name] = str(artifacts["diagnostic_manifest"])
+                _release_memory()
+
+    supervised = run_reben_resnet50_campaign(
+        RebenResNet50Config(
+            lmdb_root=args.lmdb_root,
+            metadata_parquet=args.metadata_parquet,
+            metadata_snow_cloud_parquet=args.metadata_snow_cloud_parquet,
+            output_dir=args.output_dir / "supervised_resnet50",
+            persistent_output_dir=(
+                args.persistent_output_dir / "supervised_resnet50"
+                if args.persistent_output_dir
+                else None
+            ),
+            geobwer_protocol=args.protocol,
+            sensor_modes=MODES,
+            seeds=seeds,
+            max_epochs=args.supervised_max_epochs,
+            patience=args.supervised_patience,
+            batch_size=args.supervised_batch_size,
+            learning_rate=args.supervised_learning_rate,
+            weight_decay=args.supervised_weight_decay,
+            pretrained_encoder=args.supervised_pretrained_encoder,
+            device=args.device,
+            audit_bootstrap=args.n_bootstrap,
+            diagnostic_max_samples=args.diagnostic_max_samples,
+        )
+    )
+    for mode in MODES:
+        slug = mode.lower().replace("+", "_plus_")
+        for seed in seeds:
+            run_key = f"resnet50_{slug}_seed_{seed}"
+            model_name = f"resnet50_supervised_{slug}_seed_{seed}"
+            artifacts = supervised["runs"][run_key]
             if args.diagnostic_max_samples is None:
-                model_tables[model_name] = artifacts["formal_audit_table"]
+                model_tables[model_name] = Path(artifacts["formal_audit_table"])
                 run_manifests[model_name] = str(artifacts["run_manifest"])
             else:
                 run_manifests[model_name] = str(artifacts["diagnostic_manifest"])
-            _release_memory()
 
     if args.diagnostic_max_samples is not None:
         manifest = args.output_dir / "diagnostic_panel_manifest.json"
@@ -170,6 +266,7 @@ def main() -> None:
                     "formal_evidence": False,
                     "reason": "explicit_bounded_real_gpu_smoke",
                     "max_samples_per_split": args.diagnostic_max_samples,
+                    "seeds": list(seeds),
                     "croma_assets": croma_assets,
                     "terramind_checkpoint_sha256": terramind_sha256,
                     "normalization_stats": str(normalization_path),
@@ -184,14 +281,24 @@ def main() -> None:
         print(f"[reben:full-panel] diagnostic complete: {manifest}")
         return
 
-    primary_contrasts = (
-        ("croma_base_s1", "croma_base_s1_plus_s2"),
-        ("croma_base_s2", "croma_base_s1_plus_s2"),
-        ("terramind_v1_base_s1", "terramind_v1_base_s1_plus_s2"),
-        ("terramind_v1_base_s2", "terramind_v1_base_s1_plus_s2"),
-        ("croma_base_s1", "terramind_v1_base_s1"),
-        ("croma_base_s2", "terramind_v1_base_s2"),
-        ("croma_base_s1_plus_s2", "terramind_v1_base_s1_plus_s2"),
+    primary_contrasts = tuple(
+        pair
+        for seed in seeds
+        for mode in ("s1", "s2", "s1_plus_s2")
+        for pair in (
+            (
+                f"croma_base_{mode}_seed_{seed}",
+                f"terramind_v1_base_{mode}_seed_{seed}",
+            ),
+            (
+                f"croma_base_{mode}_seed_{seed}",
+                f"resnet50_supervised_{mode}_seed_{seed}",
+            ),
+            (
+                f"terramind_v1_base_{mode}_seed_{seed}",
+                f"resnet50_supervised_{mode}_seed_{seed}",
+            ),
+        )
     )
     panel = run_geobwer_model_panel(
         model_tables,
@@ -201,15 +308,16 @@ def main() -> None:
         cluster_column="source_tile_id",
         comparison_pairs=primary_contrasts,
         n_bootstrap=args.n_bootstrap,
-        seed=args.seed,
+        seed=seeds[0],
     )
     manifest = args.output_dir / "campaign_manifest.json"
     manifest.write_text(
         json.dumps(
             {
-                "schema": "geobwer.reben.geofm_full_panel.v1",
+                "schema": "geobwer.reben.geofm_full_panel.v2",
                 "formal_evidence": True,
-                "design": "2_architectures_x_3_modalities",
+                "design": "3_architectures_x_3_modalities_x_3_seeds",
+                "seeds": list(seeds),
                 "croma_assets": croma_assets,
                 "terramind_checkpoint_sha256": terramind_sha256,
                 "normalization_stats": str(normalization_path),

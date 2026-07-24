@@ -65,6 +65,8 @@ class RebenCROMAConfig:
     croma_repo_path: Path
     normalization_stats_path: Path
     persistent_output_dir: Path | None = None
+    embedding_cache_root: Path | None = None
+    persistent_embedding_cache_root: Path | None = None
     metadata_snow_cloud_parquet: Path | None = None
     geobwer_protocol: Path = Path("configs/geobwer/reben.yaml")
     device: str = "auto"
@@ -221,8 +223,8 @@ def run_reben_croma_campaign(config: RebenCROMAConfig) -> dict[str, Path]:
     artifacts = run_reben_frozen_adapter_campaign(
         config,
         adapter=adapter,
-        model_name=f"croma_base_{slug}",
-        campaign_schema="geobwer.reben.croma_campaign.v1",
+        model_name=f"croma_base_{slug}_seed_{config.seed}",
+        campaign_schema="geobwer.reben.croma_campaign.v2",
     )
     persist_output(config.output_dir, config.persistent_output_dir, label=f"croma-{mode}-complete")
     return artifacts

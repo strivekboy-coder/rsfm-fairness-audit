@@ -107,7 +107,7 @@ def test_fit_scheduler_uses_lightning_cli_plateau_wrapper():
 
 
 def test_official_split_adapter_preserves_252_89_90_membership(tmp_path):
-    members = [f"Event_{index:03d}" for index in range(431)]
+    members = [f"Event{index % 11:02d}_{index:03d}" for index in range(431)]
     splits = {
         "train": members[:252],
         "validation": members[252:341],
@@ -168,7 +168,7 @@ def test_split_preflight_rejects_mismatched_label_pair_and_overlap(tmp_path):
 def test_final_runner_dry_run_rewires_all_modes_to_prefix_splits(tmp_path):
     import yaml
 
-    members = [f"Event_{index:03d}" for index in range(431)]
+    members = [f"Event{index % 11:02d}_{index:03d}" for index in range(431)]
     splits = {
         "train": members[:252],
         "validation": members[252:341],
@@ -216,10 +216,43 @@ def test_final_runner_dry_run_rewires_all_modes_to_prefix_splits(tmp_path):
         "test_split": (output_dir / "terratorch_splits" / "test_prefixes.txt").as_posix(),
     }
     for slug in ("s1", "s2", "s1_plus_s2"):
-        config = yaml.safe_load((output_dir / slug / "configs" / "fit.yaml").read_text(encoding="utf-8"))
-        data_args = config["data"]["init_args"]
-        for key, expected_path in expected_paths.items():
-            assert data_args[key] == expected_path
+        for seed in (42, 73, 101):
+            config = yaml.safe_load(
+                (
+                    output_dir / slug / f"seed_{seed}" / "configs" / "fit.yaml"
+                ).read_text(encoding="utf-8")
+            )
+            data_args = config["data"]["init_args"]
+            assert data_args["test_split"] == expected_paths["test_split"]
+            assert "model_selection_seed_" in data_args["train_split"]
+            assert "model_selection_seed_" in data_args["val_split"]
+            assert config["seed_everything"] == seed
+            fit_members = set(
+                Path(data_args["train_split"]).read_text(encoding="utf-8").split()
+            )
+            selection_members = set(
+                Path(data_args["val_split"]).read_text(encoding="utf-8").split()
+            )
+            assert fit_members | selection_members == set(splits["train"])
+            assert fit_members.isdisjoint(selection_members)
+            assert {
+                value.split("_", 1)[0] for value in fit_members
+            }.isdisjoint(
+                {value.split("_", 1)[0] for value in selection_members}
+            )
+            prediction_config = yaml.safe_load(
+                (
+                    output_dir
+                    / slug
+                    / f"seed_{seed}"
+                    / "configs"
+                    / "predict_validation.yaml"
+                ).read_text(encoding="utf-8")
+            )
+            assert (
+                prediction_config["data"]["init_args"]["val_split"]
+                == expected_paths["val_split"]
+            )
     preflight = (output_dir / "source_preflight.json").read_text(encoding="utf-8")
     assert '"split_counts"' in preflight
     assert '"unused_complete_samples": 15' in preflight
