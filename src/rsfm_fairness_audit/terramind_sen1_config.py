@@ -220,7 +220,7 @@ def build_terramind_sen1floods11_config(
         },
         "optimizer": {"class_path": "torch.optim.AdamW", "init_args": {"lr": 2e-5}},
         "lr_scheduler": {
-            "class_path": "torch.optim.lr_scheduler.ReduceLROnPlateau",
+            "class_path": "lightning.pytorch.cli.ReduceLROnPlateau",
             "init_args": {"monitor": "val/loss", "factor": 0.5, "patience": 5},
         },
     }
