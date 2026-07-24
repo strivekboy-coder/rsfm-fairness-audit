@@ -1,0 +1,21 @@
+{
+  "status": "PASS",
+  "campaign": "fmow_dofav2",
+  "schema": "geobwer.fmow_dofav2_campaign.v1",
+  "project_version": "0.3.6",
+  "commit": "012e12e3d6bec726d837fdfbf0c8f3b030b7af12",
+  "formal_evidence": true,
+  "diagnostic_only": false,
+  "split_counts": {
+    "train": 21046,
+    "calibration": 4485,
+    "test": 4469
+  },
+  "embedding_dimension": 768,
+  "formal_test_rows": 4469,
+  "unique_test_sample_ids": 4469,
+  "calibration_test_rows_used": false,
+  "checkpoint_sha256": "e1be9d50fb3e4e3640e337d098b92d67797eaf2a579de3b7a1e363095885314d",
+  "metadata_sha256": "7c323005401ec03f2ea2f2767d02bd63b6e2bee0770601ba51d6573b63f441ee",
+  "timm_version": "1.0.15"
+}

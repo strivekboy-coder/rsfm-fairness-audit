@@ -1,0 +1,133 @@
+seed_everything: 42
+trainer:
+  accelerator: auto
+  strategy: auto
+  devices: auto
+  num_nodes: 1
+  precision: 16-mixed
+  deterministic: true
+  logger: true
+  callbacks:
+  - class_path: lightning.pytorch.callbacks.RichProgressBar
+  - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+    init_args:
+      logging_interval: epoch
+  - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    init_args:
+      dirpath: D:/Codex/rsfm-fairness-audit/work/pytest_selection_clean2/test_final_runner_dry_run_rewi0/runner_output/s1/seed_42/checkpoints
+      filename: best-{epoch:03d}
+      monitor: val/loss
+      mode: min
+      save_top_k: 1
+      save_last: true
+      auto_insert_metric_name: false
+  max_epochs: 100
+  fast_dev_run: false
+  log_every_n_steps: 5
+  default_root_dir: D:/Codex/rsfm-fairness-audit/work/pytest_selection_clean2/test_final_runner_dry_run_rewi0/runner_output/s1/seed_42
+data:
+  class_path: terratorch.datamodules.GenericMultiModalDataModule
+  init_args:
+    task: segmentation
+    batch_size: 8
+    num_workers: 4
+    modalities: &id003
+    - S1GRD
+    allow_substring_file_names: true
+    channel_position: -3
+    check_stackability: true
+    concat_bands: false
+    data_with_sample_dim: false
+    dataset_bands: &id001
+      S1GRD:
+      - 0
+      - 1
+    expand_temporal_dimension: false
+    output_bands: *id001
+    reduce_zero_label: false
+    rgb_indices:
+      S1GRD:
+      - 0
+    rgb_modality: S1GRD
+    sample_replace: false
+    shared_transforms: true
+    train_data_root: &id002
+      S1GRD: D:/Codex/rsfm-fairness-audit/work/pytest_selection_clean2/test_final_runner_dry_run_rewi0/S1GRDHand
+    val_data_root: *id002
+    test_data_root: *id002
+    train_label_data_root: D:/Codex/rsfm-fairness-audit/work/pytest_selection_clean2/test_final_runner_dry_run_rewi0/LabelHand
+    val_label_data_root: D:/Codex/rsfm-fairness-audit/work/pytest_selection_clean2/test_final_runner_dry_run_rewi0/LabelHand
+    test_label_data_root: D:/Codex/rsfm-fairness-audit/work/pytest_selection_clean2/test_final_runner_dry_run_rewi0/LabelHand
+    train_split: D:/Codex/rsfm-fairness-audit/work/pytest_selection_clean2/test_final_runner_dry_run_rewi0/runner_output/terratorch_splits/model_selection_seed_42/fit_prefixes.txt
+    val_split: D:/Codex/rsfm-fairness-audit/work/pytest_selection_clean2/test_final_runner_dry_run_rewi0/runner_output/terratorch_splits/model_selection_seed_42/selection_prefixes.txt
+    test_split: D:/Codex/rsfm-fairness-audit/work/pytest_selection_clean2/test_final_runner_dry_run_rewi0/runner_output/terratorch_splits/test_prefixes.txt
+    image_grep:
+      S1GRD: '*_S1Hand.tif'
+    label_grep: '*_LabelHand.tif'
+    no_label_replace: -1
+    no_data_replace: 0
+    num_classes: 2
+    means:
+      S1GRD:
+      - -12.599
+      - -20.293
+    stds:
+      S1GRD:
+      - 5.195
+      - 5.89
+    drop_last: true
+    pin_memory: true
+    train_transform:
+    - class_path: albumentations.D4
+      init_args:
+        p: 1.0
+    - class_path: albumentations.pytorch.transforms.ToTensorV2
+      init_args:
+        transpose_mask: false
+model:
+  class_path: rsfm_fairness_audit.terratorch_exports.GeoBWERSemanticSegmentationTask
+  init_args:
+    model_factory: EncoderDecoderFactory
+    model_args:
+      backbone: terramind_v1_base
+      backbone_pretrained: false
+      backbone_ckpt_path: D:/Codex/rsfm-fairness-audit/work/pytest_selection_clean2/test_final_runner_dry_run_rewi0/TerraMind_v1_base.pt
+      backbone_modalities: *id003
+      backbone_bands: *id001
+      backbone_merge_method: mean
+      necks:
+      - name: SelectIndices
+        indices:
+        - 2
+        - 5
+        - 8
+        - 11
+      - name: ReshapeTokensToImage
+        remove_cls_token: false
+      - name: LearnedInterpolateToPyramidal
+      decoder: UNetDecoder
+      decoder_channels:
+      - 512
+      - 256
+      - 128
+      - 64
+      head_dropout: 0.1
+      num_classes: 2
+    loss: dice
+    ignore_index: -1
+    freeze_backbone: false
+    freeze_decoder: false
+    freeze_head: false
+    class_names:
+    - Others
+    - Flood
+optimizer:
+  class_path: torch.optim.AdamW
+  init_args:
+    lr: 2.0e-05
+lr_scheduler:
+  class_path: lightning.pytorch.cli.ReduceLROnPlateau
+  init_args:
+    monitor: val/loss
+    factor: 0.5
+    patience: 5

@@ -1,0 +1,6 @@
+{
+  "schema": "geobwer.terramind.fit_protocol.v1",
+  "config_sha256": "ecd5349431c4fb71d412387f816e99d04500190ac978aee9a251ca646da13044",
+  "backbone_checkpoint_sha256": "83c3a0938067c83867a46e564443c2fa38383bf4f966d931b11cb025b847d7ec",
+  "backbone_revision": "fb96c70d0a5f68dcc44030b89cbfd8ec3fb0c67a"
+}

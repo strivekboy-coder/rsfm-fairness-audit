@@ -1,0 +1,44 @@
+{
+  "status": "ready",
+  "schema": "geobwer.sen1floods11.terratorch_split_adapter.v1",
+  "counts": {
+    "s1": 446,
+    "s2": 446,
+    "label": 446
+  },
+  "split_counts": {
+    "train": 252,
+    "validation": 89,
+    "test": 90
+  },
+  "selected_unique_samples": 431,
+  "unused_complete_samples": 15,
+  "source_split_paths": {
+    "train": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_v040d\\test_final_runner_dry_run_rewi0\\official_splits\\train.csv",
+    "validation": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_v040d\\test_final_runner_dry_run_rewi0\\official_splits\\val.csv",
+    "test": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_v040d\\test_final_runner_dry_run_rewi0\\official_splits\\test.csv"
+  },
+  "source_split_sha256": {
+    "train": "dd81ac63e4b3cce5473f80593c1bef00821993116a354f38f2a842b86b93f08d",
+    "validation": "f086678f5edd209bf5f18a8aaee9efb19f1438a340af8871a57d617be5c377b7",
+    "test": "d53ecabd8962b54f8d28c3633f1f5160aab98ed6cdb0d51320023e13b736c6df"
+  },
+  "terratorch_split_paths": {
+    "train": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_v040d\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\train_prefixes.txt",
+    "validation": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_v040d\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\validation_prefixes.txt",
+    "test": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_v040d\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\test_prefixes.txt"
+  },
+  "terratorch_split_sha256": {
+    "train": "ed1625c1a211236a5140a8908d18eda950b0a5c46a56dc57243e2c624114c556",
+    "validation": "c6c62616d7cc249c3f4d03a1bdd796d930a6b06758b2ba902d508d640131a189",
+    "test": "5112ab32e21c656064ee6ddcd895adceca65ea520ce809c9a88a0d91e3a7422f"
+  },
+  "roots": {
+    "s1": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_v040d\\test_final_runner_dry_run_rewi0\\S1GRDHand",
+    "s2": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_v040d\\test_final_runner_dry_run_rewi0\\S2L1CHand",
+    "label": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_v040d\\test_final_runner_dry_run_rewi0\\LabelHand"
+  },
+  "terramind_checkpoint": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_v040d\\test_final_runner_dry_run_rewi0\\TerraMind_v1_base.pt",
+  "terramind_checkpoint_sha256": "83c3a0938067c83867a46e564443c2fa38383bf4f966d931b11cb025b847d7ec",
+  "terramind_revision": "fb96c70d0a5f68dcc44030b89cbfd8ec3fb0c67a"
+}

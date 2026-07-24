@@ -1,6 +1,6 @@
 {
   "output_schema": "geobwer.multilabel.v1",
-  "created_utc": "2026-07-24T13:17:14.906102+00:00",
+  "created_utc": "2026-07-24T16:11:47.492676+00:00",
   "row_count": 2,
   "protocol": {
     "beta": 0.1,
