@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import copy
+import hashlib
 import json
 from pathlib import Path
 import random
@@ -12,6 +13,7 @@ import numpy as np
 from rsfm_fairness_audit.adapters.reben import (
     LmdbSafetensorsRebenDatasetAdapter,
     detect_lmdb_payload_format,
+    reben_labels_to_multihot,
     resolve_reben_root_dir,
 )
 from rsfm_fairness_audit.bwer_protocol import BWERProtocol
@@ -38,6 +40,14 @@ from rsfm_fairness_audit.spatial_conformal import SpatialConformalConfig
 
 class RebenResNet50CampaignError(RuntimeError):
     """Raised when the supervised reBEN reference violates the frozen contract."""
+
+
+class RebenDiagnosticSupportError(RebenResNet50CampaignError):
+    """Raised when a bounded diagnostic cannot preserve its selection geometry."""
+
+    def __init__(self, message: str, diagnostics: Mapping[str, Any]) -> None:
+        super().__init__(message)
+        self.diagnostics = dict(diagnostics)
 
 
 SENSOR_MODES = ("S1", "S2", "S1+S2")
@@ -85,6 +95,131 @@ class RebenResNet50Config:
             raise ValueError("Epoch, batch, patience, and normalization stride must be positive.")
 
 
+def _stable_rank(value: str) -> int:
+    return int(hashlib.sha256(value.encode("utf-8")).hexdigest()[:16], 16)
+
+
+def _row_label_vector(row: Mapping[str, Any]) -> np.ndarray:
+    if "label_vector" in row:
+        values = np.asarray(row["label_vector"], dtype=np.int8)
+    else:
+        values = reben_labels_to_multihot(row.get("labels", []))
+    if values.shape != (19,):
+        raise RebenResNet50CampaignError(
+            f"Expected a 19-label diagnostic metadata vector, got {values.shape}."
+        )
+    return values.astype(np.int8, copy=False)
+
+
+def select_reben_diagnostic_indices(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    max_samples: int,
+    seed: int,
+    split: str,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Select a deterministic bounded panel with group and label coverage.
+
+    Selection is metadata-only and therefore identical for S1, S2 and S1+S2.
+    The first two rows are forced onto distinct source tiles when possible;
+    subsequent rows greedily add unseen labels and then unseen tiles.
+    """
+
+    limit = min(int(max_samples), len(rows))
+    if limit <= 0:
+        raise ValueError("diagnostic max_samples must be positive.")
+    groups = [str(row.get("source_tile_id", "")).strip() for row in rows]
+    if any(not group for group in groups):
+        raise RebenResNet50CampaignError(
+            "Every reBEN diagnostic row requires a non-empty source_tile_id."
+        )
+    labels = np.stack([_row_label_vector(row) for row in rows], axis=0)
+    all_groups = sorted(set(groups))
+    selected: list[int] = []
+    selected_groups: set[str] = set()
+    covered_labels = np.zeros(19, dtype=bool)
+    remaining = set(range(len(rows)))
+    while remaining and len(selected) < limit:
+        pool = remaining
+        if len(selected_groups) == 1:
+            new_group_pool = {
+                index for index in remaining if groups[index] not in selected_groups
+            }
+            if new_group_pool:
+                pool = new_group_pool
+
+        def ordering(index: int) -> tuple[int, int, int, int]:
+            vector = labels[index].astype(bool)
+            new_label_count = int(np.sum(vector & ~covered_labels))
+            new_group = int(groups[index] not in selected_groups)
+            label_count = int(np.sum(vector))
+            stable = _stable_rank(
+                f"{seed}|{split}|{groups[index]}|{rows[index].get('sample_id', index)}"
+            )
+            return (-new_label_count, -new_group, -label_count, stable)
+
+        chosen = min(pool, key=ordering)
+        selected.append(chosen)
+        selected_groups.add(groups[chosen])
+        covered_labels |= labels[chosen].astype(bool)
+        remaining.remove(chosen)
+
+    selected_array = np.asarray(selected, dtype=np.int64)
+    selected_ids = [str(rows[index].get("sample_id", "")).strip() for index in selected]
+    digest = hashlib.sha256()
+    for sample_id in selected_ids:
+        digest.update(sample_id.encode("utf-8"))
+        digest.update(b"\n")
+    support_status = (
+        "ready"
+        if len(selected_groups) >= 2 and len(selected_array) >= 2
+        else "insufficient_selection_groups"
+    )
+    diagnostics = {
+        "schema": "geobwer.reben.diagnostic_sampling.v1",
+        "formal_evidence": False,
+        "strategy": "deterministic_group_then_multilabel_coverage",
+        "split": str(split),
+        "seed": int(seed),
+        "requested_max_samples": int(max_samples),
+        "source_samples": len(rows),
+        "selected_samples": len(selected_array),
+        "source_group_count": len(all_groups),
+        "selected_group_count": len(selected_groups),
+        "selected_groups": sorted(selected_groups),
+        "covered_label_count": int(np.sum(covered_labels)),
+        "covered_label_indices": np.flatnonzero(covered_labels).astype(int).tolist(),
+        "selected_sample_id_sha256": digest.hexdigest(),
+        "status": support_status,
+    }
+    return selected_array, diagnostics
+
+
+class _IndexedRebenAdapter:
+    def __init__(
+        self,
+        base: Any,
+        indices: Sequence[int],
+        diagnostics: Mapping[str, Any],
+    ) -> None:
+        self.base = base
+        self.indices = np.asarray(indices, dtype=np.int64)
+        source_rows = base.load_metadata()
+        self._rows = [source_rows[int(index)] for index in self.indices]
+        self.diagnostic_sampling = dict(diagnostics)
+
+    def load_metadata(self) -> list[dict[str, Any]]:
+        return [dict(row) for row in self._rows]
+
+    def load_sample(self, index: int) -> Mapping[str, Any]:
+        return self.base.load_sample(int(self.indices[index]))
+
+    def loader_info(self) -> dict[str, Any]:
+        info = dict(self.base.loader_info())
+        info["diagnostic_sampling"] = dict(self.diagnostic_sampling)
+        return info
+
+
 def _require_torch() -> Any:
     try:
         import torch
@@ -100,15 +235,31 @@ def _dataset(config: RebenResNet50Config, split: str, mode: str) -> Any:
         raise RebenResNet50CampaignError(
             f"Formal supervised reBEN requires the verified raw-band safetensors LMDB; got {payload!r}."
         )
-    return LmdbSafetensorsRebenDatasetAdapter(
+    adapter = LmdbSafetensorsRebenDatasetAdapter(
         config.lmdb_root,
         config.metadata_parquet,
         config.metadata_snow_cloud_parquet,
         split=split,
         sensor_mode=mode,
-        max_samples=config.diagnostic_max_samples,
+        max_samples=None,
         channel_profile="croma",
     )
+    if config.diagnostic_max_samples is None:
+        return adapter
+    rows = adapter.load_metadata()
+    indices, diagnostics = select_reben_diagnostic_indices(
+        rows,
+        max_samples=config.diagnostic_max_samples,
+        seed=int(config.seeds[0]),
+        split=split,
+    )
+    if split == "train" and diagnostics["status"] != "ready":
+        raise RebenDiagnosticSupportError(
+            "Bounded reBEN diagnostic cannot preserve at least two source_tile_id "
+            "groups for group-disjoint model selection.",
+            diagnostics,
+        )
+    return _IndexedRebenAdapter(adapter, indices, diagnostics)
 
 
 def _image(sample: Mapping[str, Any], mode: str) -> np.ndarray:
@@ -168,7 +319,7 @@ def compute_reben_train_contract(
     variance = np.maximum(square / pixel_count - np.square(mean), 1e-12)
     negatives = count - positives
     pos_weight = negatives / np.maximum(positives, 1)
-    return {
+    contract = {
         "schema": "geobwer.reben.supervised_train_contract.v1",
         "selection_split": "official_train",
         "test_rows_used": False,
@@ -183,6 +334,10 @@ def compute_reben_train_contract(
         "negative_count": negatives.tolist(),
         "pos_weight": pos_weight.tolist(),
     }
+    diagnostic_sampling = getattr(dataset, "diagnostic_sampling", None)
+    if diagnostic_sampling is not None:
+        contract["diagnostic_sampling"] = dict(diagnostic_sampling)
+    return contract
 
 
 class _TorchDataset:
@@ -316,6 +471,19 @@ def _train_seed(
         validation_fraction=0.15,
         seed=seed,
     )
+    fit_groups = sorted(
+        {str(datasets["train"].rows[index]["source_tile_id"]) for index in fit_indices}
+    )
+    selection_groups = sorted(
+        {
+            str(datasets["train"].rows[index]["source_tile_id"])
+            for index in selection_indices
+        }
+    )
+    diagnostic_sampling_by_split = {
+        split: getattr(dataset.adapter, "diagnostic_sampling", None)
+        for split, dataset in datasets.items()
+    }
     inner_fit_dataset = torch.utils.data.Subset(
         datasets["train"], fit_indices.tolist()
     )
@@ -434,6 +602,12 @@ def _train_seed(
             "outer_validation_used_for_model_selection": False,
             "inner_fit_count": len(fit_indices),
             "inner_selection_count": len(selection_indices),
+            "inner_fit_groups": fit_groups,
+            "inner_selection_groups": selection_groups,
+            "diagnostic_sampling": getattr(
+                datasets["train"].adapter, "diagnostic_sampling", None
+            ),
+            "diagnostic_sampling_by_split": diagnostic_sampling_by_split,
             "train_contract": dict(contract),
             "config": asdict(config),
         },
@@ -468,6 +642,12 @@ def _train_seed(
         "refit_history": refit_history,
         "datasets": datasets,
         "outputs": outputs,
+        "inner_fit_groups": fit_groups,
+        "inner_selection_groups": selection_groups,
+        "diagnostic_sampling": getattr(
+            datasets["train"].adapter, "diagnostic_sampling", None
+        ),
+        "diagnostic_sampling_by_split": diagnostic_sampling_by_split,
     }
 
 
@@ -616,20 +796,81 @@ def run_reben_resnet50_campaign(config: RebenResNet50Config) -> dict[str, Any]:
     runs: dict[str, Any] = {}
     robustness_rows: list[dict[str, Any]] = []
     for mode in config.sensor_modes:
-        adapters = {
-            "train": _dataset(config, "train", mode),
-            "validation": _dataset(config, "val", mode),
-            "test": _dataset(config, "test", mode),
-        }
+        try:
+            adapters = {
+                "train": _dataset(config, "train", mode),
+                "validation": _dataset(config, "val", mode),
+                "test": _dataset(config, "test", mode),
+            }
+        except RebenDiagnosticSupportError as exc:
+            if config.diagnostic_max_samples is None:
+                raise
+            for seed in config.seeds:
+                name = f"resnet50_{mode.lower().replace('+', '_plus_')}_seed_{seed}"
+                run_dir = output / mode.lower().replace("+", "_plus_") / f"seed_{seed}"
+                run_dir.mkdir(parents=True, exist_ok=True)
+                diagnostic = run_dir / "diagnostic_manifest.json"
+                diagnostic.write_text(
+                    json.dumps(
+                        {
+                            "schema": "geobwer.reben.resnet50_diagnostic.v2",
+                            "formal_evidence": False,
+                            "status": "not_run_insufficient_diagnostic_support",
+                            "reason": str(exc),
+                            "sensor_mode": mode,
+                            "seed": int(seed),
+                            "diagnostic_sampling": exc.diagnostics,
+                            "formal_protocol_changed": False,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                runs[name] = {"diagnostic_manifest": diagnostic}
+                robustness_rows.append(
+                    {
+                        "sensor_mode": mode,
+                        "seed": seed,
+                        "status": "not_run_insufficient_diagnostic_support",
+                        "formal_evidence": False,
+                    }
+                )
+            continue
         contract_path = output / "train_contracts" / f"{mode.lower().replace('+', '_plus_')}.json"
         contract_path.parent.mkdir(parents=True, exist_ok=True)
         if contract_path.exists():
             contract = json.loads(contract_path.read_text(encoding="utf-8"))
-            if (
+            invalid_contract = (
                 contract.get("selection_split") != "official_train"
                 or contract.get("test_rows_used") is not False
-            ):
-                raise RebenResNet50CampaignError(f"Invalid cached train contract: {contract_path}")
+            )
+            expected_sampling = getattr(adapters["train"], "diagnostic_sampling", None)
+            sampling_matches = (
+                expected_sampling is None
+                or (
+                    contract.get("diagnostic_sampling", {}).get(
+                        "selected_sample_id_sha256"
+                    )
+                    == expected_sampling.get("selected_sample_id_sha256")
+                    and int(contract.get("sample_count", -1))
+                    == len(adapters["train"].load_metadata())
+                )
+            )
+            if invalid_contract:
+                raise RebenResNet50CampaignError(
+                    f"Invalid cached train contract: {contract_path}"
+                )
+            if not sampling_matches:
+                contract = compute_reben_train_contract(
+                    adapters["train"],
+                    mode=mode,
+                    pixel_stride=config.normalization_pixel_stride,
+                )
+                contract_path.write_text(
+                    json.dumps(contract, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
         else:
             contract = compute_reben_train_contract(
                 adapters["train"],
@@ -655,10 +896,24 @@ def run_reben_resnet50_campaign(config: RebenResNet50Config) -> dict[str, Any]:
                 diagnostic.write_text(
                     json.dumps(
                         {
-                            "schema": "geobwer.reben.resnet50_diagnostic.v1",
+                            "schema": "geobwer.reben.resnet50_diagnostic.v2",
                             "formal_evidence": False,
+                            "status": "completed",
+                            "reason": "explicit_bounded_real_gpu_smoke",
                             "sensor_mode": mode,
                             "seed": seed,
+                            "diagnostic_sampling": fit.get(
+                                "diagnostic_sampling"
+                            ),
+                            "diagnostic_sampling_by_split": fit.get(
+                                "diagnostic_sampling_by_split", {}
+                            ),
+                            "inner_fit_groups": fit.get("inner_fit_groups", []),
+                            "inner_selection_groups": fit.get(
+                                "inner_selection_groups", []
+                            ),
+                            "group_disjoint_model_selection_preserved": True,
+                            "formal_protocol_changed": False,
                             "best_validation_weighted_bce": fit[
                                 "best_validation_weighted_bce"
                             ],
@@ -744,8 +999,10 @@ def run_reben_resnet50_campaign(config: RebenResNet50Config) -> dict[str, Any]:
 
 __all__ = [
     "MODE_CHANNELS",
+    "RebenDiagnosticSupportError",
     "RebenResNet50CampaignError",
     "RebenResNet50Config",
     "compute_reben_train_contract",
     "run_reben_resnet50_campaign",
+    "select_reben_diagnostic_indices",
 ]
