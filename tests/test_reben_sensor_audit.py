@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import pickle
 import subprocess
 import sys
 import types
@@ -14,9 +15,11 @@ from rsfm_fairness_audit.adapters.croma import CROMAAdapter
 from rsfm_fairness_audit.adapters.reben import (
     ConfigILMRebenDatasetAdapter,
     LmdbSafetensorsRebenDatasetAdapter,
+    _close_lmdb_environments,
     reben_spatial_lineage,
-    _LMDB_ENV_CACHE,
+    detect_lmdb_payload_format,
     import_configilm_reben_dataset_class,
+    inspect_lmdb_payload,
     reben_labels_to_multihot,
     resolve_reben_root_dir,
 )
@@ -427,20 +430,154 @@ def test_lmdb_safetensors_adapter_reuses_env_cache(monkeypatch: pytest.MonkeyPat
     opened = []
 
     class _FakeEnv:
-        pass
+        def close(self):
+            pass
 
     def fake_open(path, **kwargs):
         opened.append((path, kwargs))
         return _FakeEnv()
 
     monkeypatch.setattr("lmdb.open", fake_open)
-    _LMDB_ENV_CACHE.clear()
-    a = LmdbSafetensorsRebenDatasetAdapter(".pytest_tmp/reben_cache_test", "meta.parquet", split="train", sensor_mode="S1")
-    b = LmdbSafetensorsRebenDatasetAdapter(".pytest_tmp/reben_cache_test", "meta.parquet", split="val", sensor_mode="S1")
+    _close_lmdb_environments()
+    root = Path(".pytest_tmp/reben_cache_test")
+    (root / "BigEarthNetEncoded.lmdb").mkdir(parents=True, exist_ok=True)
+    a = LmdbSafetensorsRebenDatasetAdapter(root, "meta.parquet", split="train", sensor_mode="S1")
+    b = LmdbSafetensorsRebenDatasetAdapter(root, "meta.parquet", split="val", sensor_mode="S1")
     assert a._lmdb_env() is b._lmdb_env()
     assert len(opened) == 1
     assert opened[0][1]["max_readers"] == 512
-    _LMDB_ENV_CACHE.clear()
+    _close_lmdb_environments()
+
+
+def test_real_lmdb_dataset_open_then_payload_detection_is_safe() -> None:
+    lmdb = pytest.importorskip("lmdb")
+    safetensors = pytest.importorskip("safetensors.numpy")
+    lmdb_path = Path(".pytest_tmp/test_real_lmdb_lifecycle/BigEarthNetEncoded.lmdb")
+    lmdb_path.mkdir(parents=True, exist_ok=True)
+    writer = lmdb.open(str(lmdb_path), map_size=1024 * 1024, subdir=True)
+    with writer.begin(write=True) as txn:
+        txn.put(
+            b"patch",
+            safetensors.save(
+                {
+                    "VV": np.ones((4, 4), dtype=np.float32),
+                    "VH": np.zeros((4, 4), dtype=np.float32),
+                }
+            ),
+        )
+    writer.close()
+
+    _close_lmdb_environments()
+    adapters = [
+        LmdbSafetensorsRebenDatasetAdapter(
+            lmdb_path,
+            "meta.parquet",
+            split=split,
+            sensor_mode=mode,
+        )
+        for split, mode in (
+            ("train", "S1"),
+            ("val", "S1"),
+            ("test", "S1"),
+            ("train", "S2"),
+            ("val", "S2"),
+            ("test", "S1+S2"),
+        )
+    ]
+    shared_env = adapters[0]._lmdb_env()
+
+    assert detect_lmdb_payload_format(lmdb_path) == "safetensors"
+    assert detect_lmdb_payload_format(lmdb_path) == "safetensors"
+    assert inspect_lmdb_payload(lmdb_path)["first_key"] == "patch"
+    assert all(adapter._lmdb_env() is shared_env for adapter in adapters)
+    _close_lmdb_environments()
+
+
+def test_payload_detection_before_dataset_open_is_cached_and_reopen_safe() -> None:
+    lmdb = pytest.importorskip("lmdb")
+    safetensors = pytest.importorskip("safetensors.numpy")
+    lmdb_path = Path(".pytest_tmp/test_reben_probe_before_dataset/BigEarthNetEncoded.lmdb")
+    lmdb_path.mkdir(parents=True, exist_ok=True)
+    writer = lmdb.open(str(lmdb_path), map_size=1024 * 1024, subdir=True)
+    with writer.begin(write=True) as txn:
+        txn.put(
+            b"patch",
+            safetensors.save({"B02": np.ones((4, 4), dtype=np.uint16)}),
+        )
+    writer.close()
+
+    _close_lmdb_environments()
+    assert detect_lmdb_payload_format(lmdb_path) == "safetensors"
+    adapter = LmdbSafetensorsRebenDatasetAdapter(
+        lmdb_path,
+        "meta.parquet",
+        split="train",
+        sensor_mode="S2",
+    )
+    assert adapter._lmdb_env() is not None
+    assert detect_lmdb_payload_format(lmdb_path) == "safetensors"
+    _close_lmdb_environments()
+
+
+def test_payload_detection_reuses_dataset_opened_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("lmdb")
+    opened: list[str] = []
+    value = pickle.dumps({"payload": "configilm"}, protocol=4)
+
+    class _FakeCursor:
+        def first(self):
+            return True
+
+        def item(self):
+            return b"patch", value
+
+    class _FakeTransaction:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def cursor(self):
+            return _FakeCursor()
+
+        def stat(self):
+            return {"entries": 1}
+
+    class _FakeEnv:
+        def begin(self, *, write=False):
+            assert write is False
+            return _FakeTransaction()
+
+        def close(self):
+            pass
+
+    def fake_open(path, **_kwargs):
+        if opened:
+            raise RuntimeError(f"duplicate LMDB open for {path}")
+        opened.append(str(path))
+        return _FakeEnv()
+
+    monkeypatch.setattr("lmdb.open", fake_open)
+    _close_lmdb_environments()
+    lmdb_path = Path(".pytest_tmp/reben_payload_after_dataset/BigEarthNetEncoded.lmdb")
+    lmdb_path.mkdir(parents=True, exist_ok=True)
+    adapter = LmdbSafetensorsRebenDatasetAdapter(
+        lmdb_path,
+        "meta.parquet",
+        split="train",
+        sensor_mode="S1",
+    )
+
+    dataset_env = adapter._lmdb_env()
+    assert detect_lmdb_payload_format(lmdb_path) == "pickle_patch_interface"
+    assert detect_lmdb_payload_format(lmdb_path) == "pickle_patch_interface"
+    inspection = inspect_lmdb_payload(lmdb_path)
+
+    assert inspection["first_key"] == "patch"
+    assert adapter._lmdb_env() is dataset_env
+    assert len(opened) == 1
+    _close_lmdb_environments()
 
 
 def test_bifold_resnet101_runner_with_mock_model() -> None:

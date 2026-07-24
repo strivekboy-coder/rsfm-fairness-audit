@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import atexit
+from contextlib import contextmanager
 import importlib
 import inspect
 import io
 import json
+import os
 import pickle
 import re
+import threading
 import traceback
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 import numpy as np
 
@@ -54,7 +58,9 @@ REBEN_CLASS_NAMES = (
     "Marine waters",
 )
 REBEN_CLASS_TO_INDEX = {name: index for index, name in enumerate(REBEN_CLASS_NAMES)}
-_LMDB_ENV_CACHE: dict[str, Any] = {}
+_LMDB_ENV_CACHE: dict[tuple[int, str], Any] = {}
+_LMDB_PAYLOAD_FORMAT_CACHE: dict[tuple[int, str], str] = {}
+_LMDB_CACHE_LOCK = threading.RLock()
 
 
 def reben_spatial_lineage(patch_id: Any) -> dict[str, str]:
@@ -78,26 +84,88 @@ def _to_numpy(value: Any) -> np.ndarray:
     return np.asarray(value)
 
 
+def _lmdb_cache_key(path: Path) -> tuple[int, str]:
+    return os.getpid(), str(path.resolve())
+
+
+def _open_lmdb_new(path: Path) -> Any:
+    try:
+        import lmdb
+    except ImportError as exc:
+        raise RebenDatasetError("The lmdb package is required for reBEN LMDB loading.") from exc
+    return lmdb.open(
+        str(path),
+        readonly=True,
+        lock=False,
+        readahead=False,
+        max_readers=512,
+        subdir=path.is_dir(),
+    )
+
+
 def _open_lmdb(path: Path) -> Any:
-    try:
-        import lmdb
-    except ImportError as exc:
-        raise RebenDatasetError("The lmdb package is required for reBEN LMDB loading.") from exc
-    resolved = str(path.resolve())
-    cached = _LMDB_ENV_CACHE.get(resolved)
-    if cached is not None:
-        return cached
-    env = lmdb.open(str(path), readonly=True, lock=False, readahead=False, max_readers=512, subdir=path.is_dir())
-    _LMDB_ENV_CACHE[resolved] = env
-    return env
+    """Return the sole long-lived LMDB environment for this path and process."""
+
+    key = _lmdb_cache_key(path)
+    with _LMDB_CACHE_LOCK:
+        cached = _LMDB_ENV_CACHE.get(key)
+        if cached is not None:
+            return cached
+        env = _open_lmdb_new(path)
+        _LMDB_ENV_CACHE[key] = env
+        return env
 
 
-def _open_lmdb_uncached(path: Path) -> Any:
-    try:
-        import lmdb
-    except ImportError as exc:
-        raise RebenDatasetError("The lmdb package is required for reBEN LMDB loading.") from exc
-    return lmdb.open(str(path), readonly=True, lock=False, readahead=False, max_readers=16, subdir=path.is_dir())
+@contextmanager
+def _probe_lmdb_environment(path: Path) -> Iterator[Any]:
+    """Borrow a cached environment or use one short-lived pre-dataset probe.
+
+    python-lmdb rejects opening the same path twice in one process, especially
+    when the open flags differ. Holding the lifecycle lock through the short
+    probe prevents a dataset environment from being created concurrently. Once
+    a dataset owns the cached environment, every probe borrows that exact
+    object and never closes it.
+    """
+
+    key = _lmdb_cache_key(path)
+    with _LMDB_CACHE_LOCK:
+        cached = _LMDB_ENV_CACHE.get(key)
+        if cached is not None:
+            yield cached
+            return
+        env = _open_lmdb_new(path)
+        try:
+            yield env
+        finally:
+            env.close()
+
+
+def _close_lmdb_environments() -> None:
+    """Close process-owned environments and clear derived payload metadata."""
+
+    with _LMDB_CACHE_LOCK:
+        environments = list(_LMDB_ENV_CACHE.values())
+        _LMDB_ENV_CACHE.clear()
+        _LMDB_PAYLOAD_FORMAT_CACHE.clear()
+    seen: set[int] = set()
+    for env in environments:
+        identity = id(env)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        close = getattr(env, "close", None)
+        if callable(close):
+            close()
+
+
+def _reset_lmdb_state_after_fork() -> None:
+    # A child process must not reuse an Environment inherited from its parent.
+    _close_lmdb_environments()
+
+
+atexit.register(_close_lmdb_environments)
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_lmdb_state_after_fork)
 
 
 def _load_safetensors_lmdb_value(value: bytes) -> dict[str, np.ndarray]:
@@ -115,28 +183,32 @@ def detect_lmdb_payload_format(lmdb_path: str | Path) -> str:
     path = Path(lmdb_path)
     if not path.exists():
         return "missing"
-    env = None
-    try:
-        env = _open_lmdb_uncached(path)
+    key = _lmdb_cache_key(path)
+    with _LMDB_CACHE_LOCK:
+        cached = _LMDB_PAYLOAD_FORMAT_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    detected = "unknown"
+    with _probe_lmdb_environment(path) as env:
         with env.begin(write=False) as txn:
             cursor = txn.cursor()
             if not cursor.first():
-                return "empty"
-            _, value = cursor.item()
-            try:
-                pickle.loads(value)
-                return "pickle_patch_interface"
-            except Exception:
-                pass
-            try:
-                _load_safetensors_lmdb_value(value)
-                return "safetensors"
-            except Exception:
-                pass
-        return "unknown"
-    finally:
-        if env is not None:
-            env.close()
+                detected = "empty"
+            else:
+                _, value = cursor.item()
+                try:
+                    pickle.loads(value)
+                    detected = "pickle_patch_interface"
+                except Exception:
+                    try:
+                        _load_safetensors_lmdb_value(value)
+                        detected = "safetensors"
+                    except Exception:
+                        detected = "unknown"
+    with _LMDB_CACHE_LOCK:
+        _LMDB_PAYLOAD_FORMAT_CACHE[key] = detected
+    return detected
 
 
 def resolve_reben_root_dir(images_lmdb: str | Path) -> tuple[Path, Path, list[str]]:
@@ -517,34 +589,30 @@ def inspect_lmdb_payload(lmdb_path: str | Path, split_csv_path: str | Path | Non
     except ImportError as exc:
         result["error"] = f"lmdb package unavailable: {exc}"
         return result
-    env = None
     try:
-        env = _open_lmdb_uncached(path)
-        with env.begin(write=False) as txn:
-            result["lmdb_stat"] = dict(txn.stat())
-            cursor = txn.cursor()
-            if cursor.first():
-                key, value = cursor.item()
-                result["first_key"] = key.decode("utf-8", errors="replace")
-                result["first_value_len"] = len(value)
-                prefix = value[:32]
-                result["first_value_prefix_hex"] = prefix.hex()
-                result["first_value_prefix_ascii"] = prefix.decode("utf-8", errors="replace")
-                try:
-                    pickle.loads(value)
-                    result["pickle_load_status"] = "ok"
-                except Exception as exc:
-                    result["pickle_load_status"] = f"failed: {type(exc).__name__}: {exc}"
-                try:
-                    np.load(io.BytesIO(value), allow_pickle=False)
-                    result["numpy_load_status"] = "ok"
-                except Exception as exc:
-                    result["numpy_load_status"] = f"failed: {type(exc).__name__}: {exc}"
+        with _probe_lmdb_environment(path) as env:
+            with env.begin(write=False) as txn:
+                result["lmdb_stat"] = dict(txn.stat())
+                cursor = txn.cursor()
+                if cursor.first():
+                    key, value = cursor.item()
+                    result["first_key"] = key.decode("utf-8", errors="replace")
+                    result["first_value_len"] = len(value)
+                    prefix = value[:32]
+                    result["first_value_prefix_hex"] = prefix.hex()
+                    result["first_value_prefix_ascii"] = prefix.decode("utf-8", errors="replace")
+                    try:
+                        pickle.loads(value)
+                        result["pickle_load_status"] = "ok"
+                    except Exception as exc:
+                        result["pickle_load_status"] = f"failed: {type(exc).__name__}: {exc}"
+                    try:
+                        np.load(io.BytesIO(value), allow_pickle=False)
+                        result["numpy_load_status"] = "ok"
+                    except Exception as exc:
+                        result["numpy_load_status"] = f"failed: {type(exc).__name__}: {exc}"
     except Exception as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
-    finally:
-        if env is not None:
-            env.close()
     return result
 
 
