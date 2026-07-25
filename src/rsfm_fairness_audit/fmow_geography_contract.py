@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 from typing import Any, Mapping, Sequence
@@ -13,6 +14,7 @@ from rsfm_fairness_audit.io import read_csv_rows
 
 GEOGRAPHY_CONTRACT_SCHEMA = "geobwer.fmow.geography_contract.v1"
 FMOW_REMAP_AUDIT_EXPECTED_ROWS = 720
+NEAREST_BOUNDARY_SOURCE_PREFIX = "natural_earth_nearest_boundary:"
 DEFAULT_CODE_POLICY = (
     Path(__file__).resolve().parents[2]
     / "configs"
@@ -388,19 +390,70 @@ def _sample_assignment_audit_contract(
                 }
             )
 
+    nearest_boundary_row_count = 0
     nearest_distances: list[float] = []
     for index, row in enumerate(audit_rows, start=2):
+        source = str(row.get("mapping_source") or "").strip()
         raw = str(row.get("nearest_boundary_distance_km") or "").strip()
+        is_nearest_boundary = source.startswith(
+            NEAREST_BOUNDARY_SOURCE_PREFIX
+        )
+        if is_nearest_boundary:
+            nearest_boundary_row_count += 1
+        if not raw and not is_nearest_boundary:
+            continue
         if not raw:
+            conflicts.append(
+                {
+                    "type": "missing_nearest_boundary_distance",
+                    "row": index,
+                    "sample_id": str(row.get("sample_id") or ""),
+                    "mapping_source": source,
+                }
+            )
             continue
         try:
-            nearest_distances.append(float(raw))
+            distance = float(raw)
         except ValueError:
             conflicts.append(
                 {
                     "type": "invalid_nearest_boundary_distance",
                     "row": index,
                     "sample_id": str(row.get("sample_id") or ""),
+                    "value": raw,
+                }
+            )
+            continue
+        if not math.isfinite(distance):
+            conflicts.append(
+                {
+                    "type": "invalid_nearest_boundary_distance",
+                    "row": index,
+                    "sample_id": str(row.get("sample_id") or ""),
+                    "mapping_source": source,
+                    "value": raw,
+                }
+            )
+        elif is_nearest_boundary:
+            if distance < 0:
+                conflicts.append(
+                    {
+                        "type": "negative_nearest_boundary_distance",
+                        "row": index,
+                        "sample_id": str(row.get("sample_id") or ""),
+                        "mapping_source": source,
+                        "value": raw,
+                    }
+                )
+            else:
+                nearest_distances.append(distance)
+        elif distance != 0.0:
+            conflicts.append(
+                {
+                    "type": "non_nearest_mapping_has_nonzero_distance",
+                    "row": index,
+                    "sample_id": str(row.get("sample_id") or ""),
+                    "mapping_source": source,
                     "value": raw,
                 }
             )
@@ -438,7 +491,7 @@ def _sample_assignment_audit_contract(
             "mapping_source_distribution": _distribution(
                 audit_rows, "mapping_source"
             ),
-            "nearest_boundary_rows": len(nearest_distances),
+            "nearest_boundary_rows": nearest_boundary_row_count,
             "nearest_boundary_max_distance_km": (
                 max(nearest_distances) if nearest_distances else None
             ),

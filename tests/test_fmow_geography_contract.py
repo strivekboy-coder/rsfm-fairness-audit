@@ -186,7 +186,10 @@ def _sample_assignment_rows(
         if include_markers:
             metadata_row["geography_remapped"] = "true"
         metadata_rows.append(metadata_row)
-        nearest = index % 100 == 0
+        nearest = index < 10
+        nearest_distance = (
+            "2.4919390970832245" if index == 9 else "0.1"
+        )
         audit_rows.append(
             {
                 "sample_id": sample_id,
@@ -200,11 +203,15 @@ def _sample_assignment_rows(
                 "mapped_un_region": un_region,
                 "mapped_region": region,
                 "mapping_source": (
-                    "nearest_boundary" if nearest else "natural_earth_polygon"
+                    "natural_earth_nearest_boundary:admin"
+                    if nearest
+                    else "natural_earth_polygon"
                 ),
                 "polygon_point_latitude": "40.0",
                 "polygon_point_longitude": "-75.0",
-                "nearest_boundary_distance_km": "12.5" if nearest else "",
+                "nearest_boundary_distance_km": (
+                    nearest_distance if nearest else "0.0"
+                ),
                 "nearest_boundary_latitude": "40.1" if nearest else "",
                 "nearest_boundary_longitude": "-75.1" if nearest else "",
                 "natural_earth_admin": (
@@ -301,11 +308,14 @@ def test_sample_assignment_audit_real_720_schema_is_strictly_validated(
         "USA": 360,
     }
     assert details["mapping_source_distribution"] == {
-        "natural_earth_polygon": 712,
-        "nearest_boundary": 8,
+        "natural_earth_nearest_boundary:admin": 10,
+        "natural_earth_polygon": 710,
     }
-    assert details["nearest_boundary_rows"] == 8
-    assert details["nearest_boundary_max_distance_km"] == 12.5
+    assert details["nearest_boundary_rows"] == 10
+    assert (
+        details["nearest_boundary_max_distance_km"]
+        == 2.4919390970832245
+    )
     assert details["sha256"] == file_sha256(mapping)
     assert contract["unresolved_country_row_count"] == 0
     assert contract["rows_dropped"] == 0
@@ -379,6 +389,49 @@ def test_sample_assignment_audit_rejects_sample_absent_from_metadata(
     assert contract["formal_compatible"] is False
     assert any(
         item.get("type") == "audit_sample_absent_from_metadata"
+        for item in contract["mapping_artifact"]["conflicts"]
+    )
+
+
+@pytest.mark.parametrize("bad_distance", ["", "-0.1", "nan", "inf"])
+def test_nearest_boundary_mapping_requires_finite_nonnegative_distance(
+    tmp_path: Path,
+    bad_distance: str,
+) -> None:
+    metadata_rows, audit_rows = _sample_assignment_rows()
+    audit_rows[0]["nearest_boundary_distance_km"] = bad_distance
+    _metadata, _mapping, contract = _sample_assignment_contract(
+        tmp_path,
+        metadata_rows=metadata_rows,
+        audit_rows=audit_rows,
+    )
+    assert contract["formal_compatible"] is False
+    assert contract["mapping_artifact"]["nearest_boundary_rows"] == 10
+    assert any(
+        item.get("type")
+        in {
+            "missing_nearest_boundary_distance",
+            "invalid_nearest_boundary_distance",
+            "negative_nearest_boundary_distance",
+        }
+        for item in contract["mapping_artifact"]["conflicts"]
+    )
+
+
+def test_non_nearest_mapping_rejects_nonzero_boundary_distance(
+    tmp_path: Path,
+) -> None:
+    metadata_rows, audit_rows = _sample_assignment_rows()
+    audit_rows[10]["nearest_boundary_distance_km"] = "0.001"
+    _metadata, _mapping, contract = _sample_assignment_contract(
+        tmp_path,
+        metadata_rows=metadata_rows,
+        audit_rows=audit_rows,
+    )
+    assert contract["formal_compatible"] is False
+    assert contract["mapping_artifact"]["nearest_boundary_rows"] == 10
+    assert any(
+        item.get("type") == "non_nearest_mapping_has_nonzero_distance"
         for item in contract["mapping_artifact"]["conflicts"]
     )
 
