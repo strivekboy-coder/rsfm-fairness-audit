@@ -1,0 +1,4 @@
+sample_id,split,country,region,category
+train-1,train,DEU,Western Europe,airport
+calibration-1,calibration,DEU,Western Europe,airport
+test-1,test,KOS,Southern Europe,airport

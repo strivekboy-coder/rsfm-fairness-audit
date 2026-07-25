@@ -1,0 +1,13 @@
+{
+  "schema": "geobwer.fmow.dataset_lineage_overlay.v1",
+  "source_dataset_lineage": {
+    "metadata_sha256": "9e5208683d11fb0e3990511f91687f095fabd0d590b3511ac4fe5baaf42bfc87",
+    "test_split": "test"
+  },
+  "geography_contract_hash": "423f6b38e9c943c1eba46a0e37dd18a4f40db9aeaf00590f72973a7d7c2c11c6",
+  "geography_contract_file_sha256": "227daf36c8a8b81b541c9f2a0ee89e7ac457737ffc65b916cb8acb61c03ba565",
+  "geography_mapping_artifact_sha256": "8373375ce55666a07e732e7bc275812b492b1b8ad01145f15dcac6076fe71a92",
+  "country_code_policy_id": "fmow_country_code_policy_v1",
+  "resolved_region_rule": "first_nonempty(region,un_region,continent)",
+  "test_geography_assignment_hash": "13b0fbecb002f3220a5f18bfa95ba738b9311e1ede5d7ef3c1134704cbb124c1"
+}
