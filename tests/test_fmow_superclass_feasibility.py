@@ -19,6 +19,14 @@ from rsfm_fairness_audit.formal_outputs import file_sha256
 from rsfm_fairness_audit.io import read_csv_rows, write_csv
 
 
+AXIS_ROLE_FREEZE = (
+    Path(__file__).resolve().parents[1]
+    / "configs"
+    / "fmow"
+    / "fmow_superclass_axis_role_freeze_v1.json"
+)
+
+
 def _metadata_rows() -> list[dict[str, str]]:
     _taxonomy, mapping = load_fmow_superclass_taxonomy()
     rows: list[dict[str, str]] = []
@@ -112,6 +120,35 @@ def test_default_taxonomy_has_exactly_62_unique_classes() -> None:
     assert len(set(mapping.values())) == 8
     assert mapping["airport"] == "mobility_logistics"
     assert mapping["surface_mine"] == "construction_extraction_damage"
+
+
+def test_axis_role_freeze_binds_scan_and_limits_claims() -> None:
+    freeze = json.loads(AXIS_ROLE_FREEZE.read_text(encoding="utf-8"))
+    assert freeze["schema"] == "geobwer.fmow.superclass_axis_role_freeze.v1"
+    assert (
+        freeze["source_contracts"]["feasibility_contract_hash"]
+        == "e8414bad51118b7506d0109c66c08e36360ac7af4679aacbef251f946fdc2442"
+    )
+    assert (
+        freeze["source_contracts"]["metadata_sha256"]
+        == "6fcf4ab5bb6648ecab0b00dea4b439d84f594e752f4d5a1d79f6589ccabcb249"
+    )
+    region = freeze["axis_roles"]["region_superclass"]
+    country = freeze["axis_roles"]["country_superclass"]
+    assert region["fixed_universe_confirmatory_claim_eligible"] is False
+    assert region["supported_universe_role"] == (
+        "preregistered_secondary_exploratory"
+    )
+    assert country["supported_universe_main_text_eligible"] is False
+    assert country["broad_intersectional_fairness_claim_eligible"] is False
+    cells = freeze["high_support_region_cell_panel"]["cells"]
+    assert len(cells) == 6
+    assert all(int(cell["sample_count"]) >= 20 for cell in cells)
+    assert all(int(cell["independent_site_count"]) >= 30 for cell in cells)
+    assert (
+        freeze["country_high_support_reference"]["fairness_axis_eligible"]
+        is False
+    )
 
 
 def test_scan_is_metadata_only_and_includes_zero_support_cells(

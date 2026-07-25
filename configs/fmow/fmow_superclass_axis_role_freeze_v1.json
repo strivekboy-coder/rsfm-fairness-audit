@@ -1,0 +1,151 @@
+{
+  "schema": "geobwer.fmow.superclass_axis_role_freeze.v1",
+  "freeze_id": "fmow_superclass_axis_role_freeze_v1",
+  "freeze_date": "2026-07-25",
+  "status": "frozen_before_resnet50_superclass_results",
+  "scope": "fMoW-Sentinel clean 30k metadata, test split, macro-functional superclass extension",
+  "decision_principle": "Axis roles are assigned from metadata-only support feasibility. No superclass-specific model predictions, losses, GeoBWER values, confidence intervals, or model-comparison outcomes are used.",
+  "timing_disclosure": {
+    "frozen_before_resnet50_comparison_results": true,
+    "frozen_before_any_superclass_specific_performance_analysis": true,
+    "existing_dofav2_overall_results_were_known": true,
+    "existing_dofav2_overall_results_used_for_axis_role_assignment": false
+  },
+  "source_contracts": {
+    "feasibility_implementation_commit": "acaf766908e1289f94f58faba32151426674c760",
+    "feasibility_manifest_filename": "superclass_feasibility_manifest.json",
+    "feasibility_contract_hash": "e8414bad51118b7506d0109c66c08e36360ac7af4679aacbef251f946fdc2442",
+    "metadata_filename": "fmow_formal_manifest_train_calibration_test_geo_clean_v1.csv",
+    "metadata_sha256": "6fcf4ab5bb6648ecab0b00dea4b439d84f594e752f4d5a1d79f6589ccabcb249",
+    "selected_split": "test",
+    "selected_row_count": 4469,
+    "selected_assignment_hash": "534b244f45babb7f4ab019e4cc775b47eea658fbcc8a5bec1b3f0b9e06faa307",
+    "taxonomy_id": "fmow_macro_functional_superclasses_v1",
+    "taxonomy_sha256": "f4424ca6a25432fd0cf5399383efa0f33087b9c62e88d96a4855e3ca66297e4d",
+    "geography_contract_hash": "71fc0b4a92b8490c41932c88ab3bd8746c2fc3a3bee512d947ef14baa10c8abb",
+    "geography_contract_file_sha256": "b8090d4709c97f92629ddd577262ed353a14fea174a85d61977bed334b74ee3c"
+  },
+  "support_contract": {
+    "min_samples_per_cell": 20,
+    "min_sites_per_cell": 2,
+    "confirmatory_min_sites_per_cell": 30,
+    "fixed_universe": "observed geography levels in test x all eight pre-registered superclasses",
+    "support_selection_uses_model_outcomes": false
+  },
+  "axis_roles": {
+    "region_superclass": {
+      "fixed_universe_role": "capability_diagnostic_with_partial_identification",
+      "fixed_universe_confirmatory_claim_eligible": false,
+      "supported_universe_role": "preregistered_secondary_exploratory",
+      "supported_universe_main_text_eligible": true,
+      "broad_intersectional_fairness_claim_eligible": false,
+      "fixed_universe_cell_count": 168,
+      "observed_cell_count": 149,
+      "zero_support_cell_count": 19,
+      "descriptive_supported_cell_count": 76,
+      "descriptive_supported_cell_fraction": 0.4523809523809524,
+      "descriptive_supported_sample_count": 3892,
+      "descriptive_supported_sample_fraction": 0.870888341910942,
+      "confirmatory_supported_cell_count": 6,
+      "confirmatory_supported_cell_fraction": 0.03571428571428571,
+      "confirmatory_supported_sample_count": 755,
+      "confirmatory_supported_sample_fraction": 0.16894159767285746,
+      "required_wording": "Supported-cell Region x Superclass analysis covering 87.1% of test samples and 45.2% of the fixed cell universe.",
+      "reason": "Sample coverage is high enough for a useful secondary supported-universe analysis, but fewer than half of fixed-universe cells have descriptive support and only six cells meet the 30-site threshold."
+    },
+    "country_superclass": {
+      "fixed_universe_role": "appendix_capability_diagnostic_with_partial_identification",
+      "fixed_universe_confirmatory_claim_eligible": false,
+      "supported_universe_role": "appendix_supported_cell_exploratory",
+      "supported_universe_main_text_eligible": false,
+      "broad_intersectional_fairness_claim_eligible": false,
+      "fixed_universe_cell_count": 1328,
+      "observed_cell_count": 613,
+      "zero_support_cell_count": 715,
+      "descriptive_supported_cell_count": 46,
+      "descriptive_supported_cell_fraction": 0.03463855421686747,
+      "descriptive_supported_sample_count": 1651,
+      "descriptive_supported_sample_fraction": 0.3694338778250168,
+      "confirmatory_supported_cell_count": 1,
+      "confirmatory_supported_cell_fraction": 0.0007530120481927711,
+      "confirmatory_supported_sample_count": 108,
+      "confirmatory_supported_sample_fraction": 0.02416648019691206,
+      "required_wording": "Sparse Country x Superclass audit-capability analysis; supported-cell findings cover 36.9% of test samples and must not be generalized to the fixed country-superclass universe.",
+      "reason": "Only 3.5% of fixed cells have descriptive support and one cell meets the 30-site threshold, so this axis cannot sustain a main confirmatory fairness claim."
+    }
+  },
+  "high_support_region_cell_panel": {
+    "role": "preregistered_cell_level_validation_panel",
+    "selection_rule": "All and only region_superclass cells with at least 20 samples and at least 30 independent sites.",
+    "selection_uses_model_outcomes": false,
+    "representativeness": "Not representative of the complete Region x Superclass universe; concentrated in mobility_logistics and recreation_culture_landmarks.",
+    "allowed_analyses": [
+      "Cell-level risk estimates with simultaneous confidence intervals",
+      "DOFAv2 versus ResNet-50 common-support paired cell-risk differences",
+      "Panel-level sensitivity summary with the six-cell scope stated explicitly"
+    ],
+    "forbidden_claims": [
+      "Comprehensive Region x Superclass fairness",
+      "All-superclass geographic fairness",
+      "Global intersectional fairness"
+    ],
+    "cells": [
+      {
+        "geography": "Eastern Asia",
+        "superclass": "mobility_logistics",
+        "sample_count": 207,
+        "independent_site_count": 54
+      },
+      {
+        "geography": "Eastern Europe",
+        "superclass": "recreation_culture_landmarks",
+        "sample_count": 79,
+        "independent_site_count": 31
+      },
+      {
+        "geography": "South America",
+        "superclass": "mobility_logistics",
+        "sample_count": 87,
+        "independent_site_count": 32
+      },
+      {
+        "geography": "South America",
+        "superclass": "recreation_culture_landmarks",
+        "sample_count": 175,
+        "independent_site_count": 50
+      },
+      {
+        "geography": "Southern Europe",
+        "superclass": "recreation_culture_landmarks",
+        "sample_count": 67,
+        "independent_site_count": 32
+      },
+      {
+        "geography": "Western Asia",
+        "superclass": "recreation_culture_landmarks",
+        "sample_count": 140,
+        "independent_site_count": 38
+      }
+    ]
+  },
+  "country_high_support_reference": {
+    "role": "single_cell_reliability_reference_only",
+    "fairness_axis_eligible": false,
+    "reason": "A single supported cell has no peer set from which to identify a country-superclass disparity or tail distribution.",
+    "cell": {
+      "geography": "CHN",
+      "superclass": "mobility_logistics",
+      "sample_count": 108,
+      "independent_site_count": 31
+    }
+  },
+  "analysis_requirements": [
+    "Use the identical frozen taxonomy and cell universe for every model.",
+    "Use common-support paired model comparisons; do not compare models over different eligible cells.",
+    "Report fixed-universe cell coverage, test-sample coverage, zero-support cells, and excluded deployment mass with every supported-universe result.",
+    "Use site-aware or simultaneous confidence intervals for high-support cell comparisons.",
+    "Retain fixed-universe partial bounds or capability diagnostics rather than silently dropping unsupported cells.",
+    "Do not lower support thresholds, alter superclass membership, or replace the clean metadata after inspecting model outcomes."
+  ],
+  "next_step": "Run the frozen same-metadata, same-split, three-seed fMoW ResNet-50 campaign; then compute DOFAv2-ResNet common-support paired comparisons under this axis-role freeze."
+}
