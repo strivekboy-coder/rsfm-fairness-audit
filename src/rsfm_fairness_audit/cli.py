@@ -875,9 +875,6 @@ def main() -> None:
             require_probabilities=args.require_probabilities,
             n_bootstrap=args.bootstrap,
             seed=args.seed,
-            spatial_conformal_config=(
-                SpatialConformalConfig() if args.spatial_localization else None
-            ),
         )
         artifacts = result.to_report(args.output_dir)
         print(f"GeoBWER audit complete: {args.output_dir}")

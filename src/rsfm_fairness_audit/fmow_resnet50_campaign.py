@@ -12,9 +12,11 @@ import numpy as np
 from rsfm_fairness_audit.bwer_protocol import BWERProtocol
 from rsfm_fairness_audit.config import load_yaml
 from rsfm_fairness_audit.fmow_dofav2_campaign import (
+    _copy_rows_with_protocol_hash,
     _coordinate_or_nan,
     _formal_rows,
     _validate_split_contract,
+    _write_fmow_metadata_preflight,
 )
 from rsfm_fairness_audit.fmow_sentinel_classification import (
     FmowClassificationConfig,
@@ -488,8 +490,9 @@ def _audit_seed(
             )
         ),
     )
+    partial_rows = _copy_rows_with_protocol_hash(rows, partial_protocol)
     partial = audit_rows(
-        rows,
+        partial_rows,
         group_columns=("country",),
         protocol=partial_protocol,
         loss_column="risk",
@@ -562,6 +565,29 @@ def run_fmow_resnet50_campaign(
     hydrate_output(config.output_dir, config.persistent_output_dir)
     output = ensure_dir(config.output_dir)
     rows = _load_metadata(config.metadata_csv)
+    metadata_preflight = _write_fmow_metadata_preflight(
+        rows,
+        output / "fmow_metadata_preflight.json",
+        expected_splits=(
+            config.train_split,
+            config.calibration_split,
+            config.test_split,
+        ),
+    )
+    if (
+        config.diagnostic_max_samples_per_split is None
+        and not metadata_preflight["ok"]
+    ):
+        persist_output(
+            output,
+            config.persistent_output_dir,
+            label="fmow-metadata-preflight-failed",
+        )
+        raise FmowResNet50CampaignError(
+            "Formal fMoW metadata preflight failed before model loading/training: "
+            + ", ".join(metadata_preflight["errors"])
+            + f". See {output / 'fmow_metadata_preflight.json'}."
+        )
     limit = config.diagnostic_max_samples_per_split
     train_rows = _limit_rows(_split_rows(rows, config.train_split), limit, 42)
     calibration_rows = _limit_rows(

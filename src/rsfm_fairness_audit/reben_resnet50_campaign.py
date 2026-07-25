@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import random
+import time
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -52,6 +53,21 @@ class RebenDiagnosticSupportError(RebenResNet50CampaignError):
 
 SENSOR_MODES = ("S1", "S2", "S1+S2")
 MODE_CHANNELS = {"S1": 2, "S2": 12, "S1+S2": 14}
+_COMPLETION_CONTRACT = "completion_contract.json"
+_SCIENTIFIC_CONFIG_FIELDS = (
+    "max_epochs",
+    "patience",
+    "min_delta",
+    "batch_size",
+    "learning_rate",
+    "weight_decay",
+    "pretrained_encoder",
+    "normalization_pixel_stride",
+    "amp",
+    "audit_bootstrap",
+    "crc_alpha",
+    "diagnostic_max_samples",
+)
 
 
 @dataclass(frozen=True)
@@ -93,6 +109,357 @@ class RebenResNet50Config:
             self.normalization_pixel_stride,
         ) <= 0:
             raise ValueError("Epoch, batch, patience, and normalization stride must be positive.")
+
+
+def _mode_slug(mode: str) -> str:
+    return mode.lower().replace("+", "_plus_")
+
+
+def _completion_config_payload(
+    config: RebenResNet50Config,
+    *,
+    mode: str,
+    seed: int,
+    protocol: BWERProtocol,
+) -> dict[str, Any]:
+    payload = {
+        field: getattr(config, field)
+        for field in _SCIENTIFIC_CONFIG_FIELDS
+    }
+    payload.update(
+        {
+            "sensor_mode": mode,
+            "seed": int(seed),
+            "split_contract": {
+                "train": "official_train",
+                "calibration": "official_validation",
+                "evaluation": "official_test",
+                "model_selection": "official_train_inner_source_tile_disjoint",
+            },
+            "metadata_parquet_sha256": file_sha256(config.metadata_parquet),
+            "metadata_snow_cloud_parquet_sha256": (
+                file_sha256(config.metadata_snow_cloud_parquet)
+                if config.metadata_snow_cloud_parquet is not None
+                else ""
+            ),
+            "protocol_hash": protocol.signature,
+            "metric_version": protocol.metric_version,
+        }
+    )
+    return payload
+
+
+def _json_signature(value: Mapping[str, Any]) -> str:
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _required_seed_artifacts(run_dir: Path) -> dict[str, Path]:
+    return {
+        "checkpoint": run_dir / "resnet50.pt",
+        "calibration_probabilities": run_dir / "calibration_probabilities.npz",
+        "validation_probabilities": run_dir / "validation_probabilities.npz",
+        "test_probabilities": run_dir / "test_probabilities.npz",
+        "formal_audit_table": run_dir / "formal_outputs" / "formal_audit_table.csv",
+        "formal_probabilities": run_dir / "formal_outputs" / "probabilities.npz",
+        "class_mapping": run_dir / "formal_outputs" / "class_mapping.json",
+        "formal_output_manifest": run_dir
+        / "formal_outputs"
+        / "formal_output_manifest.json",
+        "calibration_manifest": run_dir / "calibration_manifest.json",
+        "run_manifest": run_dir / "run_manifest.json",
+        "metrics_summary": run_dir / "metrics_summary.csv",
+        "geobwer_summary": run_dir / "geobwer" / "geobwer_summary.csv",
+        "uncertainty_summary": run_dir
+        / "uncertainty_extensions"
+        / "uncertainty_summary.csv",
+    }
+
+
+def _validate_probability_artifact(path: Path) -> str | None:
+    try:
+        with np.load(path, allow_pickle=False) as artifact:
+            probabilities = np.asarray(artifact["probabilities"])
+            targets = np.asarray(artifact["targets"])
+        if (
+            probabilities.ndim != 2
+            or probabilities.shape[0] <= 0
+            or probabilities.shape != targets.shape
+            or not np.all(np.isfinite(probabilities))
+        ):
+            return f"invalid_probability_shape_or_values:{path.name}"
+    except (OSError, KeyError, ValueError) as exc:
+        return f"unreadable_probability_artifact:{path.name}:{exc}"
+    return None
+
+
+def _checkpoint_config_matches(
+    checkpoint: Path,
+    config: RebenResNet50Config,
+    *,
+    mode: str,
+    seed: int,
+) -> tuple[bool, str]:
+    try:
+        torch = _require_torch()
+        try:
+            payload = torch.load(
+                checkpoint,
+                map_location="cpu",
+                weights_only=False,
+            )
+        except TypeError:  # pragma: no cover - older torch runtime
+            payload = torch.load(checkpoint, map_location="cpu")
+    except (OSError, RuntimeError, ValueError) as exc:
+        return False, f"checkpoint_unreadable:{exc}"
+    if not isinstance(payload, Mapping):
+        return False, "checkpoint_payload_not_mapping"
+    if str(payload.get("sensor_mode")) != mode or int(payload.get("seed", -1)) != int(seed):
+        return False, "checkpoint_mode_or_seed_mismatch"
+    observed = payload.get("config")
+    if not isinstance(observed, Mapping):
+        return False, "checkpoint_config_missing"
+    mismatches = [
+        field
+        for field in _SCIENTIFIC_CONFIG_FIELDS
+        if observed.get(field) != getattr(config, field)
+    ]
+    if mismatches:
+        return False, "checkpoint_config_mismatch:" + ",".join(mismatches)
+    return True, "ok"
+
+
+def _build_seed_completion_contract(
+    config: RebenResNet50Config,
+    *,
+    mode: str,
+    seed: int,
+    protocol: BWERProtocol,
+    run_dir: Path,
+) -> dict[str, Any]:
+    artifacts = _required_seed_artifacts(run_dir)
+    missing = [name for name, path in artifacts.items() if not path.is_file()]
+    if missing:
+        raise RebenResNet50CampaignError(
+            "Cannot certify incomplete reBEN seed artifacts: " + ", ".join(missing)
+        )
+    formal_manifest = json.loads(
+        artifacts["formal_output_manifest"].read_text(encoding="utf-8")
+    )
+    if formal_manifest.get("protocol_hash") != protocol.signature:
+        raise RebenResNet50CampaignError(
+            "Formal output protocol hash does not match the current reBEN protocol."
+        )
+    formal_protocol = formal_manifest.get("protocol", {})
+    if formal_protocol.get("metric_version") != protocol.metric_version:
+        raise RebenResNet50CampaignError(
+            "Formal output metric version does not match the current reBEN protocol."
+        )
+    manifest_artifacts = formal_manifest.get("artifacts", {})
+    if (
+        int(formal_manifest.get("row_count", 0)) <= 0
+        or manifest_artifacts.get("probability_sha256")
+        != file_sha256(artifacts["formal_probabilities"])
+        or manifest_artifacts.get("class_mapping_sha256")
+        != file_sha256(artifacts["class_mapping"])
+    ):
+        raise RebenResNet50CampaignError(
+            "Formal output manifest artifact hashes or row count are invalid."
+        )
+    dataset_lineage = formal_manifest.get("dataset_lineage", {})
+    if dataset_lineage.get("metadata_parquet_sha256") != file_sha256(
+        config.metadata_parquet
+    ):
+        raise RebenResNet50CampaignError(
+            "Formal output metadata parquet identity does not match the current run."
+        )
+    model_lineage = formal_manifest.get("model_lineage", {})
+    if (
+        str(model_lineage.get("sensor_mode")) != mode
+        or int(model_lineage.get("seed", -1)) != int(seed)
+    ):
+        raise RebenResNet50CampaignError(
+            "Formal output model lineage mode/seed mismatch."
+        )
+    run_manifest = json.loads(artifacts["run_manifest"].read_text(encoding="utf-8"))
+    if (
+        str(run_manifest.get("sensor_mode")) != mode
+        or int(run_manifest.get("seed", -1)) != int(seed)
+    ):
+        raise RebenResNet50CampaignError("Run manifest mode/seed mismatch.")
+    calibration_manifest = json.loads(
+        artifacts["calibration_manifest"].read_text(encoding="utf-8")
+    )
+    if (
+        calibration_manifest.get("split_role") != "calibration"
+        or calibration_manifest.get("split") != "validation"
+        or calibration_manifest.get("test_rows_used") is not False
+    ):
+        raise RebenResNet50CampaignError(
+            "Calibration manifest does not preserve validation/test isolation."
+        )
+    if calibration_manifest.get("probabilities_sha256") != file_sha256(
+        artifacts["calibration_probabilities"]
+    ):
+        raise RebenResNet50CampaignError(
+            "Calibration manifest probability hash mismatch."
+        )
+    for name in (
+        "calibration_probabilities",
+        "validation_probabilities",
+        "test_probabilities",
+        "formal_probabilities",
+    ):
+        error = _validate_probability_artifact(artifacts[name])
+        if error:
+            raise RebenResNet50CampaignError(error)
+    config_payload = _completion_config_payload(
+        config,
+        mode=mode,
+        seed=seed,
+        protocol=protocol,
+    )
+    return {
+        "schema": "geobwer.reben.resnet50_seed_completion.v1",
+        "complete": True,
+        "formal_evidence": True,
+        "sensor_mode": mode,
+        "seed": int(seed),
+        "protocol_hash": protocol.signature,
+        "metric_version": protocol.metric_version,
+        "config_signature": _json_signature(config_payload),
+        "config_contract": config_payload,
+        "artifacts": {
+            name: {
+                "path": str(path.relative_to(run_dir)),
+                "sha256": file_sha256(path),
+                "size_bytes": path.stat().st_size,
+            }
+            for name, path in artifacts.items()
+        },
+    }
+
+
+def _write_seed_completion_contract(
+    config: RebenResNet50Config,
+    *,
+    mode: str,
+    seed: int,
+    protocol: BWERProtocol,
+    run_dir: Path,
+) -> Path:
+    contract = _build_seed_completion_contract(
+        config,
+        mode=mode,
+        seed=seed,
+        protocol=protocol,
+        run_dir=run_dir,
+    )
+    path = run_dir / _COMPLETION_CONTRACT
+    temporary = path.with_suffix(".json.partial")
+    temporary.write_text(
+        json.dumps(contract, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+    return path
+
+
+def _validate_seed_completion_contract(
+    config: RebenResNet50Config,
+    *,
+    mode: str,
+    seed: int,
+    protocol: BWERProtocol,
+    run_dir: Path,
+    allow_legacy_attestation: bool = True,
+) -> tuple[bool, str, dict[str, Path]]:
+    """Validate or attest a complete seed without trusting directory presence."""
+
+    required = _required_seed_artifacts(run_dir)
+    path = run_dir / _COMPLETION_CONTRACT
+    if not path.is_file():
+        if not allow_legacy_attestation:
+            return False, "completion_marker_missing", {}
+        missing = [name for name, artifact in required.items() if not artifact.is_file()]
+        if missing:
+            return False, "completion_marker_missing_and_artifacts_incomplete", {}
+        checkpoint_ok, reason = _checkpoint_config_matches(
+            required["checkpoint"],
+            config,
+            mode=mode,
+            seed=seed,
+        )
+        if not checkpoint_ok:
+            return False, reason, {}
+        try:
+            _write_seed_completion_contract(
+                config,
+                mode=mode,
+                seed=seed,
+                protocol=protocol,
+                run_dir=run_dir,
+            )
+        except (OSError, ValueError, RebenResNet50CampaignError) as exc:
+            return False, f"legacy_attestation_failed:{exc}", {}
+    try:
+        contract = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return False, f"completion_marker_unreadable:{exc}", {}
+    expected_payload = _completion_config_payload(
+        config,
+        mode=mode,
+        seed=seed,
+        protocol=protocol,
+    )
+    if (
+        contract.get("schema") != "geobwer.reben.resnet50_seed_completion.v1"
+        or contract.get("complete") is not True
+        or contract.get("formal_evidence") is not True
+        or str(contract.get("sensor_mode")) != mode
+        or int(contract.get("seed", -1)) != int(seed)
+        or contract.get("protocol_hash") != protocol.signature
+        or contract.get("metric_version") != protocol.metric_version
+        or contract.get("config_signature") != _json_signature(expected_payload)
+    ):
+        return False, "completion_contract_mismatch", {}
+    recorded = contract.get("artifacts")
+    if not isinstance(recorded, Mapping):
+        return False, "completion_artifacts_missing", {}
+    for name, artifact in required.items():
+        item = recorded.get(name)
+        if not isinstance(item, Mapping) or not artifact.is_file():
+            return False, f"completion_artifact_missing:{name}", {}
+        if (
+            int(item.get("size_bytes", -1)) != artifact.stat().st_size
+            or item.get("sha256") != file_sha256(artifact)
+        ):
+            return False, f"completion_artifact_mismatch:{name}", {}
+    try:
+        formal_manifest = json.loads(
+            required["formal_output_manifest"].read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        return False, f"formal_manifest_unreadable:{exc}", {}
+    if (
+        formal_manifest.get("protocol_hash") != protocol.signature
+        or formal_manifest.get("protocol", {}).get("metric_version")
+        != protocol.metric_version
+    ):
+        return False, "formal_manifest_protocol_mismatch", {}
+    return True, "complete", {
+        "formal_audit_table": required["formal_audit_table"],
+        "formal_manifest": required["formal_output_manifest"],
+        "geobwer_summary": required["geobwer_summary"],
+        "uncertainty_summary": required["uncertainty_summary"],
+        "run_manifest": required["run_manifest"],
+        "completion_contract": path,
+    }
 
 
 def _stable_rank(value: str) -> int:
@@ -442,6 +809,7 @@ def _train_seed(
     contract: Mapping[str, Any],
     output_dir: Path,
 ) -> dict[str, Any]:
+    training_started = time.perf_counter()
     torch = _require_torch()
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -613,14 +981,18 @@ def _train_seed(
         },
         checkpoint,
     )
+    training_seconds = time.perf_counter() - training_started
     outputs: dict[str, Any] = {}
+    inference_seconds: dict[str, float] = {}
     for split in ("validation", "test"):
+        inference_started = time.perf_counter()
         probabilities, targets, weighted_bce = _evaluate(
             model,
             _loader(datasets[split], config, shuffle=False, seed=seed),
             device,
             pos_weight=pos_weight,
         )
+        inference_seconds[split] = time.perf_counter() - inference_started
         outputs[split] = {
             "probabilities": probabilities,
             "targets": targets,
@@ -648,6 +1020,11 @@ def _train_seed(
             datasets["train"].adapter, "diagnostic_sampling", None
         ),
         "diagnostic_sampling_by_split": diagnostic_sampling_by_split,
+        "stage_timings": {
+            "training_seconds": training_seconds,
+            "calibration_inference_seconds": inference_seconds["validation"],
+            "test_inference_seconds": inference_seconds["test"],
+        },
     }
 
 
@@ -659,7 +1036,8 @@ def _formalize_seed(
     fit: Mapping[str, Any],
     protocol: BWERProtocol,
     output_dir: Path,
-) -> dict[str, Path]:
+) -> dict[str, Any]:
+    audit_started = time.perf_counter()
     validation = fit["outputs"]["validation"]
     test = fit["outputs"]["test"]
     thresholds = select_thresholds_from_validation(
@@ -759,6 +1137,7 @@ def _formalize_seed(
     )
     write_csv(output_dir / "metrics_summary.csv", [{**summary, "sensor_mode": mode, "seed": seed}])
     write_csv(output_dir / "per_class_metrics.csv", per_class)
+    audit_seconds = time.perf_counter() - audit_started
     manifest = output_dir / "run_manifest.json"
     manifest.write_text(
         json.dumps(
@@ -773,6 +1152,10 @@ def _formalize_seed(
                 "uncertainty": {key: str(value) for key, value in uncertainty.items()},
                 "metrics": summary,
                 "training_history": fit["history"],
+                "stage_timings": {
+                    **dict(fit.get("stage_timings", {})),
+                    "audit_seconds": audit_seconds,
+                },
             },
             ensure_ascii=False,
             indent=2,
@@ -785,6 +1168,7 @@ def _formalize_seed(
         "geobwer_summary": geobwer["summary"],
         "uncertainty_summary": uncertainty["summary"],
         "run_manifest": manifest,
+        "audit_seconds": audit_seconds,
     }
 
 
@@ -795,7 +1179,64 @@ def run_reben_resnet50_campaign(config: RebenResNet50Config) -> dict[str, Any]:
     protocol = BWERProtocol.from_mapping(load_yaml(config.geobwer_protocol))
     runs: dict[str, Any] = {}
     robustness_rows: list[dict[str, Any]] = []
+    completed: dict[tuple[str, int], dict[str, Path]] = {}
+    pending_reasons: dict[tuple[str, int], str] = {}
+    if config.diagnostic_max_samples is None:
+        for mode in config.sensor_modes:
+            for seed_value in config.seeds:
+                seed = int(seed_value)
+                run_dir = output / _mode_slug(mode) / f"seed_{seed}"
+                valid, reason, artifacts = _validate_seed_completion_contract(
+                    config,
+                    mode=mode,
+                    seed=seed,
+                    protocol=protocol,
+                    run_dir=run_dir,
+                    allow_legacy_attestation=True,
+                )
+                if valid:
+                    completed[(mode, seed)] = artifacts
+                else:
+                    pending_reasons[(mode, seed)] = reason
+        print("[reben:resnet50:resume] completed:", flush=True)
+        if completed:
+            for mode, seed in completed:
+                print(f"  {mode} seed{seed}", flush=True)
+        else:
+            print("  none", flush=True)
+        print("[reben:resnet50:resume] pending:", flush=True)
+        if pending_reasons:
+            for (mode, seed), reason in pending_reasons.items():
+                print(f"  {mode} seed{seed} ({reason})", flush=True)
+        else:
+            print("  none", flush=True)
+        for (mode, seed), artifacts in completed.items():
+            name = f"resnet50_{_mode_slug(mode)}_seed_{seed}"
+            runs[name] = artifacts
+            metric_rows = read_csv_rows(
+                output / _mode_slug(mode) / f"seed_{seed}" / "metrics_summary.csv"
+            )
+            if len(metric_rows) != 1:
+                raise RebenResNet50CampaignError(
+                    f"Completed seed has invalid metrics summary: {mode} seed{seed}."
+                )
+            robustness_rows.append(
+                {
+                    "sensor_mode": mode,
+                    "seed": seed,
+                    "status": "resumed_complete",
+                    **metric_rows[0],
+                }
+            )
     for mode in config.sensor_modes:
+        pending_seeds = [
+            int(seed)
+            for seed in config.seeds
+            if (mode, int(seed)) not in completed
+        ]
+        if not pending_seeds:
+            continue
+        preflight_started = time.perf_counter()
         try:
             adapters = {
                 "train": _dataset(config, "train", mode),
@@ -837,7 +1278,7 @@ def run_reben_resnet50_campaign(config: RebenResNet50Config) -> dict[str, Any]:
                     }
                 )
             continue
-        contract_path = output / "train_contracts" / f"{mode.lower().replace('+', '_plus_')}.json"
+        contract_path = output / "train_contracts" / f"{_mode_slug(mode)}.json"
         contract_path.parent.mkdir(parents=True, exist_ok=True)
         if contract_path.exists():
             contract = json.loads(contract_path.read_text(encoding="utf-8"))
@@ -880,9 +1321,15 @@ def run_reben_resnet50_campaign(config: RebenResNet50Config) -> dict[str, Any]:
             contract_path.write_text(
                 json.dumps(contract, ensure_ascii=False, indent=2), encoding="utf-8"
             )
-        for seed in config.seeds:
-            name = f"resnet50_{mode.lower().replace('+', '_plus_')}_seed_{seed}"
-            run_dir = output / mode.lower().replace("+", "_plus_") / f"seed_{seed}"
+        preflight_seconds = time.perf_counter() - preflight_started
+        print(
+            f"[reben:resnet50:timing] mode={mode} "
+            f"preflight_seconds={preflight_seconds:.3f}",
+            flush=True,
+        )
+        for seed in pending_seeds:
+            name = f"resnet50_{_mode_slug(mode)}_seed_{seed}"
+            run_dir = output / _mode_slug(mode) / f"seed_{seed}"
             fit = _train_seed(
                 config,
                 mode=mode,
@@ -891,6 +1338,10 @@ def run_reben_resnet50_campaign(config: RebenResNet50Config) -> dict[str, Any]:
                 contract=contract,
                 output_dir=run_dir,
             )
+            timings = {
+                "preflight_seconds": preflight_seconds,
+                **dict(fit.get("stage_timings", {})),
+            }
             if config.diagnostic_max_samples is not None:
                 diagnostic = run_dir / "diagnostic_manifest.json"
                 diagnostic.write_text(
@@ -924,7 +1375,7 @@ def run_reben_resnet50_campaign(config: RebenResNet50Config) -> dict[str, Any]:
                 )
                 runs[name] = {"diagnostic_manifest": diagnostic}
             else:
-                runs[name] = _formalize_seed(
+                formal_artifacts = _formalize_seed(
                     config,
                     mode=mode,
                     seed=int(seed),
@@ -932,6 +1383,33 @@ def run_reben_resnet50_campaign(config: RebenResNet50Config) -> dict[str, Any]:
                     protocol=protocol,
                     output_dir=run_dir,
                 )
+                timings["audit_seconds"] = float(
+                    formal_artifacts.pop("audit_seconds")
+                )
+                timing_path = run_dir / "stage_timings.json"
+                timing_path.write_text(
+                    json.dumps(
+                        {
+                            "schema": "geobwer.reben.resnet50_stage_timings.v1",
+                            "sensor_mode": mode,
+                            "seed": seed,
+                            **timings,
+                            "persistent_sync_seconds": 0.0,
+                        },
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                completion_path = _write_seed_completion_contract(
+                    config,
+                    mode=mode,
+                    seed=seed,
+                    protocol=protocol,
+                    run_dir=run_dir,
+                )
+                formal_artifacts["completion_contract"] = completion_path
+                formal_artifacts["stage_timings"] = timing_path
+                runs[name] = formal_artifacts
             thresholds = select_thresholds_from_validation(
                 fit["outputs"]["validation"]["targets"],
                 fit["outputs"]["validation"]["probabilities"],
@@ -957,17 +1435,52 @@ def run_reben_resnet50_campaign(config: RebenResNet50Config) -> dict[str, Any]:
                     **metrics,
                 }
             )
+            sync_started = time.perf_counter()
             persist_output(
                 run_dir,
                 (
                     config.persistent_output_dir
-                    / mode.lower().replace("+", "_plus_")
+                    / _mode_slug(mode)
                     / f"seed_{seed}"
                     if config.persistent_output_dir
                     else None
                 ),
                 label=f"{name}-complete",
             )
+            persistent_sync_seconds = time.perf_counter() - sync_started
+            if config.diagnostic_max_samples is None:
+                timings["persistent_sync_seconds"] = persistent_sync_seconds
+                timing_path.write_text(
+                    json.dumps(
+                        {
+                            "schema": "geobwer.reben.resnet50_stage_timings.v1",
+                            "sensor_mode": mode,
+                            "seed": seed,
+                            **timings,
+                        },
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                persist_output(
+                    run_dir,
+                    (
+                        config.persistent_output_dir
+                        / _mode_slug(mode)
+                        / f"seed_{seed}"
+                        if config.persistent_output_dir
+                        else None
+                    ),
+                    label=f"{name}-timings-complete",
+                )
+                print(
+                    f"[reben:resnet50:timing] mode={mode} seed={seed} "
+                    + " ".join(
+                        f"{key}={float(value):.3f}"
+                        for key, value in timings.items()
+                    ),
+                    flush=True,
+                )
     robustness = output / "seed_robustness.csv"
     write_csv(robustness, robustness_rows)
     manifest = output / "campaign_manifest.json"

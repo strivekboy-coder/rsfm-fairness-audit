@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
+import re
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -28,11 +29,24 @@ from rsfm_fairness_audit.probe_selection import (
     MulticlassProbeSearchConfig,
     fit_selected_multiclass_probe,
 )
-from rsfm_fairness_audit.spatial_conformal import SpatialConformalConfig
 
 
 class FmowDOFAv2CampaignError(RuntimeError):
     """Raised when the final train/calibrate/test fMoW chain is invalid."""
+
+
+_AMBIGUOUS_COUNTRY_VALUES = frozenset(
+    {
+        "ambiguous_country",
+        "ant",  # Deprecated/ambiguous rather than current ISO-3166 alpha-3.
+        "unknown",
+        "unk",
+        "none",
+        "null",
+        "n/a",
+        "na",
+    }
+)
 
 
 _FROZEN_DOFA_CONFIG: dict[str, Any] = {
@@ -157,6 +171,148 @@ def _validate_split_contract(
         raise FmowDOFAv2CampaignError("fMoW sample IDs must be non-empty and disjoint across splits.")
 
 
+def _copy_rows_with_protocol_hash(
+    rows: Sequence[Mapping[str, Any]],
+    protocol: BWERProtocol,
+) -> list[dict[str, Any]]:
+    """Copy formal rows for a derived protocol without mutating strict evidence."""
+
+    return [
+        {
+            **dict(row),
+            "protocol_hash": protocol.signature,
+            "metric_version": protocol.metric_version,
+        }
+        for row in rows
+    ]
+
+
+def _fmow_formal_metadata_preflight(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    expected_splits: Sequence[str],
+) -> dict[str, Any]:
+    """Inspect formal fMoW metadata without guessing geography or dropping rows."""
+
+    split_names = tuple(str(value) for value in expected_splits)
+    required_fields = {
+        "sample_id": lambda row: row.get("sample_id"),
+        "site_id": lambda row: row.get("site_id"),
+        "split": lambda row: row.get("split"),
+        "class": lambda row: row.get("category") or row.get("class_label"),
+        "country": lambda row: row.get("country"),
+    }
+    missing_by_field: dict[str, int] = {}
+    missing_by_split: dict[str, dict[str, int]] = {
+        split: {} for split in (*split_names, "other_or_missing")
+    }
+    for field, getter in required_fields.items():
+        missing_by_field[field] = 0
+        for row in rows:
+            value = str(getter(row) or "").strip()
+            if value:
+                continue
+            missing_by_field[field] += 1
+            split = str(row.get("split") or "").strip()
+            bucket = split if split in split_names else "other_or_missing"
+            missing_by_split[bucket][field] = (
+                missing_by_split[bucket].get(field, 0) + 1
+            )
+
+    geography_fields = ("region", "un_region", "continent")
+    geography_missing = {
+        field: sum(
+            not str(row.get(field) or "").strip()
+            for row in rows
+        )
+        for field in geography_fields
+    }
+    fallback_missing_by_split = {
+        split: 0 for split in (*split_names, "other_or_missing")
+    }
+    fallback_missing = 0
+    for row in rows:
+        if any(str(row.get(field) or "").strip() for field in geography_fields):
+            continue
+        fallback_missing += 1
+        split = str(row.get("split") or "").strip()
+        bucket = split if split in split_names else "other_or_missing"
+        fallback_missing_by_split[bucket] += 1
+
+    country_issues: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        raw = str(row.get("country") or "").strip()
+        normalized = raw.casefold()
+        reason = ""
+        if not raw:
+            reason = "missing"
+        elif normalized in _AMBIGUOUS_COUNTRY_VALUES:
+            reason = "ambiguous_or_deprecated"
+        elif re.fullmatch(r"[A-Z]{3}", raw) is None:
+            reason = "not_uppercase_iso3_syntax"
+        if not reason:
+            continue
+        issue = country_issues.setdefault(
+            raw or "<missing>",
+            {"value": raw or "<missing>", "reason": reason, "count": 0, "by_split": {}},
+        )
+        issue["count"] += 1
+        split = str(row.get("split") or "").strip() or "<missing>"
+        issue["by_split"][split] = issue["by_split"].get(split, 0) + 1
+
+    observed_splits = sorted(
+        {str(row.get("split") or "").strip() for row in rows if str(row.get("split") or "").strip()}
+    )
+    unexpected_splits = sorted(set(observed_splits) - set(split_names))
+    missing_expected_splits = sorted(set(split_names) - set(observed_splits))
+    errors: list[str] = []
+    if any(missing_by_field.values()):
+        errors.append("required_fields_missing")
+    if fallback_missing:
+        errors.append("region_un_region_continent_all_missing")
+    if country_issues:
+        errors.append("country_values_unrecognized_or_ambiguous")
+    if unexpected_splits or missing_expected_splits:
+        errors.append("split_contract_incomplete")
+    return {
+        "schema": "geobwer.fmow.formal_metadata_preflight.v1",
+        "formal_evidence": True,
+        "row_count": len(rows),
+        "expected_splits": list(split_names),
+        "observed_splits": observed_splits,
+        "missing_expected_splits": missing_expected_splits,
+        "unexpected_splits": unexpected_splits,
+        "required_field_missing": missing_by_field,
+        "required_field_missing_by_split": missing_by_split,
+        "geography_field_missing": geography_missing,
+        "region_fallback_all_missing": fallback_missing,
+        "region_fallback_all_missing_by_split": fallback_missing_by_split,
+        "country_validation_rule": "uppercase_iso3_syntax_plus_known_ambiguous_or_deprecated_values",
+        "country_issues": sorted(country_issues.values(), key=lambda item: item["value"]),
+        "ok": not errors,
+        "errors": errors,
+        "automatic_mapping_applied": False,
+        "rows_dropped": 0,
+    }
+
+
+def _write_fmow_metadata_preflight(
+    rows: Sequence[Mapping[str, Any]],
+    output_path: Path,
+    *,
+    expected_splits: Sequence[str],
+) -> dict[str, Any]:
+    report = _fmow_formal_metadata_preflight(
+        rows,
+        expected_splits=expected_splits,
+    )
+    output_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return report
+
+
 def _formal_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     for source in rows:
@@ -201,6 +357,26 @@ def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path
     hydrate_output(config.output_dir, config.persistent_output_dir)
     output = ensure_dir(config.output_dir)
     rows = _load_metadata(config.metadata_csv)
+    metadata_preflight = _write_fmow_metadata_preflight(
+        rows,
+        output / "fmow_metadata_preflight.json",
+        expected_splits=(
+            config.train_split,
+            config.calibration_split,
+            config.test_split,
+        ),
+    )
+    if not config.diagnostic_only and not metadata_preflight["ok"]:
+        persist_output(
+            output,
+            config.persistent_output_dir,
+            label="fmow-metadata-preflight-failed",
+        )
+        raise FmowDOFAv2CampaignError(
+            "Formal fMoW metadata preflight failed before model loading: "
+            + ", ".join(metadata_preflight["errors"])
+            + f". See {output / 'fmow_metadata_preflight.json'}."
+        )
     limit = config.max_samples_per_split
     train_rows = _limit_rows(_split_rows(rows, config.train_split), limit, config.seed)
     calibration_rows = _limit_rows(_split_rows(rows, config.calibration_split), limit, config.seed + 1)
@@ -610,7 +786,6 @@ def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path
         require_probabilities=True,
         n_bootstrap=config.audit_bootstrap,
         seed=config.seed,
-        spatial_conformal_config=SpatialConformalConfig(),
     )
     audit_artifacts = audit.to_report(output / "geobwer_raw")
     standardized = audit_rows(
@@ -639,8 +814,12 @@ def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path
             )
         ),
     )
-    partial_standardized = audit_rows(
+    partial_formal_rows = _copy_rows_with_protocol_hash(
         formal_rows,
+        partial_protocol,
+    )
+    partial_standardized = audit_rows(
+        partial_formal_rows,
         group_columns=("country",),
         protocol=partial_protocol,
         loss_column="risk",
@@ -715,5 +894,8 @@ def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path
 __all__ = [
     "FmowDOFAv2CampaignConfig",
     "FmowDOFAv2CampaignError",
+    "_copy_rows_with_protocol_hash",
+    "_fmow_formal_metadata_preflight",
+    "_write_fmow_metadata_preflight",
     "run_fmow_dofav2_campaign",
 ]

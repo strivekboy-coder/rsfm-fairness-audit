@@ -17,7 +17,6 @@ from rsfm_fairness_audit.geobwer import audit_rows
 from rsfm_fairness_audit.geobwer_extensions import run_multiclass_uncertainty_suite
 from rsfm_fairness_audit.io import ensure_dir, read_csv_rows
 from rsfm_fairness_audit.persistent_cache import hydrate_output, persist_output
-from rsfm_fairness_audit.spatial_conformal import SpatialConformalConfig
 
 
 class AlphaEarthCampaignError(RuntimeError):
@@ -382,7 +381,6 @@ def run_alphaearth_geobwer_campaign(config: AlphaEarthCampaignConfig) -> dict[st
         require_probabilities=True,
         n_bootstrap=config.audit_bootstrap,
         seed=config.seed,
-        spatial_conformal_config=SpatialConformalConfig(),
     )
     raw_artifacts = raw_audit.to_report(output / "geobwer_raw")
     standardized_audit = audit_rows(

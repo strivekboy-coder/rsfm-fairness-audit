@@ -8,6 +8,9 @@ import numpy as np
 import pytest
 
 import rsfm_fairness_audit.reben_resnet50_campaign as campaign
+from rsfm_fairness_audit.bwer_protocol import BWERProtocol
+from rsfm_fairness_audit.config import load_yaml
+from rsfm_fairness_audit.formal_outputs import file_sha256
 from rsfm_fairness_audit.reben_resnet50_campaign import (
     RebenDiagnosticSupportError,
     RebenResNet50Config,
@@ -269,3 +272,220 @@ def test_insufficient_diagnostic_support_writes_manifest_instead_of_fallback(
     assert manifest["formal_evidence"] is False
     assert manifest["status"] == "not_run_insufficient_diagnostic_support"
     assert manifest["formal_protocol_changed"] is False
+
+
+def _write_complete_seed_fixture(
+    config: RebenResNet50Config,
+    *,
+    mode: str,
+    seed: int,
+    protocol: BWERProtocol,
+) -> Path:
+    run_dir = config.output_dir / campaign._mode_slug(mode) / f"seed_{seed}"
+    formal_dir = run_dir / "formal_outputs"
+    (run_dir / "geobwer").mkdir(parents=True)
+    (run_dir / "uncertainty_extensions").mkdir(parents=True)
+    formal_dir.mkdir(parents=True)
+    probabilities = np.full((2, 19), 0.25, dtype=np.float32)
+    targets = np.zeros((2, 19), dtype=np.int8)
+    for name in (
+        "calibration_probabilities.npz",
+        "validation_probabilities.npz",
+        "test_probabilities.npz",
+    ):
+        np.savez_compressed(
+            run_dir / name,
+            probabilities=probabilities,
+            targets=targets,
+        )
+    np.savez_compressed(
+        formal_dir / "probabilities.npz",
+        probabilities=probabilities,
+        targets=targets,
+    )
+    (run_dir / "resnet50.pt").write_bytes(b"checkpoint")
+    (formal_dir / "formal_audit_table.csv").write_text(
+        "sample_id,risk\none,0\n",
+        encoding="utf-8",
+    )
+    (formal_dir / "class_mapping.json").write_text(
+        json.dumps({"classes": default_reben_class_names()}),
+        encoding="utf-8",
+    )
+    formal_manifest = {
+        "output_schema": "geobwer.multilabel.v1",
+        "row_count": 2,
+        "protocol": protocol.to_dict(),
+        "protocol_hash": protocol.signature,
+        "model_lineage": {"sensor_mode": mode, "seed": seed},
+        "dataset_lineage": {
+            "metadata_parquet_sha256": file_sha256(config.metadata_parquet)
+        },
+        "artifacts": {
+            "probability_sha256": file_sha256(
+                formal_dir / "probabilities.npz"
+            ),
+            "class_mapping_sha256": file_sha256(
+                formal_dir / "class_mapping.json"
+            ),
+        },
+    }
+    (formal_dir / "formal_output_manifest.json").write_text(
+        json.dumps(formal_manifest),
+        encoding="utf-8",
+    )
+    calibration_path = run_dir / "calibration_probabilities.npz"
+    (run_dir / "calibration_manifest.json").write_text(
+        json.dumps(
+            {
+                "split_role": "calibration",
+                "split": "validation",
+                "test_rows_used": False,
+                "probabilities_sha256": file_sha256(calibration_path),
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps({"sensor_mode": mode, "seed": seed}),
+        encoding="utf-8",
+    )
+    campaign.write_csv(
+        run_dir / "metrics_summary.csv",
+        [{"sensor_mode": mode, "seed": seed, "micro_f1": 0.5}],
+    )
+    campaign.write_csv(run_dir / "geobwer" / "geobwer_summary.csv", [{"bwer": 0.1}])
+    campaign.write_csv(
+        run_dir / "uncertainty_extensions" / "uncertainty_summary.csv",
+        [{"extension": "crc"}],
+    )
+    return campaign._write_seed_completion_contract(
+        config,
+        mode=mode,
+        seed=seed,
+        protocol=protocol,
+        run_dir=run_dir,
+    )
+
+
+def test_valid_completion_contract_skips_all_completed_seeds(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    metadata = tmp_path / "metadata.parquet"
+    metadata.write_bytes(b"metadata")
+    config = RebenResNet50Config(
+        lmdb_root=tmp_path / "lmdb",
+        metadata_parquet=metadata,
+        output_dir=tmp_path / "out",
+        sensor_modes=("S1",),
+        seeds=(42, 73, 101),
+    )
+    protocol = BWERProtocol.from_mapping(load_yaml(config.geobwer_protocol))
+    for seed in config.seeds:
+        _write_complete_seed_fixture(
+            config,
+            mode="S1",
+            seed=seed,
+            protocol=protocol,
+        )
+
+    monkeypatch.setattr(
+        campaign,
+        "_dataset",
+        lambda *args, **kwargs: pytest.fail(
+            "completed seeds must skip dataset opening and training"
+        ),
+    )
+    monkeypatch.setattr(campaign, "persist_output", lambda *args, **kwargs: None)
+    result = run_reben_resnet50_campaign(config)
+    assert len(result["runs"]) == 3
+    assert all(
+        "completion_contract" in artifacts
+        for artifacts in result["runs"].values()
+    )
+
+
+def test_missing_or_mismatched_completion_contract_is_not_accepted(
+    tmp_path: Path,
+) -> None:
+    metadata = tmp_path / "metadata.parquet"
+    metadata.write_bytes(b"metadata")
+    config = RebenResNet50Config(
+        lmdb_root=tmp_path / "lmdb",
+        metadata_parquet=metadata,
+        output_dir=tmp_path / "out",
+        sensor_modes=("S1",),
+        seeds=(42, 73, 101),
+    )
+    protocol = BWERProtocol.from_mapping(load_yaml(config.geobwer_protocol))
+    run_dir = config.output_dir / "s1" / "seed_42"
+    valid, reason, _ = campaign._validate_seed_completion_contract(
+        config,
+        mode="S1",
+        seed=42,
+        protocol=protocol,
+        run_dir=run_dir,
+        allow_legacy_attestation=False,
+    )
+    assert valid is False
+    assert reason == "completion_marker_missing"
+
+    marker = _write_complete_seed_fixture(
+        config,
+        mode="S1",
+        seed=42,
+        protocol=protocol,
+    )
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    payload["config_signature"] = "wrong"
+    marker.write_text(json.dumps(payload), encoding="utf-8")
+    valid, reason, _ = campaign._validate_seed_completion_contract(
+        config,
+        mode="S1",
+        seed=42,
+        protocol=protocol,
+        run_dir=run_dir,
+        allow_legacy_attestation=False,
+    )
+    assert valid is False
+    assert reason == "completion_contract_mismatch"
+
+
+def test_v042_complete_artifacts_are_attested_once_then_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    metadata = tmp_path / "metadata.parquet"
+    metadata.write_bytes(b"metadata")
+    config = RebenResNet50Config(
+        lmdb_root=tmp_path / "lmdb",
+        metadata_parquet=metadata,
+        output_dir=tmp_path / "out",
+        sensor_modes=("S1",),
+        seeds=(42, 73, 101),
+    )
+    protocol = BWERProtocol.from_mapping(load_yaml(config.geobwer_protocol))
+    marker = _write_complete_seed_fixture(
+        config,
+        mode="S1",
+        seed=42,
+        protocol=protocol,
+    )
+    marker.unlink()
+    monkeypatch.setattr(
+        campaign,
+        "_checkpoint_config_matches",
+        lambda *args, **kwargs: (True, "ok"),
+    )
+    valid, reason, artifacts = campaign._validate_seed_completion_contract(
+        config,
+        mode="S1",
+        seed=42,
+        protocol=protocol,
+        run_dir=config.output_dir / "s1" / "seed_42",
+        allow_legacy_attestation=True,
+    )
+    assert valid is True
+    assert reason == "complete"
+    assert artifacts["completion_contract"].is_file()
