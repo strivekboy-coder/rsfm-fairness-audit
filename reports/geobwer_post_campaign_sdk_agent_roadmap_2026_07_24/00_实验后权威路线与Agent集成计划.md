@@ -93,7 +93,63 @@ audit_predictions(...)
 
 核心 `audit`、`audit_rows`、`compare`、`confirm` 保持为高级接口。SDK 易用层不得通过自动降级破坏 formal fail-closed 规则。
 
-### 4.3 统一 CLI 和示例
+### 4.3 Formal / Exploratory 双模式合同
+
+SDK 和 CLI 应共享同一套 GeoBWER 数学核心，但明确区分两种证据模式。模式必须由用户显式选择并写入 AuditTable、protocol、manifest、Audit Card 和输出目录；不得根据 preflight 结果从 Formal 静默退化为 Exploratory。
+
+#### Formal 模式
+
+用途：论文主结果、正式 benchmark、模型排名和可引用的确认性结论。
+
+要求：
+
+- 审计轴、交互切片、风险定义、beta profile、部署测度、support 规则、缺失规则和依赖设计预注册；
+- protocol 要求的字段和 split/calibration lineage 完整；
+- 模糊或无法验证的国家、区域、坐标、季节及社会属性不得自动猜测；
+- 不得静默删除样本、合并切片、降低 support threshold 或退化为 i.i.d. 推断；
+- 任何映射或 enrichment 必须具有版本、来源、映射表哈希、覆盖摘要和 unresolved 清单；
+- calibration、selection 与 test 严格隔离；
+- 只有通过 schema、support、independent-unit、cluster/spatial、common-support 和 protocol-hash 检查的结果才能标记 `formal_evidence=true`；
+- 不可识别、支持不足或区间无法认证属于正式科学结果，应保留明确 invalid state，不得用空值、零值或描述性估计替代。
+
+Formal 失败时，runner 应在昂贵的模型加载、embedding、训练和推理之前完成能够提前执行的 metadata preflight，并给出机器可读的失败报告。
+
+#### Exploratory 模式
+
+用途：第三方数据首次接入、可用性检查、候选切片发现、调试和假设生成。
+
+行为：
+
+- 自动盘点可用字段与可运行审计轴，但不自动补造缺失语义；
+- 仅在实际可用的轴上运行描述性 GeoBWER、support profile 和必要的诊断；
+- 输出每个字段和轴的 row coverage、independent-unit coverage、cluster coverage、有效部署质量、排除样本/切片及原因；
+- 对无法识别或歧义值保留 unresolved 类别和逐值报告，不把它们自动映射为真实地理群体；
+- 允许用户显式提供可审计的映射表后重新运行，但必须记录映射来源和哈希；
+- 所有结果强制标记 `formal_evidence=false`、`evidence_mode=exploratory` 和 `cross_run_comparable=false`；
+- 不得进入正式 leaderboard、确认性模型排名、主文 CI/LCB 结论或与 Formal 结果混合汇总。
+
+Exploratory 模式可以推荐下一步需要补充的字段、支持量或依赖设计，但不得依据观察到的 test 结果自动选择 beta、切片、阈值或正式结论。
+
+#### 两种模式的共同输出
+
+Audit Card 至少报告：
+
+- evidence mode、metric version、protocol hash 和数据/模型 signatures；
+- 可用字段 coverage 与预注册字段 completeness；
+- 每个轴的有效/排除切片、有效部署质量和缺失原因；
+- mean risk、tail risk、GeoBWER、beta profile 及适用时的 CI/LCB；
+- descriptive、not identified、not certified、formal valid 等明确状态；
+- enrichment/mapping lineage、unresolved values 和所有禁止比较条件。
+
+核心原则：
+
+```text
+Formal 模式保护科学有效性；
+Exploratory 模式提高接入可用性；
+两者共享计算引擎，但不共享证据等级。
+```
+
+### 4.4 统一 CLI 和示例
 
 新增稳定入口：
 
@@ -205,4 +261,3 @@ model_manifest.yaml
 3. Agent Integration Kit；
 4. PyPI/插件生态；
 5. 只有经结果触发才考虑 GeoSIMCP、自动切片发现或新增模型/数据集。
-
