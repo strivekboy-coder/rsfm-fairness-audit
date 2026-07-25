@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
 import copy
+import hashlib
 import json
 from pathlib import Path
 import random
@@ -56,6 +57,29 @@ class FmowResNet50CampaignError(RuntimeError):
     """Raised when the protocol-matched fMoW baseline cannot be certified."""
 
 
+_COMPLETION_CONTRACT = "completion_contract.json"
+_SCIENTIFIC_CONFIG_FIELDS = (
+    "train_split",
+    "calibration_split",
+    "test_split",
+    "split_protocol",
+    "band_profile",
+    "image_size",
+    "max_epochs",
+    "patience",
+    "min_delta",
+    "inner_validation_fraction",
+    "batch_size",
+    "learning_rate",
+    "weight_decay",
+    "pretrained_encoder",
+    "amp",
+    "audit_bootstrap",
+    "conformal_alpha",
+    "diagnostic_max_samples_per_split",
+)
+
+
 @dataclass(frozen=True)
 class FmowResNet50CampaignConfig:
     metadata_csv: Path
@@ -105,6 +129,293 @@ def _require_torch() -> Any:
     except ImportError as exc:  # pragma: no cover - Colab/runtime path
         raise FmowResNet50CampaignError("PyTorch and torchvision are required.") from exc
     return torch
+
+
+def _json_signature(value: Mapping[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _completion_config_payload(
+    config: FmowResNet50CampaignConfig,
+    *,
+    seed: int,
+    protocol: BWERProtocol,
+    geography_contract_hash: str,
+    normalization_sha256: str,
+) -> dict[str, Any]:
+    payload = {
+        field: getattr(config, field)
+        for field in _SCIENTIFIC_CONFIG_FIELDS
+    }
+    payload.update(
+        {
+            "seed": int(seed),
+            "metadata_sha256": file_sha256(config.metadata_csv),
+            "geography_contract_hash": str(geography_contract_hash),
+            "protocol_hash": protocol.signature,
+            "metric_version": protocol.metric_version,
+            "normalization_sha256": str(normalization_sha256),
+            "model_contract": {
+                "architecture": "torchvision_resnet50",
+                "input_channels": 9,
+                "adaptation_protocol": "supervised_common9_protocol_matched",
+            },
+        }
+    )
+    return payload
+
+
+def _required_seed_artifacts(run_dir: Path) -> dict[str, Path]:
+    return {
+        "checkpoint": run_dir / "resnet50_common9.pt",
+        "calibration_probabilities": run_dir / "calibration_probabilities.npz",
+        "formal_audit_table": run_dir / "formal_outputs" / "formal_audit_table.csv",
+        "formal_probabilities": run_dir / "formal_outputs" / "probabilities.npz",
+        "class_mapping": run_dir / "formal_outputs" / "class_mapping.json",
+        "formal_output_manifest": (
+            run_dir / "formal_outputs" / "formal_output_manifest.json"
+        ),
+        "calibration_manifest": run_dir / "calibration_manifest.json",
+        "run_manifest": run_dir / "run_manifest.json",
+        "raw_summary": run_dir / "geobwer_raw" / "geobwer_summary.csv",
+        "strict_standardized_summary": (
+            run_dir / "geobwer_standardized_strict" / "geobwer_summary.csv"
+        ),
+        "partial_standardized_summary": (
+            run_dir
+            / "geobwer_standardized_partial_bounds"
+            / "geobwer_summary.csv"
+        ),
+        "uncertainty_summary": (
+            run_dir / "uncertainty_extensions" / "uncertainty_summary.csv"
+        ),
+    }
+
+
+def _validate_probability_artifact(path: Path) -> str | None:
+    try:
+        with np.load(path, allow_pickle=False) as artifact:
+            probabilities = np.asarray(artifact["probabilities"])
+            targets = np.asarray(artifact["targets"])
+        if (
+            probabilities.ndim != 2
+            or probabilities.shape[0] <= 0
+            or targets.ndim != 1
+            or len(targets) != len(probabilities)
+            or not np.all(np.isfinite(probabilities))
+        ):
+            return f"invalid_probability_shape_or_values:{path.name}"
+    except (OSError, KeyError, ValueError) as exc:
+        return f"unreadable_probability_artifact:{path.name}:{exc}"
+    return None
+
+
+def _build_seed_completion_contract(
+    config: FmowResNet50CampaignConfig,
+    *,
+    seed: int,
+    protocol: BWERProtocol,
+    geography_contract_hash: str,
+    normalization_sha256: str,
+    run_dir: Path,
+) -> dict[str, Any]:
+    artifacts = _required_seed_artifacts(run_dir)
+    missing = [name for name, path in artifacts.items() if not path.is_file()]
+    if missing:
+        raise FmowResNet50CampaignError(
+            "Cannot certify incomplete fMoW ResNet-50 seed artifacts: "
+            + ", ".join(missing)
+        )
+    formal_manifest = json.loads(
+        artifacts["formal_output_manifest"].read_text(encoding="utf-8")
+    )
+    dataset_lineage = formal_manifest.get("dataset_lineage", {})
+    model_lineage = formal_manifest.get("model_lineage", {})
+    if (
+        formal_manifest.get("protocol_hash") != protocol.signature
+        or formal_manifest.get("protocol", {}).get("metric_version")
+        != protocol.metric_version
+        or dataset_lineage.get("metadata_sha256")
+        != file_sha256(config.metadata_csv)
+        or dataset_lineage.get("geography_contract_hash")
+        != geography_contract_hash
+        or int(model_lineage.get("seed", -1)) != int(seed)
+        or str(model_lineage.get("band_profile")) != config.band_profile
+    ):
+        raise FmowResNet50CampaignError(
+            "Formal output lineage does not match the current metadata, "
+            "geography, protocol, seed, or model contract."
+        )
+    manifest_artifacts = formal_manifest.get("artifacts", {})
+    if (
+        int(formal_manifest.get("row_count", 0)) <= 0
+        or manifest_artifacts.get("probability_sha256")
+        != file_sha256(artifacts["formal_probabilities"])
+        or manifest_artifacts.get("class_mapping_sha256")
+        != file_sha256(artifacts["class_mapping"])
+    ):
+        raise FmowResNet50CampaignError(
+            "Formal output manifest artifact hashes or row count are invalid."
+        )
+    calibration_manifest = json.loads(
+        artifacts["calibration_manifest"].read_text(encoding="utf-8")
+    )
+    if (
+        calibration_manifest.get("split_role") != "calibration"
+        or calibration_manifest.get("test_rows_used") is not False
+        or calibration_manifest.get("probabilities_sha256")
+        != file_sha256(artifacts["calibration_probabilities"])
+    ):
+        raise FmowResNet50CampaignError(
+            "Calibration artifact does not preserve the frozen isolation contract."
+        )
+    for name in ("calibration_probabilities", "formal_probabilities"):
+        error = _validate_probability_artifact(artifacts[name])
+        if error:
+            raise FmowResNet50CampaignError(error)
+    config_payload = _completion_config_payload(
+        config,
+        seed=seed,
+        protocol=protocol,
+        geography_contract_hash=geography_contract_hash,
+        normalization_sha256=normalization_sha256,
+    )
+    return {
+        "schema": "geobwer.fmow.resnet50_seed_completion.v1",
+        "complete": True,
+        "formal_evidence": True,
+        "seed": int(seed),
+        "protocol_hash": protocol.signature,
+        "metric_version": protocol.metric_version,
+        "metadata_sha256": file_sha256(config.metadata_csv),
+        "geography_contract_hash": geography_contract_hash,
+        "config_signature": _json_signature(config_payload),
+        "config_contract": config_payload,
+        "artifacts": {
+            name: {
+                "path": str(path.relative_to(run_dir)),
+                "sha256": file_sha256(path),
+                "size_bytes": path.stat().st_size,
+            }
+            for name, path in artifacts.items()
+        },
+    }
+
+
+def _write_seed_completion_contract(
+    config: FmowResNet50CampaignConfig,
+    *,
+    seed: int,
+    protocol: BWERProtocol,
+    geography_contract_hash: str,
+    normalization_sha256: str,
+    run_dir: Path,
+) -> Path:
+    contract = _build_seed_completion_contract(
+        config,
+        seed=seed,
+        protocol=protocol,
+        geography_contract_hash=geography_contract_hash,
+        normalization_sha256=normalization_sha256,
+        run_dir=run_dir,
+    )
+    path = run_dir / _COMPLETION_CONTRACT
+    temporary = path.with_suffix(".json.partial")
+    temporary.write_text(
+        json.dumps(contract, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+    return path
+
+
+def _validate_seed_completion_contract(
+    config: FmowResNet50CampaignConfig,
+    *,
+    seed: int,
+    protocol: BWERProtocol,
+    geography_contract_hash: str,
+    normalization_sha256: str,
+    run_dir: Path,
+) -> dict[str, Path] | None:
+    """Return certified artifacts, pending for an absent seed, or hard-fail."""
+
+    if not run_dir.exists() or not any(run_dir.iterdir()):
+        return None
+    path = run_dir / _COMPLETION_CONTRACT
+    if not path.is_file():
+        raise FmowResNet50CampaignError(
+            f"Seed {seed} has partial artifacts but no completion contract: {run_dir}"
+        )
+    try:
+        contract = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise FmowResNet50CampaignError(
+            f"Seed {seed} completion contract is unreadable: {exc}"
+        ) from exc
+    expected_payload = _completion_config_payload(
+        config,
+        seed=seed,
+        protocol=protocol,
+        geography_contract_hash=geography_contract_hash,
+        normalization_sha256=normalization_sha256,
+    )
+    if (
+        contract.get("schema")
+        != "geobwer.fmow.resnet50_seed_completion.v1"
+        or contract.get("complete") is not True
+        or contract.get("formal_evidence") is not True
+        or int(contract.get("seed", -1)) != int(seed)
+        or contract.get("protocol_hash") != protocol.signature
+        or contract.get("metric_version") != protocol.metric_version
+        or contract.get("metadata_sha256") != file_sha256(config.metadata_csv)
+        or contract.get("geography_contract_hash") != geography_contract_hash
+        or contract.get("config_signature") != _json_signature(expected_payload)
+    ):
+        raise FmowResNet50CampaignError(
+            f"Seed {seed} completion contract does not match the current campaign."
+        )
+    artifacts = _required_seed_artifacts(run_dir)
+    recorded = contract.get("artifacts")
+    if not isinstance(recorded, Mapping):
+        raise FmowResNet50CampaignError(
+            f"Seed {seed} completion contract has no artifact inventory."
+        )
+    for name, artifact in artifacts.items():
+        item = recorded.get(name)
+        if not isinstance(item, Mapping) or not artifact.is_file():
+            raise FmowResNet50CampaignError(
+                f"Seed {seed} completion artifact is missing: {name}"
+            )
+        if (
+            int(item.get("size_bytes", -1)) != artifact.stat().st_size
+            or item.get("sha256") != file_sha256(artifact)
+        ):
+            raise FmowResNet50CampaignError(
+                f"Seed {seed} completion artifact signature mismatch: {name}"
+            )
+    return {
+        "formal_audit_table": artifacts["formal_audit_table"],
+        "formal_manifest": artifacts["formal_output_manifest"],
+        "calibration": artifacts["calibration_probabilities"],
+        "raw_summary": artifacts["raw_summary"],
+        "strict_standardized_summary": artifacts[
+            "strict_standardized_summary"
+        ],
+        "partial_standardized_summary": artifacts[
+            "partial_standardized_summary"
+        ],
+        "uncertainty_summary": artifacts["uncertainty_summary"],
+        "run_manifest": artifacts["run_manifest"],
+        "completion_contract": path,
+    }
 
 
 def _device(name: str) -> Any:
@@ -602,6 +913,41 @@ def _audit_seed(
     }
 
 
+def _completed_seed_summary(
+    seed: int,
+    artifacts: Mapping[str, Path],
+) -> dict[str, Any]:
+    manifest = json.loads(
+        Path(artifacts["run_manifest"]).read_text(encoding="utf-8")
+    )
+    training = manifest.get("training", {})
+    calibration_metrics = training.get("calibration_metrics", {})
+    test_metrics = training.get("test_metrics", {})
+    country_summary = read_axis_geobwer_summary(
+        artifacts["raw_summary"],
+        axis="country",
+    )
+    return {
+        "seed": int(seed),
+        "selected_epoch": training.get("selected_epoch"),
+        "inner_validation_cross_entropy": training.get(
+            "inner_validation_cross_entropy"
+        ),
+        **{
+            f"calibration_{key}": value
+            for key, value in calibration_metrics.items()
+        },
+        **{f"test_{key}": value for key, value in test_metrics.items()},
+        "country_geobwer": country_summary["geobwer"],
+        "country_geobwer_validity": country_summary["validity"],
+        "country_geobwer_ci_low": country_summary["ci_low"],
+        "country_geobwer_ci_high": country_summary["ci_high"],
+        "country_geobwer_lower_confidence_bound": country_summary[
+            "lower_confidence_bound"
+        ],
+    }
+
+
 def run_fmow_resnet50_campaign(
     config: FmowResNet50CampaignConfig,
 ) -> dict[str, Any]:
@@ -677,10 +1023,48 @@ def run_fmow_resnet50_campaign(
             "Formal common-9 baseline refuses unreadable-row dropping; repair the raster cache."
         )
     protocol = BWERProtocol.from_mapping(load_yaml(config.geobwer_protocol))
+    if geography_contract is None:
+        geography_contract_hash = ""
+    else:
+        geography_contract_hash = str(geography_contract["contract_hash"])
+    normalization_sha256 = file_sha256(normalization_path)
     runs: dict[str, Any] = {}
     seed_rows: list[dict[str, Any]] = []
+    completed: dict[int, dict[str, Path]] = {}
+    pending: list[int] = []
+    if config.diagnostic_max_samples_per_split is None:
+        for seed in config.seeds:
+            run_dir = output / f"seed_{int(seed)}"
+            artifacts = _validate_seed_completion_contract(
+                config,
+                seed=int(seed),
+                protocol=protocol,
+                geography_contract_hash=geography_contract_hash,
+                normalization_sha256=normalization_sha256,
+                run_dir=run_dir,
+            )
+            if artifacts is None:
+                pending.append(int(seed))
+            else:
+                completed[int(seed)] = artifacts
+        print("[fmow:resnet50:resume] completed:", flush=True)
+        for seed in completed:
+            print(f"  seed {seed}", flush=True)
+        if not completed:
+            print("  <none>", flush=True)
+        print("[fmow:resnet50:resume] pending:", flush=True)
+        for seed in pending:
+            print(f"  seed {seed}", flush=True)
+        if not pending:
+            print("  <none>", flush=True)
     for seed in config.seeds:
         run_dir = output / f"seed_{int(seed)}"
+        if int(seed) in completed:
+            runs[str(seed)] = completed[int(seed)]
+            seed_rows.append(
+                _completed_seed_summary(int(seed), completed[int(seed)])
+            )
+            continue
         fit = _fit_seed(
             train_rows,
             calibration_rows,
@@ -719,6 +1103,15 @@ def run_fmow_resnet50_campaign(
                 geography_lineage=geography_lineage,
                 output_dir=run_dir,
             )
+            completion = _write_seed_completion_contract(
+                config,
+                seed=int(seed),
+                protocol=protocol,
+                geography_contract_hash=geography_contract_hash,
+                normalization_sha256=normalization_sha256,
+                run_dir=run_dir,
+            )
+            runs[str(seed)]["completion_contract"] = completion
         seed_row = {
             "seed": seed,
             "selected_epoch": fit["selected_epoch"],
@@ -779,7 +1172,15 @@ def run_fmow_resnet50_campaign(
                     else None
                 ),
                 "normalization": str(normalization_path),
-                "normalization_sha256": file_sha256(normalization_path),
+                "normalization_sha256": normalization_sha256,
+                "resume": {
+                    "completed_on_entry": sorted(completed),
+                    "trained_this_invocation": [
+                        int(seed)
+                        for seed in config.seeds
+                        if int(seed) not in completed
+                    ],
+                },
                 "runs": {
                     seed: {
                         key: str(value) if isinstance(value, Path) else value
