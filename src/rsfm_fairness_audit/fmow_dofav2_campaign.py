@@ -709,9 +709,24 @@ def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path
         )
         for row in seed_summary_rows:
             if int(row["seed"]) == int(seed):
-                row["country_geobwer"] = country_summary.get("geobwer", "")
-                row["country_geobwer_lcb"] = country_summary.get("geobwer_lcb", "")
-                row["country_geobwer_ucb"] = country_summary.get("geobwer_ucb", "")
+                row["country_geobwer"] = country_summary.get(
+                    "bwer",
+                    country_summary.get("geobwer", ""),
+                )
+                row["country_geobwer_ci_low"] = country_summary.get(
+                    "ci_low",
+                    "",
+                )
+                row["country_geobwer_ci_high"] = country_summary.get(
+                    "ci_high",
+                    "",
+                )
+                row["country_geobwer_lower_confidence_bound"] = (
+                    country_summary.get(
+                        "lower_confidence_bound",
+                        country_summary.get("geobwer_lcb", ""),
+                    )
+                )
                 row["country_geobwer_validity"] = country_summary.get("validity", "")
     write_csv(output / "probe_seed_robustness.csv", seed_summary_rows)
     bundle: FormalOutputBundle = write_multiclass_bundle(

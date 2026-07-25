@@ -31,6 +31,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--persistent-output-dir", type=Path)
     parser.add_argument(
+        "--geography-contract",
+        type=Path,
+        help="Required for formal runs; must match --metadata-csv exactly.",
+    )
+    parser.add_argument(
         "--protocol",
         type=Path,
         default=PROJECT_ROOT / "configs/geobwer/fmow_sentinel.yaml",
@@ -58,6 +63,7 @@ def main() -> None:
             output_dir=args.output_dir,
             persistent_output_dir=args.persistent_output_dir,
             geobwer_protocol=args.protocol,
+            geography_contract=args.geography_contract,
             seeds=args.seeds,
             max_epochs=args.max_epochs,
             patience=args.patience,

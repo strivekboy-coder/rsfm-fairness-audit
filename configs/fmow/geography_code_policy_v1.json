@@ -1,0 +1,40 @@
+{
+  "schema": "geobwer.fmow.geography_code_policy.v1",
+  "policy_id": "fmow_country_code_policy_v1",
+  "validation_scope": "syntax_plus_explicit_exceptions",
+  "preserve_raw_country_values": true,
+  "recognized_project_codes": {
+    "KOS": {
+      "status": "accepted_project_code",
+      "rewrite": false,
+      "external_reference_code": "XKX",
+      "external_reference_status": "ISO-3166 user-assigned code; not an officially assigned ISO alpha-3 code",
+      "note": "Preserve the fMoW project value KOS so existing audit groups and numerical results do not change."
+    }
+  },
+  "requires_explicit_resolution": {
+    "ANT": "Deprecated Netherlands Antilles code and ambiguous for current geography.",
+    "CA-": "Malformed or truncated value; do not infer Canada without row-level evidence.",
+    "KO-": "Malformed or truncated value; do not infer a country without row-level evidence.",
+    "ambiguous_country": "Dataset placeholder rather than a verified country code."
+  },
+  "invalid_placeholders": [
+    "",
+    "unknown",
+    "unk",
+    "none",
+    "null",
+    "n/a",
+    "na"
+  ],
+  "authoritative_references": [
+    {
+      "name": "ISO 3166 Country Codes",
+      "url": "https://www.iso.org/iso-3166-country-codes.html"
+    },
+    {
+      "name": "United Nations M49 Standard",
+      "url": "https://unstats.un.org/unsd/methodology/m49/"
+    }
+  ]
+}

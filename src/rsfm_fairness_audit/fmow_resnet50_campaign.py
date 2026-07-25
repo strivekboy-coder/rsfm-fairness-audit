@@ -5,6 +5,7 @@ import copy
 import json
 from pathlib import Path
 import random
+import shutil
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -17,6 +18,14 @@ from rsfm_fairness_audit.fmow_dofav2_campaign import (
     _formal_rows,
     _validate_split_contract,
     _write_fmow_metadata_preflight,
+)
+from rsfm_fairness_audit.fmow_dofav2_postprocess import (
+    read_axis_geobwer_summary,
+)
+from rsfm_fairness_audit.fmow_geography_contract import (
+    FmowGeographyContractError,
+    geography_contract_lineage,
+    validate_fmow_geography_contract,
 )
 from rsfm_fairness_audit.fmow_sentinel_classification import (
     FmowClassificationConfig,
@@ -54,6 +63,7 @@ class FmowResNet50CampaignConfig:
     output_dir: Path
     persistent_output_dir: Path | None = None
     geobwer_protocol: Path = Path("configs/geobwer/fmow_sentinel.yaml")
+    geography_contract: Path | None = None
     train_split: str = "train"
     calibration_split: str = "calibration"
     test_split: str = "test"
@@ -105,6 +115,37 @@ def _device(name: str) -> Any:
     if device.type == "cuda" and not torch.cuda.is_available():
         raise FmowResNet50CampaignError("CUDA was requested but is unavailable.")
     return device
+
+
+def _prepare_geography_contract(
+    config: FmowResNet50CampaignConfig,
+    output: Path,
+) -> tuple[dict[str, Any] | None, dict[str, Any], Path | None]:
+    formal = config.diagnostic_max_samples_per_split is None
+    if config.geography_contract is None:
+        if formal:
+            raise FmowResNet50CampaignError(
+                "Formal fMoW ResNet-50 requires --geography-contract before "
+                "model loading or training."
+            )
+        return None, {}, None
+    try:
+        contract = validate_fmow_geography_contract(
+            config.geography_contract,
+            metadata_csv=config.metadata_csv,
+            require_formal=formal,
+        )
+    except FmowGeographyContractError as exc:
+        raise FmowResNet50CampaignError(str(exc)) from exc
+    contract_copy = output / "geography_contract.json"
+    if Path(config.geography_contract).resolve() != contract_copy.resolve():
+        shutil.copy2(config.geography_contract, contract_copy)
+    copied = validate_fmow_geography_contract(
+        contract_copy,
+        metadata_csv=config.metadata_csv,
+        require_formal=formal,
+    )
+    return copied, geography_contract_lineage(contract_copy, copied), contract_copy
 
 
 def _loader(
@@ -361,6 +402,7 @@ def _audit_seed(
     test_rows: Sequence[dict[str, Any]],
     fit: Mapping[str, Any],
     protocol: BWERProtocol,
+    geography_lineage: Mapping[str, Any],
     output_dir: Path,
 ) -> dict[str, Path]:
     class_names = list(fit["classes"])
@@ -395,6 +437,7 @@ def _audit_seed(
         "train_row_hash": _row_hash(train_rows),
         "calibration_row_hash": _row_hash(calibration_rows),
         "test_row_hash": _row_hash(test_rows),
+        **dict(geography_lineage),
     }
     bundle: FormalOutputBundle = write_multiclass_bundle(
         output_dir / "formal_outputs",
@@ -520,7 +563,7 @@ def _audit_seed(
     manifest.write_text(
         json.dumps(
             {
-                "schema": "geobwer.fmow.resnet50_common9_seed.v1",
+                "schema": "geobwer.fmow.resnet50_common9_seed.v2",
                 "model_lineage": model_lineage,
                 "dataset_lineage": dataset_lineage,
                 "formal_output_manifest": str(bundle.manifest),
@@ -564,6 +607,9 @@ def run_fmow_resnet50_campaign(
 ) -> dict[str, Any]:
     hydrate_output(config.output_dir, config.persistent_output_dir)
     output = ensure_dir(config.output_dir)
+    geography_contract, geography_lineage, geography_contract_path = (
+        _prepare_geography_contract(config, output)
+    )
     rows = _load_metadata(config.metadata_csv)
     metadata_preflight = _write_fmow_metadata_preflight(
         rows,
@@ -670,25 +716,41 @@ def run_fmow_resnet50_campaign(
                 test_rows=test_rows,
                 fit=fit,
                 protocol=protocol,
+                geography_lineage=geography_lineage,
                 output_dir=run_dir,
             )
-        seed_rows.append(
-            {
-                "seed": seed,
-                "selected_epoch": fit["selected_epoch"],
-                "inner_validation_cross_entropy": fit[
-                    "inner_validation_cross_entropy"
-                ],
-                **{
-                    f"calibration_{key}": value
-                    for key, value in fit["outputs"]["calibration"]["metrics"].items()
-                },
-                **{
-                    f"test_{key}": value
-                    for key, value in fit["outputs"]["test"]["metrics"].items()
-                },
-            }
-        )
+        seed_row = {
+            "seed": seed,
+            "selected_epoch": fit["selected_epoch"],
+            "inner_validation_cross_entropy": fit[
+                "inner_validation_cross_entropy"
+            ],
+            **{
+                f"calibration_{key}": value
+                for key, value in fit["outputs"]["calibration"]["metrics"].items()
+            },
+            **{
+                f"test_{key}": value
+                for key, value in fit["outputs"]["test"]["metrics"].items()
+            },
+        }
+        if config.diagnostic_max_samples_per_split is None:
+            country_summary = read_axis_geobwer_summary(
+                runs[str(seed)]["raw_summary"],
+                axis="country",
+            )
+            seed_row.update(
+                {
+                    "country_geobwer": country_summary["geobwer"],
+                    "country_geobwer_validity": country_summary["validity"],
+                    "country_geobwer_ci_low": country_summary["ci_low"],
+                    "country_geobwer_ci_high": country_summary["ci_high"],
+                    "country_geobwer_lower_confidence_bound": country_summary[
+                        "lower_confidence_bound"
+                    ],
+                }
+            )
+        seed_rows.append(seed_row)
         persist_output(
             run_dir,
             (
@@ -704,10 +766,18 @@ def run_fmow_resnet50_campaign(
     campaign_manifest.write_text(
         json.dumps(
             {
-                "schema": "geobwer.fmow.resnet50_common9_panel.v1",
+                "schema": "geobwer.fmow.resnet50_common9_panel.v2",
                 "formal_evidence": config.diagnostic_max_samples_per_split is None,
                 "role": "protocol_matched_supervised_baseline",
                 "config": asdict(config),
+                "geography_contract": (
+                    {
+                        "path": str(geography_contract_path),
+                        **geography_lineage,
+                    }
+                    if geography_contract is not None
+                    else None
+                ),
                 "normalization": str(normalization_path),
                 "normalization_sha256": file_sha256(normalization_path),
                 "runs": {
@@ -728,6 +798,7 @@ def run_fmow_resnet50_campaign(
     persist_output(output, config.persistent_output_dir, label="fmow-resnet50-panel-complete")
     return {
         "runs": runs,
+        "geography_contract": geography_contract_path,
         "seed_robustness": seed_summary,
         "campaign_manifest": campaign_manifest,
     }
@@ -736,5 +807,6 @@ def run_fmow_resnet50_campaign(
 __all__ = [
     "FmowResNet50CampaignConfig",
     "FmowResNet50CampaignError",
+    "_prepare_geography_contract",
     "run_fmow_resnet50_campaign",
 ]

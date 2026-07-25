@@ -11,6 +11,10 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from rsfm_fairness_audit.bwer_protocol import BWERProtocol  # noqa: E402
+from rsfm_fairness_audit.fmow_geography_contract import (  # noqa: E402
+    validate_fmow_geography_contract,
+)
+from rsfm_fairness_audit.formal_outputs import file_sha256  # noqa: E402
 from rsfm_fairness_audit.geobwer_panel import run_geobwer_model_panel  # noqa: E402
 from rsfm_fairness_audit.persistent_cache import hydrate_output, persist_output  # noqa: E402
 
@@ -36,7 +40,14 @@ def build_parser() -> argparse.ArgumentParser:
         description="Build the pre-registered same-seed DOFAv2/ResNet-50 fMoW GeoBWER panel."
     )
     parser.add_argument("--dofav2-root", type=Path, required=True)
+    parser.add_argument(
+        "--dofav2-provenance-overlay",
+        type=Path,
+        required=True,
+        help="postprocess_manifest.json from the immutable DOFA provenance overlay.",
+    )
     parser.add_argument("--resnet50-root", type=Path, required=True)
+    parser.add_argument("--geography-contract", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--persistent-output-dir", type=Path)
     parser.add_argument("--seeds", type=_seeds, default=(42, 73, 101))
@@ -47,6 +58,33 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     hydrate_output(args.output_dir, args.persistent_output_dir)
+    geography_contract = validate_fmow_geography_contract(
+        args.geography_contract,
+        require_formal=True,
+    )
+    overlay = _manifest(args.dofav2_provenance_overlay)
+    if overlay.get("schema") != "geobwer.fmow.dofav2_provenance_overlay.v1":
+        raise RuntimeError("Unsupported DOFA geography-provenance overlay schema.")
+    if (
+        str(overlay.get("geography_contract_hash") or "")
+        != geography_contract["contract_hash"]
+    ):
+        raise RuntimeError(
+            "DOFA overlay and requested geography contract do not match."
+        )
+    source_artifacts = dict(overlay.get("source_artifacts", {}))
+    dofa_main_manifest = (
+        args.dofav2_root / "formal_outputs" / "formal_output_manifest.json"
+    )
+    if file_sha256(dofa_main_manifest) != str(
+        source_artifacts.get("formal_output_manifest_sha256") or ""
+    ):
+        raise RuntimeError(
+            "DOFA ensemble manifest differs from the immutable provenance overlay."
+        )
+    expected_dofa_seed_manifests = dict(
+        source_artifacts.get("seed_formal_manifest_sha256", {})
+    )
     tables: dict[str, Path] = {}
     protocol: BWERProtocol | None = None
     pairs: list[tuple[str, str]] = []
@@ -62,6 +100,29 @@ def main() -> None:
                 raise RuntimeError(
                     f"Model identity drift for {formal}: expected={name}, observed={observed_name}."
                 )
+            if name == dofa_name:
+                expected_manifest_sha = str(
+                    expected_dofa_seed_manifests.get(str(seed)) or ""
+                )
+                if (
+                    not expected_manifest_sha
+                    or file_sha256(formal / "formal_output_manifest.json")
+                    != expected_manifest_sha
+                ):
+                    raise RuntimeError(
+                        f"DOFA seed={seed} manifest differs from the provenance overlay."
+                    )
+            else:
+                observed_contract_hash = str(
+                    manifest.get("dataset_lineage", {}).get(
+                        "geography_contract_hash"
+                    )
+                    or ""
+                )
+                if observed_contract_hash != geography_contract["contract_hash"]:
+                    raise RuntimeError(
+                        f"ResNet seed={seed} does not share the frozen geography contract."
+                    )
             table = formal / "formal_audit_table.csv"
             if not table.is_file():
                 raise RuntimeError(f"Missing formal table: {table}")
@@ -88,8 +149,12 @@ def main() -> None:
     design.write_text(
         json.dumps(
             {
-                "schema": "geobwer.fmow.extended_comparison_design.v1",
+                "schema": "geobwer.fmow.extended_comparison_design.v2",
                 "primary_same_protocol_same_seed_pairs": pairs,
+                "geography_contract_hash": geography_contract["contract_hash"],
+                "dofav2_provenance_overlay_sha256": file_sha256(
+                    args.dofav2_provenance_overlay
+                ),
                 "common_input_bands": "sentinel2_9_legacy",
                 "split_protocol": "category_scoped_location_disjoint_train_calibration_test",
                 "seed_ensemble_role": "secondary_deployment_ensemble_not_primary_architecture_test",
