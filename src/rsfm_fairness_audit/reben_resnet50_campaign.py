@@ -14,6 +14,7 @@ import numpy as np
 from rsfm_fairness_audit.adapters.reben import (
     LmdbSafetensorsRebenDatasetAdapter,
     detect_lmdb_payload_format,
+    reben_lmdb_identity,
     reben_labels_to_multihot,
     resolve_reben_root_dir,
 )
@@ -84,7 +85,11 @@ class RebenResNet50Config:
     patience: int = 5
     min_delta: float = 1e-4
     batch_size: int = 128
-    num_workers: int = 0
+    num_workers: int = 4
+    pin_memory: bool = True
+    persistent_workers: bool = True
+    prefetch_factor: int = 2
+    host_to_device_non_blocking: bool = True
     learning_rate: float = 3e-4
     weight_decay: float = 1e-4
     pretrained_encoder: bool = False
@@ -107,8 +112,14 @@ class RebenResNet50Config:
             self.patience,
             self.batch_size,
             self.normalization_pixel_stride,
+            self.prefetch_factor,
         ) <= 0:
-            raise ValueError("Epoch, batch, patience, and normalization stride must be positive.")
+            raise ValueError(
+                "Epoch, batch, patience, normalization stride, and prefetch factor "
+                "must be positive."
+            )
+        if self.num_workers < 0:
+            raise ValueError("num_workers must be non-negative.")
 
 
 def _mode_slug(mode: str) -> str:
@@ -157,6 +168,24 @@ def _json_signature(value: Mapping[str, Any]) -> str:
         default=str,
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _data_loading_config(config: RebenResNet50Config) -> dict[str, Any]:
+    """Operational-only loader settings; excluded from scientific completion."""
+
+    return {
+        "num_workers": int(config.num_workers),
+        "pin_memory": bool(config.pin_memory),
+        "persistent_workers": bool(
+            config.persistent_workers and config.num_workers > 0
+        ),
+        "prefetch_factor": (
+            int(config.prefetch_factor) if config.num_workers > 0 else None
+        ),
+        "host_to_device_non_blocking": bool(
+            config.host_to_device_non_blocking
+        ),
+    }
 
 
 def _required_seed_artifacts(run_dir: Path) -> dict[str, Path]:
@@ -648,11 +677,33 @@ def _image(sample: Mapping[str, Any], mode: str) -> np.ndarray:
     return array
 
 
+class _PreflightSampleDataset:
+    """Fetch raw samples in workers; aggregate moments only in the main process."""
+
+    def __init__(self, adapter: Any, mode: str) -> None:
+        self.adapter = adapter
+        self.mode = mode
+        self.count = len(adapter.load_metadata())
+
+    def __len__(self) -> int:
+        return self.count
+
+    def __getitem__(self, index: int) -> tuple[np.ndarray, np.ndarray]:
+        sample = self.adapter.load_sample(index)
+        return (
+            _image(sample, self.mode),
+            np.asarray(sample["metadata"]["label_vector"], dtype=np.int64),
+        )
+
+
 def compute_reben_train_contract(
     dataset: Any,
     *,
     mode: str,
     pixel_stride: int,
+    num_workers: int = 0,
+    persistent_workers: bool = True,
+    prefetch_factor: int = 2,
 ) -> dict[str, Any]:
     """Compute deterministic train-only moments and label prevalence."""
 
@@ -664,24 +715,62 @@ def compute_reben_train_contract(
     count = len(dataset.load_metadata())
     if count <= 0:
         raise RebenResNet50CampaignError("reBEN train split is empty.")
-    for index in range(count):
-        sample = dataset.load_sample(index)
-        image = _image(sample, mode)[:, ::pixel_stride, ::pixel_stride].astype(np.float64)
-        flat = image.reshape(channels, -1)
-        finite = np.all(np.isfinite(flat), axis=0)
-        if not np.any(finite):
-            raise RebenResNet50CampaignError(f"No finite pixels for train row {index}.")
-        selected = flat[:, finite]
-        total += selected.sum(axis=1)
-        square += np.square(selected).sum(axis=1)
-        pixel_count += selected.shape[1]
-        labels = np.asarray(sample["metadata"]["label_vector"], dtype=np.int64)
-        positives += labels
-        if (index + 1) % 5000 == 0:
-            print(
-                f"[reben:resnet50:preflight] mode={mode} samples={index + 1}/{count}",
-                flush=True,
+    loader: Any | None = None
+    if num_workers > 0:
+        torch = _require_torch()
+        loader = torch.utils.data.DataLoader(
+            _PreflightSampleDataset(dataset, mode),
+            batch_size=None,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=False,
+            persistent_workers=bool(persistent_workers),
+            prefetch_factor=prefetch_factor,
+        )
+        samples = iter(loader)
+    else:
+        def serial_samples() -> Any:
+            for sample_index in range(count):
+                sample = dataset.load_sample(sample_index)
+                yield (
+                    _image(sample, mode),
+                    np.asarray(
+                        sample["metadata"]["label_vector"],
+                        dtype=np.int64,
+                    ),
+                )
+
+        samples = serial_samples()
+    try:
+        for index, (raw_image, raw_labels) in enumerate(samples):
+            if hasattr(raw_image, "detach"):
+                raw_image = raw_image.detach().cpu().numpy()
+            if hasattr(raw_labels, "detach"):
+                raw_labels = raw_labels.detach().cpu().numpy()
+            image = np.asarray(raw_image)[:, ::pixel_stride, ::pixel_stride].astype(
+                np.float64
             )
+            flat = image.reshape(channels, -1)
+            finite = np.all(np.isfinite(flat), axis=0)
+            if not np.any(finite):
+                raise RebenResNet50CampaignError(
+                    f"No finite pixels for train row {index}."
+                )
+            selected = flat[:, finite]
+            total += selected.sum(axis=1)
+            square += np.square(selected).sum(axis=1)
+            pixel_count += selected.shape[1]
+            labels = np.asarray(raw_labels, dtype=np.int64)
+            positives += labels
+            if (index + 1) % 5000 == 0:
+                print(
+                    f"[reben:resnet50:preflight] mode={mode} "
+                    f"samples={index + 1}/{count}",
+                    flush=True,
+                )
+    finally:
+        if loader is not None:
+            _shutdown_loader(loader)
     mean = total / pixel_count
     variance = np.maximum(square / pixel_count - np.square(mean), 1e-12)
     negatives = count - positives
@@ -700,11 +789,153 @@ def compute_reben_train_contract(
         "positive_count": positives.tolist(),
         "negative_count": negatives.tolist(),
         "pos_weight": pos_weight.tolist(),
+        "preflight_data_loading": {
+            "num_workers": int(num_workers),
+            "persistent_workers": bool(
+                persistent_workers and num_workers > 0
+            ),
+            "prefetch_factor": (
+                int(prefetch_factor) if num_workers > 0 else None
+            ),
+            "ordered_main_process_aggregation": True,
+        },
     }
     diagnostic_sampling = getattr(dataset, "diagnostic_sampling", None)
     if diagnostic_sampling is not None:
         contract["diagnostic_sampling"] = dict(diagnostic_sampling)
     return contract
+
+
+def _preflight_cache_payload(
+    config: RebenResNet50Config,
+    dataset: Any,
+    *,
+    mode: str,
+) -> dict[str, Any]:
+    _, lmdb_path, _ = resolve_reben_root_dir(config.lmdb_root)
+    rows = dataset.load_metadata()
+    sample_digest = hashlib.sha256()
+    for row in rows:
+        sample_digest.update(str(row.get("sample_id", "")).encode("utf-8"))
+        sample_digest.update(b"\0")
+    sampling = getattr(dataset, "diagnostic_sampling", None)
+    payload = {
+        "schema": "geobwer.reben.supervised_preflight_cache.v2",
+        "lmdb_identity": reben_lmdb_identity(lmdb_path),
+        "metadata_parquet_sha256": file_sha256(config.metadata_parquet),
+        "metadata_snow_cloud_parquet_sha256": (
+            file_sha256(config.metadata_snow_cloud_parquet)
+            if config.metadata_snow_cloud_parquet is not None
+            else ""
+        ),
+        "sensor_mode": mode,
+        "channel_count": MODE_CHANNELS[mode],
+        "channel_profile": "croma_raw_bands",
+        "selection_split": "official_train",
+        "sample_count": len(rows),
+        "sample_id_sha256": sample_digest.hexdigest(),
+        "normalization_contract": {
+            "algorithm": "per_channel_train_moments",
+            "pixel_stride": int(config.normalization_pixel_stride),
+            "finite_policy": "joint_channel_finite_pixels",
+            "variance_floor": 1e-12,
+        },
+        "diagnostic_sample_id_sha256": (
+            sampling.get("selected_sample_id_sha256")
+            if isinstance(sampling, Mapping)
+            else None
+        ),
+    }
+    payload["cache_key"] = _json_signature(payload)
+    return payload
+
+
+def _train_contract_science_matches(
+    contract: Mapping[str, Any],
+    expected: Mapping[str, Any],
+) -> bool:
+    return bool(
+        contract.get("selection_split") == "official_train"
+        and contract.get("test_rows_used") is False
+        and contract.get("sensor_mode") == expected.get("sensor_mode")
+        and contract.get("channel_profile") == "croma_raw_bands"
+        and int(contract.get("sample_count", -1))
+        == int(expected.get("sample_count", -2))
+        and int(contract.get("normalization_pixel_stride", -1))
+        == int(expected["normalization_contract"]["pixel_stride"])
+        and len(contract.get("mean", []))
+        == int(expected.get("channel_count", -1))
+        and len(contract.get("std", []))
+        == int(expected.get("channel_count", -1))
+        and len(contract.get("pos_weight", [])) == 19
+    )
+
+
+def load_or_compute_reben_train_contract(
+    config: RebenResNet50Config,
+    dataset: Any,
+    *,
+    mode: str,
+    contract_path: Path,
+) -> tuple[dict[str, Any], str]:
+    """Load a keyed mode contract or recompute when its input identity changes."""
+
+    expected = _preflight_cache_payload(config, dataset, mode=mode)
+    existing: dict[str, Any] | None = None
+    if contract_path.is_file():
+        existing = json.loads(contract_path.read_text(encoding="utf-8"))
+        cached = existing.get("preflight_cache", {})
+        if (
+            _train_contract_science_matches(existing, expected)
+            and cached.get("cache_key") == expected["cache_key"]
+        ):
+            return existing, "cache_hit"
+
+        # v0.4.3 contracts predate keyed preflight caching. They can be
+        # attested without another 155 GB scan only when their full scientific
+        # shape matches and neither LMDB nor metadata is newer than the
+        # contract. A changed input never takes this migration path.
+        if (
+            not cached
+            and _train_contract_science_matches(existing, expected)
+            and contract_path.stat().st_mtime_ns
+            >= int(expected["lmdb_identity"]["data_file_mtime_ns"])
+            and contract_path.stat().st_mtime_ns
+            >= config.metadata_parquet.stat().st_mtime_ns
+        ):
+            existing["preflight_cache"] = {
+                **expected,
+                "provenance": "attested_v0.4.3_contract_inputs_not_newer",
+            }
+            contract_path.write_text(
+                json.dumps(existing, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            return existing, "legacy_cache_attested"
+
+    contract = compute_reben_train_contract(
+        dataset,
+        mode=mode,
+        pixel_stride=config.normalization_pixel_stride,
+        num_workers=config.num_workers,
+        persistent_workers=config.persistent_workers,
+        prefetch_factor=config.prefetch_factor,
+    )
+    contract["preflight_cache"] = {
+        **expected,
+        "provenance": (
+            "recomputed_after_cache_mismatch"
+            if existing is not None
+            else "computed"
+        ),
+    }
+    contract_path.write_text(
+        json.dumps(contract, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return contract, (
+        "cache_mismatch_recomputed" if existing is not None else "cache_created"
+    )
 
 
 class _TorchDataset:
@@ -747,15 +978,33 @@ def _loader(
     torch = _require_torch()
     generator = torch.Generator()
     generator.manual_seed(seed)
+    kwargs: dict[str, Any] = {
+        "batch_size": config.batch_size,
+        "shuffle": shuffle,
+        "num_workers": config.num_workers,
+        "pin_memory": config.pin_memory,
+        "persistent_workers": bool(
+            config.persistent_workers and config.num_workers > 0
+        ),
+        "generator": generator,
+    }
+    if config.num_workers > 0:
+        kwargs["prefetch_factor"] = config.prefetch_factor
     return torch.utils.data.DataLoader(
         dataset,
-        batch_size=config.batch_size,
-        shuffle=shuffle,
-        num_workers=config.num_workers,
-        pin_memory=True,
-        persistent_workers=bool(config.num_workers > 0),
-        generator=generator,
+        **kwargs,
     )
+
+
+def _shutdown_loader(loader: Any) -> None:
+    """Release persistent worker processes before starting the next stage."""
+
+    iterator = getattr(loader, "_iterator", None)
+    shutdown = getattr(iterator, "_shutdown_workers", None)
+    if callable(shutdown):
+        shutdown()
+    if hasattr(loader, "_iterator"):
+        loader._iterator = None
 
 
 def _device(value: str) -> Any:
@@ -774,6 +1023,7 @@ def _evaluate(
     device: Any,
     *,
     pos_weight: Any | None = None,
+    non_blocking: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, float]:
     torch = _require_torch()
     model.eval()
@@ -783,8 +1033,8 @@ def _evaluate(
     counts: list[int] = []
     with torch.inference_mode():
         for images, labels, _indices in loader:
-            images = images.to(device, non_blocking=True)
-            labels_device = labels.to(device, non_blocking=True)
+            images = images.to(device, non_blocking=non_blocking)
+            labels_device = labels.to(device, non_blocking=non_blocking)
             logits = model(images)
             loss = torch.nn.functional.binary_cross_entropy_with_logits(
                 logits, labels_device, pos_weight=pos_weight
@@ -872,8 +1122,12 @@ def _train_seed(
         losses: list[float] = []
         counts: list[int] = []
         for images, labels, _indices in train_loader:
-            images = images.to(device, non_blocking=True)
-            labels = labels.to(device, non_blocking=True)
+            images = images.to(
+                device, non_blocking=config.host_to_device_non_blocking
+            )
+            labels = labels.to(
+                device, non_blocking=config.host_to_device_non_blocking
+            )
             optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=use_amp):
                 loss = torch.nn.functional.binary_cross_entropy_with_logits(
@@ -885,7 +1139,11 @@ def _train_seed(
             losses.append(float(loss.detach().cpu()))
             counts.append(int(images.shape[0]))
         _, _, selection_loss = _evaluate(
-            model, selection_loader, device, pos_weight=pos_weight
+            model,
+            selection_loader,
+            device,
+            pos_weight=pos_weight,
+            non_blocking=config.host_to_device_non_blocking,
         )
         history.append(
             {
@@ -909,6 +1167,8 @@ def _train_seed(
             no_improvement += 1
         if no_improvement >= config.patience:
             break
+    _shutdown_loader(train_loader)
+    _shutdown_loader(selection_loader)
     if best_state is None:
         raise RebenResNet50CampaignError("No finite reBEN validation checkpoint was selected.")
     # Refit on the complete official train split for the selected epoch count.
@@ -935,8 +1195,12 @@ def _train_seed(
         losses: list[float] = []
         counts: list[int] = []
         for images, labels, _indices in full_train_loader:
-            images = images.to(device, non_blocking=True)
-            labels = labels.to(device, non_blocking=True)
+            images = images.to(
+                device, non_blocking=config.host_to_device_non_blocking
+            )
+            labels = labels.to(
+                device, non_blocking=config.host_to_device_non_blocking
+            )
             optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=use_amp):
                 loss = torch.nn.functional.binary_cross_entropy_with_logits(
@@ -955,6 +1219,7 @@ def _train_seed(
                 ),
             }
         )
+    _shutdown_loader(full_train_loader)
     best_state = copy.deepcopy(model.state_dict())
     output_dir.mkdir(parents=True, exist_ok=True)
     checkpoint = output_dir / "resnet50.pt"
@@ -991,6 +1256,7 @@ def _train_seed(
             _loader(datasets[split], config, shuffle=False, seed=seed),
             device,
             pos_weight=pos_weight,
+            non_blocking=config.host_to_device_non_blocking,
         )
         inference_seconds[split] = time.perf_counter() - inference_started
         outputs[split] = {
@@ -1152,6 +1418,7 @@ def _formalize_seed(
                 "uncertainty": {key: str(value) for key, value in uncertainty.items()},
                 "metrics": summary,
                 "training_history": fit["history"],
+                "data_loading": _data_loading_config(config),
                 "stage_timings": {
                     **dict(fit.get("stage_timings", {})),
                     "audit_seconds": audit_seconds,
@@ -1280,51 +1547,17 @@ def run_reben_resnet50_campaign(config: RebenResNet50Config) -> dict[str, Any]:
             continue
         contract_path = output / "train_contracts" / f"{_mode_slug(mode)}.json"
         contract_path.parent.mkdir(parents=True, exist_ok=True)
-        if contract_path.exists():
-            contract = json.loads(contract_path.read_text(encoding="utf-8"))
-            invalid_contract = (
-                contract.get("selection_split") != "official_train"
-                or contract.get("test_rows_used") is not False
-            )
-            expected_sampling = getattr(adapters["train"], "diagnostic_sampling", None)
-            sampling_matches = (
-                expected_sampling is None
-                or (
-                    contract.get("diagnostic_sampling", {}).get(
-                        "selected_sample_id_sha256"
-                    )
-                    == expected_sampling.get("selected_sample_id_sha256")
-                    and int(contract.get("sample_count", -1))
-                    == len(adapters["train"].load_metadata())
-                )
-            )
-            if invalid_contract:
-                raise RebenResNet50CampaignError(
-                    f"Invalid cached train contract: {contract_path}"
-                )
-            if not sampling_matches:
-                contract = compute_reben_train_contract(
-                    adapters["train"],
-                    mode=mode,
-                    pixel_stride=config.normalization_pixel_stride,
-                )
-                contract_path.write_text(
-                    json.dumps(contract, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-        else:
-            contract = compute_reben_train_contract(
-                adapters["train"],
-                mode=mode,
-                pixel_stride=config.normalization_pixel_stride,
-            )
-            contract_path.write_text(
-                json.dumps(contract, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
+        contract, preflight_cache_status = load_or_compute_reben_train_contract(
+            config,
+            adapters["train"],
+            mode=mode,
+            contract_path=contract_path,
+        )
         preflight_seconds = time.perf_counter() - preflight_started
         print(
             f"[reben:resnet50:timing] mode={mode} "
-            f"preflight_seconds={preflight_seconds:.3f}",
+            f"preflight_seconds={preflight_seconds:.3f} "
+            f"cache_status={preflight_cache_status}",
             flush=True,
         )
         for seed in pending_seeds:
@@ -1340,6 +1573,7 @@ def run_reben_resnet50_campaign(config: RebenResNet50Config) -> dict[str, Any]:
             )
             timings = {
                 "preflight_seconds": preflight_seconds,
+                "preflight_cache_status": preflight_cache_status,
                 **dict(fit.get("stage_timings", {})),
             }
             if config.diagnostic_max_samples is not None:
@@ -1393,6 +1627,7 @@ def run_reben_resnet50_campaign(config: RebenResNet50Config) -> dict[str, Any]:
                             "schema": "geobwer.reben.resnet50_stage_timings.v1",
                             "sensor_mode": mode,
                             "seed": seed,
+                            "data_loading": _data_loading_config(config),
                             **timings,
                             "persistent_sync_seconds": 0.0,
                         },
@@ -1456,6 +1691,7 @@ def run_reben_resnet50_campaign(config: RebenResNet50Config) -> dict[str, Any]:
                             "schema": "geobwer.reben.resnet50_stage_timings.v1",
                             "sensor_mode": mode,
                             "seed": seed,
+                            "data_loading": _data_loading_config(config),
                             **timings,
                         },
                         indent=2,
@@ -1478,6 +1714,7 @@ def run_reben_resnet50_campaign(config: RebenResNet50Config) -> dict[str, Any]:
                     + " ".join(
                         f"{key}={float(value):.3f}"
                         for key, value in timings.items()
+                        if isinstance(value, (int, float))
                     ),
                     flush=True,
                 )
@@ -1516,6 +1753,7 @@ __all__ = [
     "RebenResNet50CampaignError",
     "RebenResNet50Config",
     "compute_reben_train_contract",
+    "load_or_compute_reben_train_contract",
     "run_reben_resnet50_campaign",
     "select_reben_diagnostic_indices",
 ]

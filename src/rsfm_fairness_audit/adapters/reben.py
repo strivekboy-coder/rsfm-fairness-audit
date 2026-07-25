@@ -211,6 +211,36 @@ def detect_lmdb_payload_format(lmdb_path: str | Path) -> str:
     return detected
 
 
+def reben_lmdb_identity(lmdb_path: str | Path) -> dict[str, Any]:
+    """Return a fast, reproducible identity for a local read-only LMDB.
+
+    Hashing a 155 GB data.mdb before every resumed seed would defeat the
+    preflight cache.  The identity therefore combines the canonical path and
+    file metadata with LMDB's transaction/stat metadata.  Any replacement,
+    resize, or write transaction invalidates the cache without scanning image
+    payloads.
+    """
+
+    path = Path(lmdb_path).resolve()
+    data_file = path / "data.mdb" if path.is_dir() else path
+    if not data_file.is_file():
+        raise RebenDatasetError(f"LMDB data file does not exist: {data_file}")
+    file_stat = data_file.stat()
+    with _probe_lmdb_environment(path) as env:
+        info = dict(env.info())
+        stats = dict(env.stat())
+    return {
+        "schema": "geobwer.reben.lmdb_identity.v1",
+        "resolved_path": str(path),
+        "data_file_size": int(file_stat.st_size),
+        "data_file_mtime_ns": int(file_stat.st_mtime_ns),
+        "last_txnid": int(info.get("last_txnid", -1)),
+        "map_size": int(info.get("map_size", -1)),
+        "entries": int(stats.get("entries", -1)),
+        "page_size": int(stats.get("psize", -1)),
+    }
+
+
 def resolve_reben_root_dir(images_lmdb: str | Path) -> tuple[Path, Path, list[str]]:
     """Resolve ConfigILM root_dir and BigEarthNetEncoded.lmdb path.
 
@@ -399,8 +429,17 @@ class LmdbSafetensorsRebenDatasetAdapter(DatasetAdapter):
         self.root_resolution_notes = notes
         self._rows: list[dict[str, Any]] | None = None
         self._env: Any | None = None
+        self._env_pid: int | None = None
         if sensor_mode not in self.valid_sensor_modes:
             raise ValueError(f"sensor_mode must be one of {sorted(self.valid_sensor_modes)}, got {sensor_mode!r}.")
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Never pickle or spawn a worker with a live LMDB environment."""
+
+        state = dict(self.__dict__)
+        state["_env"] = None
+        state["_env_pid"] = None
+        return state
 
     def _metadata_rows(self) -> list[dict[str, Any]]:
         if self._rows is None:
@@ -408,10 +447,17 @@ class LmdbSafetensorsRebenDatasetAdapter(DatasetAdapter):
         return self._rows
 
     def _lmdb_env(self) -> Any:
-        if self._env is None:
+        current_pid = os.getpid()
+        # Under fork, the adapter object itself is inherited even though the
+        # process-level cache is reset by _reset_lmdb_state_after_fork().
+        # The PID guard prevents a child from retaining the parent's closed
+        # Environment and makes the first __getitem__ in each worker open its
+        # own read-only handle lazily.
+        if self._env is None or self._env_pid != current_pid:
             if not self.images_lmdb.exists():
                 raise RebenDatasetError(f"LMDB path does not exist: {self.images_lmdb}")
             self._env = _open_lmdb(self.images_lmdb)
+            self._env_pid = current_pid
         return self._env
 
     def load_metadata(self) -> list[dict[str, Any]]:

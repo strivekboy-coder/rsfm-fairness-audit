@@ -449,6 +449,47 @@ def test_lmdb_safetensors_adapter_reuses_env_cache(monkeypatch: pytest.MonkeyPat
     _close_lmdb_environments()
 
 
+def test_lmdb_adapter_reopens_lazily_after_worker_pid_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[tuple[int, object]] = []
+    pid = {"value": 100}
+
+    class _FakeEnv:
+        pass
+
+    def fake_open(_path: Path):
+        env = _FakeEnv()
+        opened.append((pid["value"], env))
+        return env
+
+    root = Path(".pytest_tmp/reben_worker_pid")
+    (root / "BigEarthNetEncoded.lmdb").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        "rsfm_fairness_audit.adapters.reben.os.getpid",
+        lambda: pid["value"],
+    )
+    monkeypatch.setattr(
+        "rsfm_fairness_audit.adapters.reben._open_lmdb",
+        fake_open,
+    )
+    adapter = LmdbSafetensorsRebenDatasetAdapter(
+        root,
+        "meta.parquet",
+        split="train",
+        sensor_mode="S1",
+    )
+    parent_env = adapter._lmdb_env()
+    assert adapter._lmdb_env() is parent_env
+    pid["value"] = 200
+    worker_env = adapter._lmdb_env()
+    assert worker_env is not parent_env
+    assert [value for value, _ in opened] == [100, 200]
+    state = adapter.__getstate__()
+    assert state["_env"] is None
+    assert state["_env_pid"] is None
+
+
 def test_real_lmdb_dataset_open_then_payload_detection_is_safe() -> None:
     lmdb = pytest.importorskip("lmdb")
     safetensors = pytest.importorskip("safetensors.numpy")

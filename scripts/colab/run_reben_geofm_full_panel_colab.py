@@ -73,6 +73,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--supervised-max-epochs", type=int, default=30)
     parser.add_argument("--supervised-patience", type=int, default=5)
     parser.add_argument("--supervised-batch-size", type=int, default=128)
+    parser.add_argument("--supervised-num-workers", type=int, default=4)
+    parser.add_argument(
+        "--supervised-pin-memory",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
+        "--supervised-persistent-workers",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument("--supervised-prefetch-factor", type=int, default=2)
+    parser.add_argument(
+        "--supervised-host-to-device-non-blocking",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     parser.add_argument("--supervised-learning-rate", type=float, default=3e-4)
     parser.add_argument("--supervised-weight-decay", type=float, default=1e-4)
     parser.add_argument("--supervised-pretrained-encoder", action="store_true")
@@ -237,6 +254,13 @@ def main() -> None:
             max_epochs=args.supervised_max_epochs,
             patience=args.supervised_patience,
             batch_size=args.supervised_batch_size,
+            num_workers=args.supervised_num_workers,
+            pin_memory=args.supervised_pin_memory,
+            persistent_workers=args.supervised_persistent_workers,
+            prefetch_factor=args.supervised_prefetch_factor,
+            host_to_device_non_blocking=(
+                args.supervised_host_to_device_non_blocking
+            ),
             learning_rate=args.supervised_learning_rate,
             weight_decay=args.supervised_weight_decay,
             pretrained_encoder=args.supervised_pretrained_encoder,

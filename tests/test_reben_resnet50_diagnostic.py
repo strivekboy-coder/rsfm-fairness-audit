@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Mapping
 
 import numpy as np
@@ -14,6 +16,7 @@ from rsfm_fairness_audit.formal_outputs import file_sha256
 from rsfm_fairness_audit.reben_resnet50_campaign import (
     RebenDiagnosticSupportError,
     RebenResNet50Config,
+    load_or_compute_reben_train_contract,
     run_reben_resnet50_campaign,
 )
 from rsfm_fairness_audit.reben_sensor_audit import default_reben_class_names
@@ -141,7 +144,13 @@ def test_three_route_campaign_writes_nonformal_diagnostic_manifests(
         adapter.base.sensor_mode = mode
         return adapter
 
-    def fake_contract(dataset: Any, *, mode: str, pixel_stride: int) -> dict[str, Any]:
+    def fake_contract(
+        dataset: Any,
+        *,
+        mode: str,
+        pixel_stride: int,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
         return {
             "schema": "test",
             "selection_split": "official_train",
@@ -200,6 +209,21 @@ def test_three_route_campaign_writes_nonformal_diagnostic_manifests(
 
     monkeypatch.setattr(campaign, "_dataset", fake_dataset)
     monkeypatch.setattr(campaign, "compute_reben_train_contract", fake_contract)
+    monkeypatch.setattr(
+        campaign,
+        "reben_lmdb_identity",
+        lambda _path: {
+            "schema": "test",
+            "resolved_path": "diagnostic",
+            "data_file_size": 1,
+            "data_file_mtime_ns": 1,
+            "last_txnid": 1,
+            "map_size": 1,
+            "entries": 96,
+            "page_size": 4096,
+        },
+    )
+    monkeypatch.setattr(campaign, "file_sha256", lambda _path: "test-sha")
     monkeypatch.setattr(campaign, "_train_seed", fake_train)
     monkeypatch.setattr(campaign, "persist_output", lambda *args, **kwargs: None)
     result = run_reben_resnet50_campaign(
@@ -404,6 +428,172 @@ def test_valid_completion_contract_skips_all_completed_seeds(
         "completion_contract" in artifacts
         for artifacts in result["runs"].values()
     )
+
+
+def test_operational_loader_settings_do_not_change_completion_signature(
+    tmp_path: Path,
+) -> None:
+    metadata = tmp_path / "metadata.parquet"
+    metadata.write_bytes(b"metadata")
+    protocol = BWERProtocol.from_mapping(
+        load_yaml(Path("configs/geobwer/reben.yaml"))
+    )
+    base = RebenResNet50Config(
+        lmdb_root=tmp_path / "lmdb",
+        metadata_parquet=metadata,
+        output_dir=tmp_path / "out",
+        sensor_modes=("S2",),
+        seeds=(42, 73, 101),
+        num_workers=0,
+        pin_memory=False,
+        persistent_workers=False,
+        prefetch_factor=1,
+        host_to_device_non_blocking=False,
+    )
+    tuned = replace(
+        base,
+        num_workers=8,
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=4,
+        host_to_device_non_blocking=True,
+    )
+    base_payload = campaign._completion_config_payload(
+        base, mode="S2", seed=42, protocol=protocol
+    )
+    tuned_payload = campaign._completion_config_payload(
+        tuned, mode="S2", seed=42, protocol=protocol
+    )
+    assert base_payload == tuned_payload
+    assert campaign._json_signature(base_payload) == campaign._json_signature(
+        tuned_payload
+    )
+
+
+def test_loader_applies_operational_worker_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: list[dict[str, Any]] = []
+
+    class _Generator:
+        def manual_seed(self, _seed: int) -> None:
+            pass
+
+    def fake_loader(_dataset: Any, **kwargs: Any) -> dict[str, Any]:
+        captured.append(dict(kwargs))
+        return dict(kwargs)
+
+    fake_torch = SimpleNamespace(
+        Generator=_Generator,
+        utils=SimpleNamespace(data=SimpleNamespace(DataLoader=fake_loader)),
+    )
+    monkeypatch.setattr(campaign, "_require_torch", lambda: fake_torch)
+    config = RebenResNet50Config(
+        lmdb_root=tmp_path / "lmdb",
+        metadata_parquet=tmp_path / "metadata.parquet",
+        output_dir=tmp_path / "out",
+        sensor_modes=("S2",),
+        seeds=(42, 73, 101),
+        num_workers=4,
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=3,
+    )
+    campaign._loader(object(), config, shuffle=False, seed=42)
+    assert captured[-1]["num_workers"] == 4
+    assert captured[-1]["pin_memory"] is True
+    assert captured[-1]["persistent_workers"] is True
+    assert captured[-1]["prefetch_factor"] == 3
+
+    campaign._loader(
+        object(),
+        replace(config, num_workers=0),
+        shuffle=False,
+        seed=42,
+    )
+    assert captured[-1]["persistent_workers"] is False
+    assert "prefetch_factor" not in captured[-1]
+
+
+def test_preflight_cache_hits_and_identity_mismatch_recomputes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    metadata = tmp_path / "metadata.parquet"
+    metadata.write_bytes(b"metadata")
+    lmdb = tmp_path / "lmdb"
+    lmdb.mkdir()
+    config = RebenResNet50Config(
+        lmdb_root=lmdb,
+        metadata_parquet=metadata,
+        output_dir=tmp_path / "out",
+        sensor_modes=("S2",),
+        seeds=(42, 73, 101),
+    )
+    dataset = _FakeRawAdapter(
+        lmdb,
+        metadata,
+        None,
+        split="train",
+        sensor_mode="S2",
+        max_samples=None,
+        channel_profile="croma",
+    )
+    identity = {
+        "schema": "test",
+        "resolved_path": str(lmdb),
+        "data_file_size": 1,
+        "data_file_mtime_ns": 1,
+        "last_txnid": 1,
+        "map_size": 1,
+        "entries": 96,
+        "page_size": 4096,
+    }
+    monkeypatch.setattr(campaign, "reben_lmdb_identity", lambda _path: dict(identity))
+    monkeypatch.setattr(campaign, "file_sha256", lambda _path: "metadata-sha")
+    calls = {"count": 0}
+
+    def fake_compute(
+        _dataset,
+        *,
+        mode: str,
+        pixel_stride: int,
+        **_kwargs: Any,
+    ):
+        calls["count"] += 1
+        return {
+            "schema": "test",
+            "selection_split": "official_train",
+            "test_rows_used": False,
+            "sensor_mode": mode,
+            "channel_profile": "croma_raw_bands",
+            "sample_count": 96,
+            "normalization_pixel_stride": pixel_stride,
+            "mean": [0.0] * 12,
+            "std": [1.0] * 12,
+            "pos_weight": [1.0] * 19,
+        }
+
+    monkeypatch.setattr(campaign, "compute_reben_train_contract", fake_compute)
+    path = tmp_path / "s2.json"
+    first, first_status = load_or_compute_reben_train_contract(
+        config, dataset, mode="S2", contract_path=path
+    )
+    second, second_status = load_or_compute_reben_train_contract(
+        config, dataset, mode="S2", contract_path=path
+    )
+    assert first_status == "cache_created"
+    assert second_status == "cache_hit"
+    assert first["preflight_cache"]["cache_key"] == second["preflight_cache"]["cache_key"]
+    assert calls["count"] == 1
+
+    identity["last_txnid"] = 2
+    _, mismatch_status = load_or_compute_reben_train_contract(
+        config, dataset, mode="S2", contract_path=path
+    )
+    assert mismatch_status == "cache_mismatch_recomputed"
+    assert calls["count"] == 2
 
 
 def test_missing_or_mismatched_completion_contract_is_not_accepted(

@@ -42,7 +42,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-epochs", type=int, default=30)
     parser.add_argument("--patience", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=128)
-    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument(
+        "--pin-memory",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
+        "--persistent-workers",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument("--prefetch-factor", type=int, default=2)
+    parser.add_argument(
+        "--host-to-device-non-blocking",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--device", default="auto")
@@ -68,6 +84,10 @@ def main() -> None:
             patience=args.patience,
             batch_size=args.batch_size,
             num_workers=args.num_workers,
+            pin_memory=args.pin_memory,
+            persistent_workers=args.persistent_workers,
+            prefetch_factor=args.prefetch_factor,
+            host_to_device_non_blocking=args.host_to_device_non_blocking,
             learning_rate=args.learning_rate,
             weight_decay=args.weight_decay,
             pretrained_encoder=args.pretrained_encoder,
