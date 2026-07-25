@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import hashlib
+from pathlib import Path
 import time
 from typing import Any, Mapping, Sequence
 
@@ -42,6 +43,7 @@ def benchmark_reben_loader_workers(
     checksum_batches: int = 100,
     warmup_batches: int = 5,
     seed: int = 42,
+    reference_checkpoint: str | Path | None = None,
 ) -> dict[str, Any]:
     """Benchmark worker counts and certify that their input streams agree.
 
@@ -69,6 +71,55 @@ def benchmark_reben_loader_workers(
         in_channels=MODE_CHANNELS[mode],
         pretrained=False,
     ).to(device)
+    checkpoint_source = "deterministic_benchmark_reference"
+    checkpoint_path = (
+        Path(reference_checkpoint) if reference_checkpoint is not None else None
+    )
+    if checkpoint_path is not None and checkpoint_path.is_file():
+        try:
+            checkpoint_payload = torch.load(
+                checkpoint_path,
+                map_location="cpu",
+                weights_only=False,
+            )
+        except TypeError:  # pragma: no cover - older Colab torch
+            checkpoint_payload = torch.load(checkpoint_path, map_location="cpu")
+        state = (
+            checkpoint_payload.get("model_state_dict")
+            if isinstance(checkpoint_payload, Mapping)
+            else None
+        )
+        if not isinstance(state, Mapping):
+            raise RebenDataBenchmarkError(
+                f"Reference checkpoint has no model_state_dict: {checkpoint_path}"
+            )
+        model.load_state_dict(state, strict=True)
+        checkpoint_source = "existing_fixed_checkpoint"
+    elif checkpoint_path is not None:
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(
+            {
+                "schema": "geobwer.reben.loader_benchmark_reference.v1",
+                "formal_evidence": False,
+                "sensor_mode": mode,
+                "seed": seed,
+                "model_state_dict": model.state_dict(),
+            },
+            checkpoint_path,
+        )
+        try:
+            checkpoint_payload = torch.load(
+                checkpoint_path,
+                map_location="cpu",
+                weights_only=False,
+            )
+        except TypeError:  # pragma: no cover - older Colab torch
+            checkpoint_payload = torch.load(checkpoint_path, map_location="cpu")
+        model.load_state_dict(
+            checkpoint_payload["model_state_dict"],
+            strict=True,
+        )
+        checkpoint_source = "persisted_deterministic_benchmark_reference"
     model.eval()
     model_state_digest = hashlib.sha256()
     for name, tensor in model.state_dict().items():
@@ -265,6 +316,10 @@ def benchmark_reben_loader_workers(
         "sensor_mode": mode,
         "device": str(device),
         "model_state_sha256": model_state_digest.hexdigest(),
+        "reference_checkpoint": (
+            str(checkpoint_path) if checkpoint_path is not None else None
+        ),
+        "reference_checkpoint_source": checkpoint_source,
         "max_batches": max_batches,
         "checksum_batches": checksum_batches,
         "warmup_batches": warmup_batches,

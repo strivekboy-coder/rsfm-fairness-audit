@@ -100,6 +100,10 @@ def main() -> None:
             worker_counts=args.workers,
             max_batches=args.batches,
             checksum_batches=args.checksum_batches,
+            reference_checkpoint=(
+                args.output.parent
+                / f"{args.output.stem}_{_mode_slug(mode)}_reference.pt"
+            ),
         )
         report["normalization_source"] = source
         reports.append(report)
