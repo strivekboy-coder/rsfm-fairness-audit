@@ -12,6 +12,7 @@ from rsfm_fairness_audit.io import read_csv_rows
 
 
 GEOGRAPHY_CONTRACT_SCHEMA = "geobwer.fmow.geography_contract.v1"
+FMOW_REMAP_AUDIT_EXPECTED_ROWS = 720
 DEFAULT_CODE_POLICY = (
     Path(__file__).resolve().parents[2]
     / "configs"
@@ -149,6 +150,316 @@ def _country_inventory(
     return sorted(counts.values(), key=lambda item: item["value"]), errors
 
 
+def _distribution(
+    rows: Sequence[Mapping[str, Any]],
+    field: str,
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        value = str(row.get(field) or "").strip() or "<missing>"
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _truthy(value: Any) -> bool:
+    return str(value or "").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+        "mapped",
+        "remapped",
+    }
+
+
+def _country_region_map_contract(
+    mapping_path: Path,
+    metadata_rows: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], list[str]]:
+    country_map, mapping_warnings = read_country_region_map(mapping_path)
+    errors: list[str] = []
+    if not country_map:
+        errors.append(
+            "mapping artifact has no readable country-to-geography records."
+        )
+    mapped_metadata_rows = 0
+    conflicts: list[dict[str, str]] = []
+    for row in metadata_rows:
+        country = str(row.get("country") or "").strip()
+        mapped = country_map.get(country.casefold())
+        if mapped is None:
+            continue
+        mapped_metadata_rows += 1
+        for field in ("continent", "un_region", "region"):
+            expected = str(mapped.get(field) or "").strip()
+            observed = str(row.get(field) or "").strip()
+            if expected and observed and expected != observed:
+                conflicts.append(
+                    {
+                        "type": "field_conflict",
+                        "sample_id": str(row.get("sample_id") or ""),
+                        "country": country,
+                        "field": field,
+                        "metadata_value": observed,
+                        "mapping_value": expected,
+                    }
+                )
+    if conflicts:
+        errors.append(
+            f"{len(conflicts)} metadata geography values conflict "
+            "with the mapping artifact."
+        )
+    return (
+        {
+            "mapping_artifact_type": "country_region_map",
+            "country_record_count": len(country_map),
+            "mapped_metadata_rows": mapped_metadata_rows,
+            "unmapped_metadata_rows": len(metadata_rows)
+            - mapped_metadata_rows,
+            "warnings": mapping_warnings,
+            "conflicts": conflicts,
+            "conflict_count": len(conflicts),
+        },
+        errors,
+    )
+
+
+def _sample_assignment_audit_contract(
+    audit_rows: Sequence[Mapping[str, Any]],
+    metadata_rows: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], list[str]]:
+    errors: list[str] = []
+    conflicts: list[dict[str, Any]] = []
+    required_fields = (
+        "sample_id",
+        "original_country",
+        "mapped_country",
+        "mapped_continent",
+        "mapped_un_region",
+        "mapped_region",
+        "mapping_source",
+    )
+    if len(audit_rows) != FMOW_REMAP_AUDIT_EXPECTED_ROWS:
+        errors.append(
+            "sample_assignment_audit must contain exactly "
+            f"{FMOW_REMAP_AUDIT_EXPECTED_ROWS} rows; observed={len(audit_rows)}."
+        )
+
+    metadata_by_id: dict[str, Mapping[str, Any]] = {}
+    metadata_duplicate_ids: set[str] = set()
+    for row in metadata_rows:
+        sample_id = str(row.get("sample_id") or "").strip()
+        if sample_id in metadata_by_id:
+            metadata_duplicate_ids.add(sample_id)
+        elif sample_id:
+            metadata_by_id[sample_id] = row
+    for sample_id in sorted(metadata_duplicate_ids):
+        conflicts.append(
+            {
+                "type": "metadata_duplicate_sample_id",
+                "sample_id": sample_id,
+            }
+        )
+
+    audit_by_id: dict[str, Mapping[str, Any]] = {}
+    duplicate_ids: set[str] = set()
+    for index, row in enumerate(audit_rows, start=2):
+        for field in required_fields:
+            if not str(row.get(field) or "").strip():
+                conflicts.append(
+                    {
+                        "type": "missing_required_field",
+                        "row": index,
+                        "sample_id": str(row.get("sample_id") or ""),
+                        "field": field,
+                    }
+                )
+        sample_id = str(row.get("sample_id") or "").strip()
+        if not sample_id:
+            continue
+        if sample_id in audit_by_id:
+            duplicate_ids.add(sample_id)
+        else:
+            audit_by_id[sample_id] = row
+    for sample_id in sorted(duplicate_ids):
+        conflicts.append(
+            {
+                "type": "duplicate_audit_sample_id",
+                "sample_id": sample_id,
+            }
+        )
+
+    matched_ids: set[str] = set()
+    field_pairs = (
+        ("mapped_country", "country"),
+        ("mapped_continent", "continent"),
+        ("mapped_un_region", "un_region"),
+        ("mapped_region", "region"),
+    )
+    audit_columns = set(audit_rows[0]) if audit_rows else set()
+    for sample_id, audit_row in audit_by_id.items():
+        metadata_row = metadata_by_id.get(sample_id)
+        if metadata_row is None:
+            conflicts.append(
+                {
+                    "type": "audit_sample_absent_from_metadata",
+                    "sample_id": sample_id,
+                }
+            )
+            continue
+        matched_ids.add(sample_id)
+        for audit_field, metadata_field in field_pairs:
+            audit_value = str(audit_row.get(audit_field) or "").strip()
+            metadata_value = str(metadata_row.get(metadata_field) or "").strip()
+            if audit_value != metadata_value:
+                conflicts.append(
+                    {
+                        "type": "field_conflict",
+                        "sample_id": sample_id,
+                        "audit_field": audit_field,
+                        "metadata_field": metadata_field,
+                        "audit_value": audit_value,
+                        "metadata_value": metadata_value,
+                    }
+                )
+        for field in ("split", "site_id"):
+            if field not in audit_columns:
+                continue
+            audit_value = str(audit_row.get(field) or "").strip()
+            metadata_value = str(metadata_row.get(field) or "").strip()
+            if not audit_value:
+                conflicts.append(
+                    {
+                        "type": "missing_optional_contract_field_value",
+                        "sample_id": sample_id,
+                        "field": field,
+                    }
+                )
+            elif audit_value != metadata_value:
+                conflicts.append(
+                    {
+                        "type": "field_conflict",
+                        "sample_id": sample_id,
+                        "audit_field": field,
+                        "metadata_field": field,
+                        "audit_value": audit_value,
+                        "metadata_value": metadata_value,
+                    }
+                )
+
+    marker_field = next(
+        (
+            field
+            for field in ("geography_remapped", "mapping_applied", "remapped")
+            if any(field in row for row in metadata_rows)
+        ),
+        None,
+    )
+    if marker_field is None:
+        target_ids = set(audit_by_id)
+        target_scope_rule = (
+            "sample_assignment_audit sample_ids define the remapped target "
+            "population; metadata rows outside this set are not required."
+        )
+    else:
+        target_ids = {
+            str(row.get("sample_id") or "").strip()
+            for row in metadata_rows
+            if _truthy(row.get(marker_field))
+        }
+        target_scope_rule = (
+            f"metadata field {marker_field!r} defines the remapped target "
+            "population; all marked rows must occur in the audit."
+        )
+        for sample_id in sorted(target_ids - set(audit_by_id)):
+            conflicts.append(
+                {
+                    "type": "metadata_target_missing_from_audit",
+                    "sample_id": sample_id,
+                    "marker_field": marker_field,
+                }
+            )
+        for sample_id in sorted(set(audit_by_id) - target_ids):
+            conflicts.append(
+                {
+                    "type": "audit_sample_not_marked_as_target",
+                    "sample_id": sample_id,
+                    "marker_field": marker_field,
+                }
+            )
+
+    nearest_distances: list[float] = []
+    for index, row in enumerate(audit_rows, start=2):
+        raw = str(row.get("nearest_boundary_distance_km") or "").strip()
+        if not raw:
+            continue
+        try:
+            nearest_distances.append(float(raw))
+        except ValueError:
+            conflicts.append(
+                {
+                    "type": "invalid_nearest_boundary_distance",
+                    "row": index,
+                    "sample_id": str(row.get("sample_id") or ""),
+                    "value": raw,
+                }
+            )
+
+    if duplicate_ids:
+        errors.append(
+            f"sample_assignment_audit contains {len(duplicate_ids)} duplicate "
+            "sample_id values."
+        )
+    if metadata_duplicate_ids:
+        errors.append(
+            f"final metadata contains {len(metadata_duplicate_ids)} duplicate "
+            "sample_id values."
+        )
+    if conflicts:
+        errors.append(
+            f"sample_assignment_audit has {len(conflicts)} validation conflicts."
+        )
+    audit_ids = set(audit_by_id)
+    return (
+        {
+            "mapping_artifact_type": "sample_assignment_audit",
+            "audit_row_count": len(audit_rows),
+            "expected_audit_row_count": FMOW_REMAP_AUDIT_EXPECTED_ROWS,
+            "unique_sample_count": len(audit_ids),
+            "matched_sample_count": len(matched_ids),
+            "conflict_count": len(conflicts),
+            "conflicts": conflicts,
+            "original_country_distribution": _distribution(
+                audit_rows, "original_country"
+            ),
+            "mapped_country_distribution": _distribution(
+                audit_rows, "mapped_country"
+            ),
+            "mapping_source_distribution": _distribution(
+                audit_rows, "mapping_source"
+            ),
+            "nearest_boundary_rows": len(nearest_distances),
+            "nearest_boundary_max_distance_km": (
+                max(nearest_distances) if nearest_distances else None
+            ),
+            "target_scope_rule": target_scope_rule,
+            "metadata_target_marker_field": marker_field,
+            "metadata_target_sample_count": len(target_ids),
+            "metadata_target_missing_from_audit_count": len(
+                target_ids - audit_ids
+            ),
+            "metadata_target_missing_from_audit": sorted(
+                target_ids - audit_ids
+            ),
+            "metadata_rows_outside_audit_count": len(metadata_rows)
+            - len(matched_ids),
+            "metadata_rows_outside_audit_are_required": False,
+            "rows_dropped": 0,
+        },
+        errors,
+    )
+
+
 def build_fmow_geography_contract(
     metadata_csv: str | Path,
     mapping_artifact: str | Path,
@@ -205,37 +516,19 @@ def build_fmow_geography_contract(
         )
     inventory, country_errors = _country_inventory(rows, policy)
     errors.extend(country_errors)
-    country_map, mapping_warnings = read_country_region_map(mapping_path)
-    if not country_map:
-        errors.append(
-            "mapping artifact has no readable country-to-geography records."
+    mapping_rows = read_csv_rows(mapping_path)
+    mapping_columns = set(mapping_rows[0]) if mapping_rows else set()
+    if {"sample_id", "mapped_country"}.issubset(mapping_columns):
+        mapping_details, mapping_errors = _sample_assignment_audit_contract(
+            mapping_rows,
+            rows,
         )
-    mapped_metadata_rows = 0
-    mapping_conflicts: list[dict[str, str]] = []
-    for row in rows:
-        country = str(row.get("country") or "").strip()
-        mapped = country_map.get(country.casefold())
-        if mapped is None:
-            continue
-        mapped_metadata_rows += 1
-        for field in ("continent", "un_region", "region"):
-            expected = str(mapped.get(field) or "").strip()
-            observed = str(row.get(field) or "").strip()
-            if expected and observed and expected != observed:
-                mapping_conflicts.append(
-                    {
-                        "sample_id": str(row.get("sample_id") or ""),
-                        "country": country,
-                        "field": field,
-                        "metadata_value": observed,
-                        "mapping_value": expected,
-                    }
-                )
-    if mapping_conflicts:
-        errors.append(
-            f"{len(mapping_conflicts)} metadata geography values conflict "
-            "with the mapping artifact."
+    else:
+        mapping_details, mapping_errors = _country_region_map_contract(
+            mapping_path,
+            rows,
         )
+    errors.extend(mapping_errors)
 
     by_split: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
@@ -274,12 +567,9 @@ def build_fmow_geography_contract(
             "filename": mapping_path.name,
             "sha256": file_sha256(mapping_path),
             "source": source,
-            "country_record_count": len(country_map),
-            "mapped_metadata_rows": mapped_metadata_rows,
-            "unmapped_metadata_rows": len(rows) - mapped_metadata_rows,
-            "warnings": mapping_warnings,
-            "conflicts": mapping_conflicts,
+            **mapping_details,
         },
+        "mapping_artifact_type": mapping_details["mapping_artifact_type"],
         "country_code_policy": {
             "filename": policy_path.name,
             "sha256": file_sha256(policy_path),
@@ -295,6 +585,16 @@ def build_fmow_geography_contract(
         "assignment_hashes": assignment_hashes,
         "country_inventory": inventory,
         "geography_provenance_counts": provenance_counts,
+        "unresolved_country_row_count": sum(
+            int(item["count"])
+            for item in inventory
+            if item["classification"]
+            in {
+                "requires_explicit_resolution",
+                "invalid_placeholder",
+                "invalid_or_unrecognized_syntax",
+            }
+        ),
         "rows_dropped": 0,
         "metadata_modified": False,
     }

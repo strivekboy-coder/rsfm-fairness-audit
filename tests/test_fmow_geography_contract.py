@@ -156,6 +156,259 @@ def test_contract_rejects_mapping_metadata_conflict(tmp_path: Path) -> None:
     assert any("conflict" in error for error in contract["errors"])
 
 
+def _sample_assignment_rows(
+    *,
+    include_markers: bool = False,
+    extra_marked_target: bool = False,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    metadata_rows: list[dict[str, str]] = []
+    audit_rows: list[dict[str, str]] = []
+    for index in range(720):
+        sample_id = f"remapped-{index:04d}"
+        country = "USA" if index % 2 == 0 else "DEU"
+        continent = "North America" if country == "USA" else "Europe"
+        un_region = (
+            "Northern America" if country == "USA" else "Western Europe"
+        )
+        region = un_region
+        split = ("train", "calibration", "test")[index % 3]
+        site_id = f"site-{index:04d}"
+        metadata_row = {
+            "sample_id": sample_id,
+            "site_id": site_id,
+            "split": split,
+            "country": country,
+            "continent": continent,
+            "un_region": un_region,
+            "region": region,
+            "category": "airport",
+        }
+        if include_markers:
+            metadata_row["geography_remapped"] = "true"
+        metadata_rows.append(metadata_row)
+        nearest = index % 100 == 0
+        audit_rows.append(
+            {
+                "sample_id": sample_id,
+                "site_id": site_id,
+                "split": split,
+                "original_country": (
+                    "ambiguous_country" if index % 2 == 0 else "CA-"
+                ),
+                "mapped_country": country,
+                "mapped_continent": continent,
+                "mapped_un_region": un_region,
+                "mapped_region": region,
+                "mapping_source": (
+                    "nearest_boundary" if nearest else "natural_earth_polygon"
+                ),
+                "polygon_point_latitude": "40.0",
+                "polygon_point_longitude": "-75.0",
+                "nearest_boundary_distance_km": "12.5" if nearest else "",
+                "nearest_boundary_latitude": "40.1" if nearest else "",
+                "nearest_boundary_longitude": "-75.1" if nearest else "",
+                "natural_earth_admin": (
+                    "United States of America"
+                    if country == "USA"
+                    else "Germany"
+                ),
+                "natural_earth_geounit": (
+                    "United States of America"
+                    if country == "USA"
+                    else "Germany"
+                ),
+                "spatial_match_count": "0" if nearest else "1",
+            }
+        )
+    for index in range(3):
+        metadata_rows.append(
+            {
+                "sample_id": f"unchanged-{index}",
+                "site_id": f"unchanged-site-{index}",
+                "split": "test",
+                "country": "FRA",
+                "continent": "Europe",
+                "un_region": "Western Europe",
+                "region": "Western Europe",
+                "category": "airport",
+                **(
+                    {"geography_remapped": "false"}
+                    if include_markers
+                    else {}
+                ),
+            }
+        )
+    if extra_marked_target:
+        metadata_rows.append(
+            {
+                "sample_id": "marked-target-missing-from-audit",
+                "site_id": "marked-site",
+                "split": "test",
+                "country": "FRA",
+                "continent": "Europe",
+                "un_region": "Western Europe",
+                "region": "Western Europe",
+                "category": "airport",
+                "geography_remapped": "true",
+            }
+        )
+    return metadata_rows, audit_rows
+
+
+def _sample_assignment_contract(
+    tmp_path: Path,
+    *,
+    metadata_rows: list[dict[str, str]] | None = None,
+    audit_rows: list[dict[str, str]] | None = None,
+) -> tuple[Path, Path, dict]:
+    if metadata_rows is None or audit_rows is None:
+        metadata_rows, audit_rows = _sample_assignment_rows()
+    metadata = tmp_path / "metadata_sample_assignment.csv"
+    mapping = tmp_path / "sample_assignment_audit.csv"
+    write_csv(metadata, metadata_rows)
+    write_csv(mapping, audit_rows)
+    contract = build_fmow_geography_contract(
+        metadata,
+        mapping,
+        mapping_source_name="Natural Earth sample remap audit",
+        mapping_source_version="2026-07-25",
+        mapping_source_url="https://www.naturalearthdata.com/",
+    )
+    return metadata, mapping, contract
+
+
+def test_sample_assignment_audit_real_720_schema_is_strictly_validated(
+    tmp_path: Path,
+) -> None:
+    metadata, mapping, contract = _sample_assignment_contract(tmp_path)
+    details = contract["mapping_artifact"]
+    assert contract["formal_compatible"] is True
+    assert contract["mapping_artifact_type"] == "sample_assignment_audit"
+    assert details["mapping_artifact_type"] == "sample_assignment_audit"
+    assert details["audit_row_count"] == 720
+    assert details["unique_sample_count"] == 720
+    assert details["matched_sample_count"] == 720
+    assert details["conflict_count"] == 0
+    assert details["metadata_rows_outside_audit_count"] == 3
+    assert details["metadata_rows_outside_audit_are_required"] is False
+    assert details["metadata_target_missing_from_audit_count"] == 0
+    assert details["original_country_distribution"] == {
+        "CA-": 360,
+        "ambiguous_country": 360,
+    }
+    assert details["mapped_country_distribution"] == {
+        "DEU": 360,
+        "USA": 360,
+    }
+    assert details["mapping_source_distribution"] == {
+        "natural_earth_polygon": 712,
+        "nearest_boundary": 8,
+    }
+    assert details["nearest_boundary_rows"] == 8
+    assert details["nearest_boundary_max_distance_km"] == 12.5
+    assert details["sha256"] == file_sha256(mapping)
+    assert contract["unresolved_country_row_count"] == 0
+    assert contract["rows_dropped"] == 0
+    contract_path = write_fmow_geography_contract(
+        tmp_path / "sample_assignment_contract.json",
+        contract,
+    )
+    validated = validate_fmow_geography_contract(
+        contract_path,
+        metadata_csv=metadata,
+        mapping_artifact=mapping,
+    )
+    assert validated["contract_hash"] == contract["contract_hash"]
+
+
+@pytest.mark.parametrize(
+    ("audit_field", "bad_value"),
+    [
+        ("mapped_country", "FRA"),
+        ("mapped_region", "Northern Europe"),
+    ],
+)
+def test_sample_assignment_audit_rejects_mapped_field_conflicts(
+    tmp_path: Path,
+    audit_field: str,
+    bad_value: str,
+) -> None:
+    metadata_rows, audit_rows = _sample_assignment_rows()
+    audit_rows[0][audit_field] = bad_value
+    _metadata, _mapping, contract = _sample_assignment_contract(
+        tmp_path,
+        metadata_rows=metadata_rows,
+        audit_rows=audit_rows,
+    )
+    assert contract["formal_compatible"] is False
+    conflicts = contract["mapping_artifact"]["conflicts"]
+    assert any(
+        item.get("type") == "field_conflict"
+        and item.get("audit_field") == audit_field
+        for item in conflicts
+    )
+
+
+def test_sample_assignment_audit_rejects_duplicate_sample_id(
+    tmp_path: Path,
+) -> None:
+    metadata_rows, audit_rows = _sample_assignment_rows()
+    audit_rows[-1]["sample_id"] = audit_rows[0]["sample_id"]
+    _metadata, _mapping, contract = _sample_assignment_contract(
+        tmp_path,
+        metadata_rows=metadata_rows,
+        audit_rows=audit_rows,
+    )
+    assert contract["formal_compatible"] is False
+    assert any(
+        item.get("type") == "duplicate_audit_sample_id"
+        for item in contract["mapping_artifact"]["conflicts"]
+    )
+
+
+def test_sample_assignment_audit_rejects_sample_absent_from_metadata(
+    tmp_path: Path,
+) -> None:
+    metadata_rows, audit_rows = _sample_assignment_rows()
+    audit_rows[-1]["sample_id"] = "not-in-final-metadata"
+    _metadata, _mapping, contract = _sample_assignment_contract(
+        tmp_path,
+        metadata_rows=metadata_rows,
+        audit_rows=audit_rows,
+    )
+    assert contract["formal_compatible"] is False
+    assert any(
+        item.get("type") == "audit_sample_absent_from_metadata"
+        for item in contract["mapping_artifact"]["conflicts"]
+    )
+
+
+def test_sample_assignment_audit_requires_only_explicitly_marked_targets(
+    tmp_path: Path,
+) -> None:
+    metadata_rows, audit_rows = _sample_assignment_rows(
+        include_markers=True,
+        extra_marked_target=True,
+    )
+    _metadata, _mapping, contract = _sample_assignment_contract(
+        tmp_path,
+        metadata_rows=metadata_rows,
+        audit_rows=audit_rows,
+    )
+    details = contract["mapping_artifact"]
+    assert contract["formal_compatible"] is False
+    assert details["metadata_target_marker_field"] == "geography_remapped"
+    assert details["metadata_target_missing_from_audit_count"] == 1
+    assert details["metadata_target_missing_from_audit"] == [
+        "marked-target-missing-from-audit"
+    ]
+    assert details["metadata_rows_outside_audit_count"] == 4
+    assert any(
+        item.get("type") == "metadata_target_missing_from_audit"
+        for item in details["conflicts"]
+    )
+
+
 def _write_fake_dofa_source(
     root: Path,
     *,
