@@ -127,7 +127,8 @@ def benchmark_reben_loader_workers(
         _update_array_digest(model_state_digest, tensor)
 
     dataset = _TorchDataset(adapter, mode, contract)
-    baseline: dict[str, Any] | None = None
+    baseline_checksums: dict[str, str] | None = None
+    baseline_first_logits: np.ndarray | None = None
     results: list[dict[str, Any]] = []
     for num_workers in workers:
         candidate_config = replace(config, num_workers=num_workers)
@@ -237,10 +238,14 @@ def benchmark_reben_loader_workers(
             "image_checksum": image_digest.hexdigest(),
             "label_checksum": label_digest.hexdigest(),
             "sample_id_checksum": sample_digest.hexdigest(),
-            "first_logits": first_logits,
         }
-        if baseline is None:
-            baseline = observation
+        if baseline_checksums is None:
+            baseline_checksums = {
+                "sample_id_checksum": str(observation["sample_id_checksum"]),
+                "label_checksum": str(observation["label_checksum"]),
+                "image_checksum": str(observation["image_checksum"]),
+            }
+            baseline_first_logits = first_logits.copy()
             observation["correctness"] = {
                 "sample_order_equal": True,
                 "labels_equal": True,
@@ -249,31 +254,30 @@ def benchmark_reben_loader_workers(
                 "max_abs_forward_difference": 0.0,
             }
         else:
-            max_abs = float(
-                np.max(
-                    np.abs(
-                        observation["first_logits"]
-                        - baseline["first_logits"]
-                    )
+            if baseline_first_logits is None:  # pragma: no cover - invariant
+                raise RebenDataBenchmarkError(
+                    "Baseline logits were not retained for correctness checks."
                 )
+            max_abs = float(
+                np.max(np.abs(first_logits - baseline_first_logits))
             )
             correctness = {
                 "sample_order_equal": (
                     observation["sample_id_checksum"]
-                    == baseline["sample_id_checksum"]
+                    == baseline_checksums["sample_id_checksum"]
                 ),
                 "labels_equal": (
                     observation["label_checksum"]
-                    == baseline["label_checksum"]
+                    == baseline_checksums["label_checksum"]
                 ),
                 "inputs_equal": (
                     observation["image_checksum"]
-                    == baseline["image_checksum"]
+                    == baseline_checksums["image_checksum"]
                 ),
                 "forward_allclose": bool(
                     np.allclose(
-                        observation["first_logits"],
-                        baseline["first_logits"],
+                        first_logits,
+                        baseline_first_logits,
                         rtol=1e-5,
                         atol=1e-6,
                     )
@@ -294,7 +298,6 @@ def benchmark_reben_loader_workers(
                     f"num_workers={num_workers} changed the input or forward stream: "
                     f"{correctness}"
                 )
-        observation.pop("first_logits")
         results.append(observation)
 
     peak_throughput = max(float(row["samples_per_second"]) for row in results)
