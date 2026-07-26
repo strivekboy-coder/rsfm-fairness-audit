@@ -18,7 +18,10 @@ from rsfm_fairness_audit.fmow_resnet50_campaign import (
     _write_seed_completion_contract,
 )
 from rsfm_fairness_audit.fmow_superclass_postprocess import (
+    _clip_paired_interval,
+    _levelling_down_status,
     _sharp_fixed_universe_bounds,
+    _summarize_paired_seeds,
 )
 from rsfm_fairness_audit.formal_outputs import file_sha256
 
@@ -275,3 +278,47 @@ def test_sharp_fixed_universe_bounds_match_small_grid() -> None:
     assert lower == pytest.approx(min(values), abs=1e-12)
     assert upper == pytest.approx(max(values), abs=1e-12)
     assert 0.0 <= lower <= upper <= 0.5
+
+
+def test_fmow_v2_clips_ci_and_flags_levelling_down() -> None:
+    assert _clip_paired_interval(-1.4, 1.3, beta=0.1) == (-0.9, 0.9)
+    flagged, model, reason = _levelling_down_status(
+        {"mean_risk": 0.79, "tail_risk": 1.0, "geobwer": 0.21},
+        {"mean_risk": 0.77, "tail_risk": 1.0, "geobwer": 0.23},
+    )
+    assert flagged is True
+    assert model == "dofav2"
+    assert "higher_mean_risk" in reason
+
+
+def test_fmow_v2_three_seed_summary_preserves_direction_and_ranges() -> None:
+    rows = []
+    for seed, delta in ((42, -0.03), (73, -0.02), (101, -0.01)):
+        rows.append(
+            {
+                "seed": seed,
+                "axis": "region_superclass",
+                "evidence_role": "secondary",
+                "dofav2_mean_risk": 0.79,
+                "dofav2_tail_risk": 1.0,
+                "dofav2_geobwer": 0.21,
+                "resnet50_mean_risk": 0.77,
+                "resnet50_tail_risk": 1.0,
+                "resnet50_geobwer": 0.21 - delta,
+                "delta_mean_risk": 0.02,
+                "delta_tail_risk": 0.0,
+                "delta_geobwer": delta,
+                "raw_ci_low": -0.9,
+                "raw_ci_high": 0.9,
+                "direct_multiplier_ci_low": -0.2,
+                "direct_multiplier_ci_high": 0.1,
+                "levelling_down": True,
+            }
+        )
+    summary = _summarize_paired_seeds(rows)
+    assert len(summary) == 1
+    assert summary[0]["seed_count"] == 3
+    assert summary[0]["delta_geobwer_direction_consistency"] == "negative"
+    assert summary[0]["levelling_down_seed_count"] == 3
+    assert summary[0]["delta_geobwer_min"] == pytest.approx(-0.03)
+    assert summary[0]["delta_geobwer_max"] == pytest.approx(-0.01)

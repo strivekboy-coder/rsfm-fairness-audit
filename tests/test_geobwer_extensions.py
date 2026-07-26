@@ -281,8 +281,20 @@ def test_multilabel_and_segmentation_crc_use_calibration_only() -> None:
         selective_coverages=(0.8,),
         crc_alpha=0.2,
         n_bootstrap=20,
+        spatial_localization_config=SpatialConformalConfig(),
     )
     assert multilabel_artifacts["crc_summary"].exists()
+    multilabel_summary = read_csv_rows(multilabel_artifacts["summary"])
+    multilabel_preflight = next(
+        row
+        for row in multilabel_summary
+        if row["extension"] == "geo_kernel_crc_preflight"
+    )
+    assert multilabel_preflight["formal_uncertainty_method_complete"] == "True"
+    assert multilabel_preflight["formal_anchor"] == "conformal_risk_control"
+    assert "multilabel" in multilabel_preflight[
+        "localized_geo_method_applicability"
+    ]
 
     segmentation_protocol = _protocol("segmentation", "one_minus_iou")
     maps = [rng.uniform(0.05, 0.95, size=(4, 4)).astype(np.float32) for _ in range(40)]
@@ -315,8 +327,20 @@ def test_multilabel_and_segmentation_crc_use_calibration_only() -> None:
         calibration_sample_ids=[f"calibration-{index:03d}" for index in range(40)],
         crc_alpha=0.2,
         n_bootstrap=20,
+        spatial_localization_config=SpatialConformalConfig(),
     )
     assert segmentation_artifacts["summary"].exists()
+    segmentation_summary = read_csv_rows(segmentation_artifacts["summary"])
+    segmentation_preflight = next(
+        row
+        for row in segmentation_summary
+        if row["extension"] == "geo_kernel_crc_preflight"
+    )
+    assert segmentation_preflight["formal_uncertainty_method_complete"] == "True"
+    assert segmentation_preflight["formal_anchor"] == "conformal_risk_control"
+    assert "segmentation" in segmentation_preflight[
+        "localized_geo_method_applicability"
+    ]
     shutil.rmtree(tmp_path)
 
 

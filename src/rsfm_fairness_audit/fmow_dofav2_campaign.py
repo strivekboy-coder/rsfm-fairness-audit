@@ -25,6 +25,7 @@ from rsfm_fairness_audit.geobwer import audit_rows
 from rsfm_fairness_audit.geobwer_extensions import run_multiclass_uncertainty_suite
 from rsfm_fairness_audit.io import ensure_dir, read_csv_rows, write_csv
 from rsfm_fairness_audit.persistent_cache import hydrate_output, persist_output
+from rsfm_fairness_audit.spatial_conformal import SpatialConformalConfig
 from rsfm_fairness_audit.probe_selection import (
     MulticlassProbeSearchConfig,
     fit_selected_multiclass_probe,
@@ -859,6 +860,7 @@ def run_fmow_dofav2_campaign(config: FmowDOFAv2CampaignConfig) -> dict[str, Path
         alpha=config.conformal_alpha,
         n_bootstrap=config.audit_bootstrap,
         seed=config.seed,
+        spatial_conformal_config=SpatialConformalConfig(),
     )
     run_manifest = output / "run_manifest.json"
     run_manifest.write_text(

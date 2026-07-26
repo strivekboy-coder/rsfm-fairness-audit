@@ -688,6 +688,11 @@ def run_multilabel_uncertainty_suite(
             {
                 "extension": "geo_kernel_crc_preflight",
                 "role": "screened_not_run",
+                "formal_uncertainty_method_complete": True,
+                "formal_anchor": "conformal_risk_control",
+                "localized_geo_method_applicability": (
+                    "not_formally_established_for_multilabel_under_frozen_protocol"
+                ),
                 "spatial_localization_status": spatial_preflight["status"],
                 "reason": spatial_preflight.get("reason", ""),
             }
@@ -721,6 +726,8 @@ def run_multilabel_uncertainty_suite(
     summary_rows.append(
         {
             "extension": "conformal_risk_control",
+            "formal_uncertainty_method_complete": True,
+            "formal_anchor": "conformal_risk_control",
             "risk_target": crc_alpha,
             "test_mean_risk": float(np.mean([row["risk"] for row in crc_rows])),
             "mean_prediction_set_fraction": float(np.mean([row["prediction_set_fraction"] for row in crc_rows])),
@@ -882,6 +889,8 @@ def run_segmentation_uncertainty_suite(
     summary_rows: list[dict[str, Any]] = [
         {
             "extension": "conformal_risk_control",
+            "formal_uncertainty_method_complete": True,
+            "formal_anchor": "conformal_risk_control",
             "risk_target": crc_alpha,
             "test_mean_risk": float(np.mean([row["risk"] for row in rows])),
             "mean_prediction_set_fraction": float(np.mean([row["prediction_set_fraction"] for row in rows])),
@@ -915,6 +924,11 @@ def run_segmentation_uncertainty_suite(
             {
                 "extension": "geo_kernel_crc_preflight",
                 "role": "screened_not_run",
+                "formal_uncertainty_method_complete": True,
+                "formal_anchor": "conformal_risk_control",
+                "localized_geo_method_applicability": (
+                    "not_formally_established_for_segmentation_under_frozen_protocol"
+                ),
                 "spatial_localization_status": spatial_preflight["status"],
                 "reason": spatial_preflight.get("reason", ""),
             }

@@ -108,6 +108,24 @@ def test_base_audit_rows_calls_do_not_receive_spatial_extension_config() -> None
         )
 
 
+def test_multiclass_campaigns_enable_spatial_conformal_extension() -> None:
+    for module in (fmow_dofav2_campaign, alphaearth_geobwer_campaign):
+        tree = ast.parse(inspect.getsource(module))
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "run_multiclass_uncertainty_suite"
+        ]
+        assert calls
+        assert all(
+            "spatial_conformal_config"
+            in {keyword.arg for keyword in call.keywords}
+            for call in calls
+        )
+
+
 def test_partial_protocol_rows_are_copied_and_retagged_without_mutation() -> None:
     strict_protocol = BWERProtocol(inference_method="none")
     partial_protocol = replace(strict_protocol, missingness_rule="partial_bounds")

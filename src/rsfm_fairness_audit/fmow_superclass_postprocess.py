@@ -226,6 +226,127 @@ def _mean_risks(
     }
 
 
+def _point_metrics(
+    rows: Sequence[Mapping[str, Any]],
+    axis: str,
+    cells: set[str],
+    *,
+    beta: float,
+) -> dict[str, float]:
+    point = compute_geobwer(_mean_risks(rows, axis, cells), beta=beta)
+    return {
+        "mean_risk": float(point.mean_risk),
+        "tail_risk": float(point.tail_risk),
+        "geobwer": float(point.bwer),
+    }
+
+
+def _clip_paired_interval(
+    low: float,
+    high: float,
+    *,
+    beta: float,
+) -> tuple[float, float]:
+    """Intersect a raw difference CI with the known GeoBWER parameter space."""
+    bound = 1.0 - float(beta)
+    return max(-bound, float(low)), min(bound, float(high))
+
+
+def _levelling_down_status(
+    metrics_a: Mapping[str, float],
+    metrics_b: Mapping[str, float],
+    *,
+    tolerance: float = 1e-12,
+) -> tuple[bool, str, str]:
+    """Flag a smaller gap caused by worse mean risk without tail improvement."""
+    delta_gap = float(metrics_a["geobwer"]) - float(metrics_b["geobwer"])
+    delta_mean = float(metrics_a["mean_risk"]) - float(metrics_b["mean_risk"])
+    delta_tail = float(metrics_a["tail_risk"]) - float(metrics_b["tail_risk"])
+    if (
+        delta_gap < -tolerance
+        and delta_mean > tolerance
+        and delta_tail >= -tolerance
+    ):
+        return (
+            True,
+            "dofav2",
+            "lower_gap_with_higher_mean_risk_and_no_tail_risk_improvement",
+        )
+    if (
+        delta_gap > tolerance
+        and delta_mean < -tolerance
+        and delta_tail <= tolerance
+    ):
+        return (
+            True,
+            "resnet50",
+            "lower_gap_with_higher_mean_risk_and_no_tail_risk_improvement",
+        )
+    return False, "", ""
+
+
+def _direction(values: Sequence[float], *, tolerance: float = 1e-12) -> str:
+    signs = {
+        "positive" if value > tolerance else "negative" if value < -tolerance else "zero"
+        for value in values
+    }
+    if len(signs) == 1:
+        return next(iter(signs))
+    return "mixed"
+
+
+def _summarize_paired_seeds(
+    paired_rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    by_axis: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    for row in paired_rows:
+        by_axis[str(row["axis"])].append(row)
+    summaries: list[dict[str, Any]] = []
+    metrics = (
+        "dofav2_mean_risk",
+        "dofav2_tail_risk",
+        "dofav2_geobwer",
+        "resnet50_mean_risk",
+        "resnet50_tail_risk",
+        "resnet50_geobwer",
+        "delta_mean_risk",
+        "delta_tail_risk",
+        "delta_geobwer",
+    )
+    for axis, rows in sorted(by_axis.items()):
+        ordered = sorted(rows, key=lambda row: int(row["seed"]))
+        summary: dict[str, Any] = {
+            "axis": axis,
+            "evidence_role": ordered[0]["evidence_role"],
+            "seed_count": len(ordered),
+            "seeds": ",".join(str(row["seed"]) for row in ordered),
+            "aligned_seed_labels": True,
+            "shared_random_stream": False,
+            "levelling_down_seed_count": sum(
+                bool(row["levelling_down"]) for row in ordered
+            ),
+            "raw_ci_excludes_zero_seed_count": sum(
+                float(row["raw_ci_low"]) > 0.0
+                or float(row["raw_ci_high"]) < 0.0
+                for row in ordered
+            ),
+            "direct_multiplier_ci_excludes_zero_seed_count": sum(
+                float(row["direct_multiplier_ci_low"]) > 0.0
+                or float(row["direct_multiplier_ci_high"]) < 0.0
+                for row in ordered
+            ),
+        }
+        for metric in metrics:
+            values = [float(row[metric]) for row in ordered]
+            summary[f"{metric}_mean"] = float(np.mean(values))
+            summary[f"{metric}_min"] = min(values)
+            summary[f"{metric}_max"] = max(values)
+            if metric.startswith("delta_"):
+                summary[f"{metric}_direction_consistency"] = _direction(values)
+        summaries.append(summary)
+    return summaries
+
+
 def _eligible_groups(
     rows: Sequence[Mapping[str, Any]],
     axis: str,
@@ -681,15 +802,47 @@ def run_fmow_superclass_postprocess(
                 n_bootstrap=n_bootstrap,
                 seed=int(seed),
             )
+            metrics_a = _point_metrics(
+                selected_a, axis, eligible, beta=protocol.beta
+            )
+            metrics_b = _point_metrics(
+                selected_b, axis, eligible, beta=protocol.beta
+            )
+            clipped_low, clipped_high = _clip_paired_interval(
+                comparison.ci_low,
+                comparison.ci_high,
+                beta=protocol.beta,
+            )
+            levelling_down, levelling_model, levelling_reason = (
+                _levelling_down_status(metrics_a, metrics_b)
+            )
             paired_rows.append(
                 {
                     "seed": int(seed),
                     "axis": axis,
                     "evidence_role": role,
                     "delta_definition": "GeoBWER(DOFAv2)-GeoBWER(ResNet50)",
+                    "dofav2_mean_risk": metrics_a["mean_risk"],
+                    "dofav2_tail_risk": metrics_a["tail_risk"],
+                    "dofav2_geobwer": metrics_a["geobwer"],
+                    "resnet50_mean_risk": metrics_b["mean_risk"],
+                    "resnet50_tail_risk": metrics_b["tail_risk"],
+                    "resnet50_geobwer": metrics_b["geobwer"],
+                    "delta_mean_risk": (
+                        metrics_a["mean_risk"] - metrics_b["mean_risk"]
+                    ),
+                    "delta_tail_risk": (
+                        metrics_a["tail_risk"] - metrics_b["tail_risk"]
+                    ),
                     "delta_geobwer": comparison.delta_bwer,
+                    "raw_ci_low": comparison.ci_low,
+                    "raw_ci_high": comparison.ci_high,
                     "ci_low": comparison.ci_low,
                     "ci_high": comparison.ci_high,
+                    "parameter_space_clipped_ci_low": clipped_low,
+                    "parameter_space_clipped_ci_high": clipped_high,
+                    "parameter_difference_lower_bound": -(1.0 - protocol.beta),
+                    "parameter_difference_upper_bound": 1.0 - protocol.beta,
                     "direct_multiplier_ci_low": (
                         comparison.direct_multiplier_ci_low
                     ),
@@ -700,6 +853,14 @@ def run_fmow_superclass_postprocess(
                     "common_group_count": len(comparison.common_groups),
                     "common_sample_count": comparison.common_units,
                     "common_cluster_count": comparison.cluster_count,
+                    "pairing_unit": "same_sample_id",
+                    "dependence_cluster": "site_id",
+                    "seed_alignment": (
+                        "aligned_seed_label_not_shared_random_stream"
+                    ),
+                    "levelling_down": levelling_down,
+                    "levelling_down_model": levelling_model,
+                    "levelling_down_reason": levelling_reason,
                 }
             )
 
@@ -791,14 +952,23 @@ def run_fmow_superclass_postprocess(
                     "paired_risk_difference": estimates_delta[group],
                     "paired_simultaneous_ci_low": lower_delta[group],
                     "paired_simultaneous_ci_high": upper_delta[group],
+                    "pairing_unit": "same_sample_id",
+                    "dependence_cluster": "site_id",
+                    "simultaneity_scope": (
+                        "within_seed_across_exact_six_frozen_cells"
+                    ),
+                    "cross_seed_multiplicity_controlled": False,
                 }
             )
 
     paired_path = output / "same_seed_common_support_paired_geobwer.csv"
+    seed_summary_path = output / "three_seed_paired_summary.csv"
     partial_path = output / "fixed_universe_partial_identification.csv"
     panel_path = output / "six_cell_simultaneous_paired_risk.csv"
     coverage_path = output / "axis_support_coverage.csv"
     write_csv(paired_path, paired_rows)
+    seed_summary_rows = _summarize_paired_seeds(paired_rows)
+    write_csv(seed_summary_path, seed_summary_rows)
     write_csv(partial_path, partial_rows)
     write_csv(panel_path, panel_rows)
     coverage_rows: list[dict[str, Any]] = []
@@ -823,12 +993,83 @@ def run_fmow_superclass_postprocess(
             }
         )
     write_csv(coverage_path, coverage_rows)
+    interpretation_path = output / "comparison_interpretation_contract.json"
+    interpretation = {
+        "schema": "geobwer.fmow.comparison_interpretation.v1",
+        "paired_estimand": "DOFAv2_minus_ResNet50",
+        "pairing_unit": "same_sample_id",
+        "dependence_cluster": "site_id",
+        "aligned_seed_labels": True,
+        "shared_random_stream": False,
+        "raw_paired_interval": (
+            "simultaneous-risk-band Lipschitz interval; retained without clipping"
+        ),
+        "parameter_space_clipped_interval": {
+            "operation": "intersection_with_known_parameter_difference_space",
+            "lower": -(1.0 - protocol.beta),
+            "upper": 1.0 - protocol.beta,
+            "interpretation": (
+                "reporting-only tightening using the known GeoBWER range; "
+                "it does not replace the raw interval"
+            ),
+        },
+        "required_joint_metrics": ["mean_risk", "tail_risk", "geobwer"],
+        "levelling_down_definition": (
+            "a model has lower GeoBWER but higher mean risk and no lower tail risk"
+        ),
+        "six_cell_simultaneity_scope": (
+            "within each seed across exactly the six preregistered cells"
+        ),
+        "six_cell_cross_seed_multiplicity_controlled": False,
+        "supported_universe_is_not_fixed_universe": True,
+    }
+    interpretation_path.write_text(
+        json.dumps(interpretation, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    scientific_report_path = output / "scientific_interpretation_report.md"
+    levelling_axes = [
+        row["axis"]
+        for row in seed_summary_rows
+        if int(row["levelling_down_seed_count"]) > 0
+    ]
+    scientific_report_path.write_text(
+        "\n".join(
+            [
+                "# fMoW frozen superclass scientific interpretation",
+                "",
+                "GeoBWER must be interpreted jointly with mean and tail risk. "
+                "A smaller gap alone is not evidence of a safer or better model.",
+                "",
+                "## Pairing contract",
+                "",
+                "- Paired unit: identical `sample_id`; dependence cluster: `site_id`.",
+                "- Seed labels are aligned across models but do not imply a shared random stream.",
+                "- Raw paired intervals are retained; clipped intervals only intersect them "
+                f"with the known difference range [{-(1.0 - protocol.beta):.3f}, "
+                f"{1.0 - protocol.beta:.3f}].",
+                "- Six-cell bands are simultaneous within one seed across the exact six "
+                "frozen cells, not jointly across all three seeds.",
+                "",
+                "## Automated diagnostic",
+                "",
+                (
+                    "Levelling-down was detected on: "
+                    + (", ".join(sorted(levelling_axes)) if levelling_axes else "none")
+                    + "."
+                ),
+                "Treat supported-universe results separately from fixed-universe partial bounds.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     source_after = {
         key: value for key, value in evidence_sources.items()
     }
     manifest_path = output / "postprocess_manifest.json"
     manifest = {
-        "schema": "geobwer.fmow.superclass_frozen_postprocess.v1",
+        "schema": "geobwer.fmow.superclass_frozen_postprocess.v2",
         "formal_evidence": True,
         "source_artifacts_modified": False,
         "axis_role_freeze_sha256": file_sha256(freeze_path),
@@ -849,6 +1090,10 @@ def run_fmow_superclass_postprocess(
                 "filename": paired_path.name,
                 "sha256": file_sha256(paired_path),
             },
+            "three_seed_paired_summary": {
+                "filename": seed_summary_path.name,
+                "sha256": file_sha256(seed_summary_path),
+            },
             "partial_identification": {
                 "filename": partial_path.name,
                 "sha256": file_sha256(partial_path),
@@ -860,6 +1105,14 @@ def run_fmow_superclass_postprocess(
             "axis_support_coverage": {
                 "filename": coverage_path.name,
                 "sha256": file_sha256(coverage_path),
+            },
+            "comparison_interpretation_contract": {
+                "filename": interpretation_path.name,
+                "sha256": file_sha256(interpretation_path),
+            },
+            "scientific_interpretation_report": {
+                "filename": scientific_report_path.name,
+                "sha256": file_sha256(scientific_report_path),
             },
         },
         "claim_limits": {
@@ -884,15 +1137,21 @@ def run_fmow_superclass_postprocess(
     )
     return {
         "paired_geobwer": paired_path,
+        "three_seed_paired_summary": seed_summary_path,
         "partial_identification": partial_path,
         "six_cell_panel": panel_path,
         "axis_support_coverage": coverage_path,
+        "comparison_interpretation_contract": interpretation_path,
+        "scientific_interpretation_report": scientific_report_path,
         "manifest": manifest_path,
     }
 
 
 __all__ = [
     "FmowSuperclassPostprocessError",
+    "_clip_paired_interval",
+    "_levelling_down_status",
+    "_summarize_paired_seeds",
     "_sharp_fixed_universe_bounds",
     "run_fmow_superclass_postprocess",
 ]
