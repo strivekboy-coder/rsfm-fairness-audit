@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+import subprocess
+import sys
 from uuid import uuid4
 
 import numpy as np
@@ -12,6 +14,7 @@ from rsfm_fairness_audit.io import write_csv
 
 
 CLASSES = tuple(str(10 * (index + 1)) for index in range(11))
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _rows() -> list[dict[str, object]]:
@@ -194,3 +197,27 @@ def test_small_existing_output_upgrade_and_resume() -> None:
         )
     )
     assert resumed["completion_contract"].exists()
+
+
+def test_colab_runner_absolute_path_from_external_cwd_imports_scripts_analysis() -> None:
+    script = (
+        PROJECT_ROOT
+        / "scripts"
+        / "colab"
+        / "upgrade_alphaearth_existing_outputs_geobwer_colab.py"
+    ).resolve()
+    probe = (
+        "import runpy\n"
+        f"runpy.run_path({str(script)!r}, run_name='alphaearth_runner_probe')\n"
+        "import scripts.analysis.build_alphaearth_final_evidence_hardening_v2\n"
+        "print('ALPHAEARTH_ABSOLUTE_IMPORT=PASS')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", probe],
+        cwd=PROJECT_ROOT.parent,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "ALPHAEARTH_ABSOLUTE_IMPORT=PASS" in result.stdout
