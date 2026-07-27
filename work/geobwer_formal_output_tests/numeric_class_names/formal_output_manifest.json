@@ -1,6 +1,6 @@
 {
   "output_schema": "geobwer.multiclass.v1",
-  "created_utc": "2026-07-27T13:13:57.800932+00:00",
+  "created_utc": "2026-07-27T13:13:57.921405+00:00",
   "row_count": 2,
   "protocol": {
     "beta": 0.1,
@@ -46,11 +46,11 @@
   "artifacts": {
     "formal_audit_table": "formal_audit_table.csv",
     "probability_artifact": "probabilities.npz",
-    "probability_sha256": "1dac94bb0e3c58b8f3357807245e651adbb607aba8d804f0f53db3d51401b1b3",
+    "probability_sha256": "1f6b9dc856709866893cd2032b238fc276bd1c09cc8fe046d6b3822c3937c702",
     "class_mapping": "class_mapping.json",
-    "class_mapping_sha256": "56da80d4bac71e922a05a48114d2914c570f9e6f3977886b64dabcc940a6d3ca"
+    "class_mapping_sha256": "b121dc45aa689eb207b4dfe0d36e089fc82e18631ae0e1bc92056498249251e2"
   },
   "extra": {
-    "target_encoding": "string_class_labels"
+    "target_encoding": "integer_indices"
   }
 }
