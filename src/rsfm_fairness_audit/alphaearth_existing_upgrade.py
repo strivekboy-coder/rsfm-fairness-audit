@@ -284,6 +284,60 @@ def _validate_result_lineage(
     }
 
 
+def _validate_formal_probability_roundtrip(
+    probability_artifact: Path,
+    *,
+    sample_rows: Sequence[Mapping[str, Any]],
+    probabilities: np.ndarray,
+    targets: np.ndarray,
+    classes: Sequence[str],
+) -> dict[str, Any]:
+    expected_sample_ids = np.asarray(
+        [_text(row, "sample_id") for row in sample_rows], dtype=str
+    )
+    expected_probabilities = np.asarray(probabilities)
+    expected_targets = np.asarray(targets, dtype=np.int64)
+    expected_classes = np.asarray(classes, dtype=str)
+    with np.load(probability_artifact, allow_pickle=False) as data:
+        actual_sample_ids = np.asarray(data["sample_id"], dtype=str)
+        actual_probabilities = np.asarray(data["probabilities"])
+        actual_targets = np.asarray(data["targets"], dtype=np.int64)
+        actual_classes = np.asarray(data["class_names"], dtype=str)
+    if not np.array_equal(actual_sample_ids, expected_sample_ids):
+        raise AlphaEarthExistingUpgradeError(
+            "Formal probability artifact changed the frozen test sample assignment."
+        )
+    if not np.array_equal(actual_classes, expected_classes):
+        raise AlphaEarthExistingUpgradeError(
+            "Formal probability artifact changed the frozen WorldCover class order."
+        )
+    if not np.array_equal(actual_targets, expected_targets):
+        raise AlphaEarthExistingUpgradeError(
+            "Formal probability artifact changed the frozen WorldCover target indices."
+        )
+    if not np.array_equal(actual_probabilities, expected_probabilities):
+        raise AlphaEarthExistingUpgradeError(
+            "Formal probability artifact changed the frozen probability matrix."
+        )
+    target_histogram = np.bincount(
+        actual_targets, minlength=len(expected_classes)
+    ).tolist()
+    return {
+        "status": "exact_roundtrip",
+        "sample_count": len(actual_sample_ids),
+        "sample_assignment_hash": _array_hash(actual_sample_ids),
+        "target_assignment_hash": _array_hash(actual_sample_ids, actual_targets),
+        "probability_assignment_hash": _array_hash(
+            actual_sample_ids, actual_probabilities
+        ),
+        "class_order_hash": _array_hash(actual_classes),
+        "target_histogram": {
+            str(name): int(count)
+            for name, count in zip(expected_classes, target_histogram)
+        },
+    }
+
+
 def _validate_splits(
     rows: Sequence[Mapping[str, Any]],
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
@@ -432,14 +486,25 @@ def _joint_risk_card(
             info = support.get(axis, {})
             beta = float(row.get("beta", 0.10) or 0.10)
             tail_effective = float(row.get("tail_effective_groups", 0.0) or 0.0)
+            bwer_text = str(row.get("bwer", "")).strip()
+            point_identified = bool(bwer_text) and np.isfinite(float(bwer_text))
+            excluded_mass = float(
+                info.get("excluded_deployment_mass", 1.0) or 0.0
+            )
             row.update(
                 {
                     "risk_family": family,
-                    "beta_effective_tail_slices": tail_effective,
-                    "tail_saturation": bool(
-                        tail_effective <= 1.0 + 1e-12
-                        or float(row.get("max_tail_atom_share", 0.0) or 0.0)
-                        >= 1.0 - 1e-12
+                    "beta_effective_tail_slices": (
+                        tail_effective if point_identified else ""
+                    ),
+                    "tail_saturation": (
+                        bool(
+                            tail_effective <= 1.0 + 1e-12
+                            or float(row.get("max_tail_atom_share", 0.0) or 0.0)
+                            >= 1.0 - 1e-12
+                        )
+                        if point_identified
+                        else "not_applicable"
                     ),
                     "fixed_universe_groups": info.get("fixed_universe_groups", ""),
                     "supported_universe_groups": info.get(
@@ -452,22 +517,31 @@ def _joint_risk_card(
                         "equal_slice_deployment_mass_coverage", ""
                     ),
                     "partial_identification_lower": (
-                        row.get("bwer", "")
-                        if float(info.get("excluded_deployment_mass", 1.0) or 0.0)
-                        == 0.0
-                        else 0.0
+                        (
+                            row.get("bwer", "")
+                            if excluded_mass == 0.0
+                            else 0.0
+                        )
+                        if point_identified
+                        else ""
                     ),
                     "partial_identification_upper": (
-                        row.get("bwer", "")
-                        if float(info.get("excluded_deployment_mass", 1.0) or 0.0)
-                        == 0.0
-                        else 1.0 - beta
+                        (
+                            row.get("bwer", "")
+                            if excluded_mass == 0.0
+                            else 1.0 - beta
+                        )
+                        if point_identified
+                        else ""
                     ),
                     "partial_identification_scope": (
-                        "point_identified_fixed_universe"
-                        if float(info.get("excluded_deployment_mass", 1.0) or 0.0)
-                        == 0.0
-                        else "conservative_fixed_universe_bound; supported point estimate is conditional"
+                        (
+                            "point_identified_fixed_universe"
+                            if excluded_mass == 0.0
+                            else "conservative_fixed_universe_bound; supported point estimate is conditional"
+                        )
+                        if point_identified
+                        else "not_identified"
                     ),
                 }
             )
@@ -686,6 +760,13 @@ def run_alphaearth_existing_upgrade(
             "reference_semantics": "map_product_agreement_not_human_ground_truth",
         },
         split_role="evaluation",
+    )
+    formal_roundtrip = _validate_formal_probability_roundtrip(
+        formal_bundle.probability_artifact,
+        sample_rows=test_rows,
+        probabilities=test_probabilities,
+        targets=test_targets,
+        classes=classes,
     )
     calibration_path = output / "calibration_probabilities.npz"
     np.savez_compressed(
@@ -917,6 +998,7 @@ def run_alphaearth_existing_upgrade(
                 "source_hashes": source_hashes,
                 "split_evidence": split_evidence,
                 "result_lineage": result_lineage,
+                "formal_probability_roundtrip": formal_roundtrip,
                 "assignment_hash": assignment_hash,
                 "probability_bundle_hash": probability_bundle_hash,
                 "class_names": list(classes),

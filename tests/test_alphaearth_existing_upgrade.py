@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -145,6 +146,37 @@ def test_valid_probability_and_split_contract() -> None:
     assert evidence["calibration_test_spatial_block_overlap"] == 0
 
 
+def test_joint_risk_card_does_not_call_unidentified_rows_tail_saturated() -> None:
+    card = upgrade._joint_risk_card(
+        [],
+        [
+            {
+                "axis": "region",
+                "beta": 0.1,
+                "bwer": "",
+                "validity": "not_identified_missing_standardization_cells",
+            }
+        ],
+        [
+            {
+                "axis": "region",
+                "excluded_deployment_mass": 0.0,
+                "fixed_universe_groups": 7,
+                "supported_universe_groups": 7,
+            }
+        ],
+    )
+    assert len(card) == 2
+    standardized = next(
+        row for row in card if row["risk_family"] == "class_standardized"
+    )
+    assert standardized["tail_saturation"] == "not_applicable"
+    assert standardized["beta_effective_tail_slices"] == ""
+    assert standardized["partial_identification_lower"] == ""
+    assert standardized["partial_identification_upper"] == ""
+    assert standardized["partial_identification_scope"] == "not_identified"
+
+
 def test_small_existing_output_upgrade_and_resume() -> None:
     root = _test_root()
     source = root / "frozen_source"
@@ -188,6 +220,22 @@ def test_small_existing_output_upgrade_and_resume() -> None:
     )
     for path in artifacts.values():
         assert path.exists()
+    with np.load(output / "formal_outputs" / "probabilities.npz") as data:
+        formal_targets = data["targets"]
+        assert set(formal_targets.tolist()) == set(range(11))
+        assert int(np.count_nonzero(formal_targets == 10)) == 6
+    formal_manifest = json.loads(
+        (output / "formal_outputs" / "formal_output_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert formal_manifest["extra"]["target_encoding"] == "integer_indices"
+    postprocess_manifest = json.loads(
+        (output / "postprocess_manifest.json").read_text(encoding="utf-8")
+    )
+    roundtrip = postprocess_manifest["formal_probability_roundtrip"]
+    assert roundtrip["status"] == "exact_roundtrip"
+    assert roundtrip["target_histogram"]["110"] == 6
     resumed = upgrade.run_alphaearth_existing_upgrade(
         upgrade.AlphaEarthExistingUpgradeConfig(
             source_root=source,

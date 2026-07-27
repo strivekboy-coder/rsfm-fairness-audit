@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import numbers
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -115,6 +116,34 @@ class FormalOutputBundle:
     dataset_signature: str
 
 
+def _multiclass_target_indices(
+    targets: Sequence[int] | Sequence[str],
+    class_to_index: Mapping[str, int],
+) -> tuple[np.ndarray, str]:
+    values = list(targets)
+    if all(
+        isinstance(value, numbers.Integral)
+        and not isinstance(value, (bool, np.bool_))
+        for value in values
+    ):
+        return np.asarray(values, dtype=np.int64), "integer_indices"
+    if all(isinstance(value, str) for value in values):
+        missing = sorted({value for value in values if value not in class_to_index})
+        if missing:
+            raise ValueError(
+                "String targets must be class labels present in class_names; "
+                f"missing labels: {missing[:10]}"
+            )
+        return (
+            np.asarray([class_to_index[value] for value in values], dtype=np.int64),
+            "string_class_labels",
+        )
+    raise ValueError(
+        "Multiclass targets must be uniformly integer class indices or uniformly "
+        "string class labels; mixed or ambiguous target types are not accepted."
+    )
+
+
 def _write_manifest(
     output: Path,
     *,
@@ -173,8 +202,8 @@ def write_multiclass_bundle(
     if len(sample_rows) != len(probs) or len(targets) != len(probs):
         raise ValueError("sample_rows, probabilities, and targets must be aligned.")
     class_to_index = {name: index for index, name in enumerate(classes)}
-    target_indices = np.asarray(
-        [class_to_index[str(value)] if str(value) in class_to_index else int(value) for value in targets], dtype=np.int64
+    target_indices, target_encoding = _multiclass_target_indices(
+        targets, class_to_index
     )
     if np.any(target_indices < 0) or np.any(target_indices >= len(classes)):
         raise ValueError("targets contain a class absent from class_names.")
@@ -251,6 +280,7 @@ def write_multiclass_bundle(
         model_lineage=model_lineage,
         dataset_lineage=dataset_lineage,
         output_schema="geobwer.multiclass.v1",
+        extra={"target_encoding": target_encoding},
     )
     return FormalOutputBundle(output, audit_path, probability_path, mapping_path, manifest, len(rows), mapping_hash, model_sig, dataset_sig)
 

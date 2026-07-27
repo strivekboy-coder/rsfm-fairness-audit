@@ -54,6 +54,61 @@ def test_multiclass_bundle_preserves_full_probability_matrix() -> None:
     assert json.loads(bundle.manifest.read_text(encoding="utf-8"))["output_schema"] == "geobwer.multiclass.v1"
 
 
+def test_multiclass_integer_indices_are_not_reinterpreted_as_numeric_class_labels() -> None:
+    class_names = [str(10 * (index + 1)) for index in range(11)]
+    probabilities = np.zeros((2, 11), dtype=float)
+    probabilities[0, 10] = 1.0
+    probabilities[1, 0] = 1.0
+    bundle = write_multiclass_bundle(
+        TEST_ROOT / "numeric_class_names",
+        sample_rows=_rows(),
+        probabilities=probabilities,
+        targets=np.asarray([10, 0], dtype=np.int64),
+        class_names=class_names,
+        dataset="demo",
+        model="model",
+        split="test",
+        protocol=_protocol("multiclass"),
+        model_lineage={"checkpoint": "x"},
+        dataset_lineage={"manifest": "y"},
+        independent_unit_column="location_id",
+    )
+    with np.load(bundle.probability_artifact) as data:
+        assert data["targets"].tolist() == [10, 0]
+    rows = read_csv_rows(bundle.audit_table)
+    assert rows[0]["label"] == "110"
+    assert float(rows[0]["risk"]) == 0.0
+    manifest = json.loads(bundle.manifest.read_text(encoding="utf-8"))
+    assert manifest["extra"]["target_encoding"] == "integer_indices"
+
+
+def test_multiclass_rejects_mixed_or_unknown_string_targets() -> None:
+    kwargs = {
+        "sample_rows": _rows(),
+        "probabilities": np.asarray([[0.8, 0.2], [0.1, 0.9]]),
+        "class_names": ["a", "b"],
+        "dataset": "demo",
+        "model": "model",
+        "split": "test",
+        "protocol": _protocol("multiclass"),
+        "model_lineage": {"checkpoint": "x"},
+        "dataset_lineage": {"manifest": "y"},
+        "independent_unit_column": "location_id",
+    }
+    with pytest.raises(ValueError, match="mixed or ambiguous"):
+        write_multiclass_bundle(
+            TEST_ROOT / "mixed_targets",
+            targets=[0, "b"],
+            **kwargs,
+        )
+    with pytest.raises(ValueError, match="missing labels"):
+        write_multiclass_bundle(
+            TEST_ROOT / "unknown_string_target",
+            targets=["a", "1"],
+            **kwargs,
+        )
+
+
 def test_multiclass_bundle_rejects_nonprobabilities() -> None:
     with pytest.raises(ValueError, match="sum to one"):
         write_multiclass_bundle(
