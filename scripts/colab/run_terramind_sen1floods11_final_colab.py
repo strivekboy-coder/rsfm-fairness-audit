@@ -209,6 +209,9 @@ def _validate_diagnostic_export(
     if len(set(sample_ids)) != len(sample_ids):
         raise RuntimeError(f"Diagnostic probability export has duplicate sample IDs: {path}.")
     shape_pairs: list[dict[str, Any]] = []
+    observed_target_values: set[int] = set()
+    aggregate_valid_pixel_count = 0
+    all_ignore_row_count = 0
     for index, row in enumerate(rows):
         artifact_path = _probability_artifact(path, row["probability_path"])
         if not artifact_path.is_file():
@@ -240,22 +243,52 @@ def _validate_diagnostic_export(
             raise RuntimeError(
                 f"Diagnostic class probabilities do not sum to one: {path}, row={index}."
             )
-        valid_array = np.isin(target_array, [0, 1])
-        if not np.any(valid_array):
+        raw_target_values = np.unique(target_array).tolist()
+        try:
+            numeric_target_values = [float(value) for value in raw_target_values]
+        except (TypeError, ValueError) as exc:
             raise RuntimeError(
-                f"Diagnostic target contains no valid hand-labeled pixels: {path}, row={index}."
+                f"Diagnostic target contains non-numeric values: {path}, row={index}."
+            ) from exc
+        invalid_target_values = sorted(
+            value
+            for value in numeric_target_values
+            if not np.isfinite(value) or value not in {-1.0, 0.0, 1.0}
+        )
+        if invalid_target_values:
+            raise RuntimeError(
+                "Diagnostic target contains values outside the formal "
+                f"{{-1,0,1}} contract: {path}, row={index}, "
+                f"invalid={invalid_target_values}."
             )
+        target_values = {int(value) for value in numeric_target_values}
+        observed_target_values.update(target_values)
+        valid_array = np.isin(target_array, [0, 1])
+        valid_pixel_count = int(valid_array.sum())
+        aggregate_valid_pixel_count += valid_pixel_count
+        if valid_pixel_count == 0:
+            all_ignore_row_count += 1
         shape_pairs.append(
             {
                 "sample_id": sample_ids[index],
                 "probability_shape": list(probability_array.shape[1:]),
-                "valid_pixel_count": int(valid_array.sum()),
+                "valid_pixel_count": valid_pixel_count,
+                "observed_target_values": sorted(target_values),
             }
+        )
+    if aggregate_valid_pixel_count <= 0:
+        raise RuntimeError(
+            "Diagnostic probability export contains no valid hand-labeled "
+            f"pixels across any row: {path}."
         )
     return {
         "row_count": len(rows),
         "sample_ids": sample_ids,
         "samples": shape_pairs,
+        "all_ignore_row_count": all_ignore_row_count,
+        "valid_row_count": len(rows) - all_ignore_row_count,
+        "aggregate_valid_pixel_count": aggregate_valid_pixel_count,
+        "observed_target_values": sorted(observed_target_values),
     }
 
 

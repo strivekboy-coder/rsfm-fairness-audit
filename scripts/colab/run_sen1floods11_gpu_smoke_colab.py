@@ -91,6 +91,10 @@ def validate_probability_export(path: str | Path) -> dict[str, Any]:
     if not sample_ids or len(sample_ids) != len(set(sample_ids)):
         raise RuntimeError(f"Probability export has empty or duplicate sample IDs: {root}")
     shapes: list[list[int]] = []
+    valid_pixel_counts: list[int] = []
+    observed_target_values: set[int] = set()
+    aggregate_valid_pixel_count = 0
+    all_ignore_row_count = 0
     for row in rows:
         artifact_path = _resolve_artifact(root, row["probability_path"])
         with np.load(artifact_path) as artifact:
@@ -111,13 +115,44 @@ def validate_probability_export(path: str | Path) -> dict[str, Any]:
             raise RuntimeError(f"Probability values outside [0,1]: {artifact_path}")
         if not np.allclose(probabilities.sum(axis=0), 1.0, atol=2e-4, rtol=2e-4):
             raise RuntimeError(f"Class probabilities do not sum to one: {artifact_path}")
-        if not np.any(np.isin(target, [0, 1])):
-            raise RuntimeError(f"Target has no valid hand-labeled pixels: {artifact_path}")
+        raw_target_values = np.unique(target).tolist()
+        try:
+            numeric_target_values = [float(value) for value in raw_target_values]
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"Target contains non-numeric values: {artifact_path}"
+            ) from exc
+        invalid_target_values = sorted(
+            value
+            for value in numeric_target_values
+            if not np.isfinite(value) or value not in {-1.0, 0.0, 1.0}
+        )
+        if invalid_target_values:
+            raise RuntimeError(
+                "Target contains values outside the formal {-1,0,1} contract: "
+                f"{artifact_path}, invalid={invalid_target_values}"
+            )
+        target_values = {int(value) for value in numeric_target_values}
+        observed_target_values.update(target_values)
+        valid_pixel_count = int(np.isin(target, [0, 1]).sum())
+        valid_pixel_counts.append(valid_pixel_count)
+        aggregate_valid_pixel_count += valid_pixel_count
+        if valid_pixel_count == 0:
+            all_ignore_row_count += 1
         shapes.append(list(target.shape))
+    if aggregate_valid_pixel_count <= 0:
+        raise RuntimeError(
+            f"Probability export contains no valid hand-labeled pixels across any row: {root}"
+        )
     return {
         "row_count": len(rows),
         "sample_ids": sample_ids,
         "target_shapes": shapes,
+        "valid_pixel_counts": valid_pixel_counts,
+        "all_ignore_row_count": all_ignore_row_count,
+        "valid_row_count": len(rows) - all_ignore_row_count,
+        "aggregate_valid_pixel_count": aggregate_valid_pixel_count,
+        "observed_target_values": sorted(observed_target_values),
     }
 
 

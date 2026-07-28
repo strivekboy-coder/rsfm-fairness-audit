@@ -49,6 +49,82 @@ def test_probability_export_gate_checks_real_segmentation_contract():
     assert terramind_report["samples"][0]["probability_shape"] == [2, 2]
 
 
+def test_diagnostic_export_allows_one_all_ignore_row_with_valid_export_support():
+    original_targets = [
+        np.full((2, 2), -1, dtype=np.int16),
+        np.asarray([[-1, 0], [1, -1]], dtype=np.int16),
+    ]
+    export = write_sen1_probability_export(
+        WORK / "mixed_ignore_export",
+        probabilities=[
+            np.asarray([[0.2, 0.9], [0.4, 0.7]], dtype=np.float32),
+            np.asarray([[0.3, 0.8], [0.6, 0.1]], dtype=np.float32),
+        ],
+        targets=original_targets,
+        filenames=["Ghana_5079.tif", "valid-chip.tif"],
+        batch_size=2,
+    )
+
+    outer = validate_probability_export(export)
+    inner = _validate_diagnostic_export(export, maximum_rows=2)
+
+    assert outer["valid_pixel_counts"] == [0, 2]
+    assert outer["all_ignore_row_count"] == 1
+    assert outer["valid_row_count"] == 1
+    assert outer["aggregate_valid_pixel_count"] == 2
+    assert outer["observed_target_values"] == [-1, 0, 1]
+    assert [sample["valid_pixel_count"] for sample in inner["samples"]] == [0, 2]
+    assert inner["all_ignore_row_count"] == 1
+    assert inner["valid_row_count"] == 1
+    assert inner["aggregate_valid_pixel_count"] == 2
+    assert inner["observed_target_values"] == [-1, 0, 1]
+
+    first_index = next((export / "index_parts").glob("*.jsonl"))
+    first_row = json.loads(first_index.read_text(encoding="utf-8").splitlines()[0])
+    with np.load(export / first_row["probability_path"]) as artifact:
+        np.testing.assert_array_equal(artifact["target"], original_targets[0])
+
+
+def test_diagnostic_export_rejects_export_when_every_row_is_all_ignore():
+    export = write_sen1_probability_export(
+        WORK / "all_ignore_export",
+        probabilities=[
+            np.asarray([[0.2, 0.9], [0.4, 0.7]], dtype=np.float32),
+            np.asarray([[0.3, 0.8], [0.6, 0.1]], dtype=np.float32),
+        ],
+        targets=[
+            np.full((2, 2), -1, dtype=np.int16),
+            np.full((2, 2), -1, dtype=np.int16),
+        ],
+        filenames=["ignore-a.tif", "ignore-b.tif"],
+        batch_size=2,
+    )
+
+    with pytest.raises(RuntimeError, match="across any row"):
+        validate_probability_export(export)
+    with pytest.raises(RuntimeError, match="across any row"):
+        _validate_diagnostic_export(export, maximum_rows=2)
+
+
+def test_diagnostic_export_rejects_target_values_outside_formal_contract():
+    export = write_sen1_probability_export(
+        WORK / "invalid_target_export",
+        probabilities=[
+            np.asarray([[0.2, 0.9], [0.4, 0.7]], dtype=np.float32),
+        ],
+        targets=[
+            np.asarray([[0, 1], [-1, 2]], dtype=np.int16),
+        ],
+        filenames=["invalid-label.tif"],
+        batch_size=1,
+    )
+
+    with pytest.raises(RuntimeError, match=r"\{-1,0,1\}"):
+        validate_probability_export(export)
+    with pytest.raises(RuntimeError, match=r"\{-1,0,1\}"):
+        _validate_diagnostic_export(export, maximum_rows=1)
+
+
 def test_probability_export_gate_rejects_nonprobabilities():
     export = write_sen1_probability_export(
         WORK / "export",
