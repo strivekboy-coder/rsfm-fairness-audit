@@ -497,3 +497,46 @@ def test_real_gpu_smoke_uses_lightning_fast_dev_run():
         fast_dev_run=True,
     )
     assert config["trainer"]["fast_dev_run"] is True
+
+
+def test_bounded_end_to_end_smoke_keeps_checkpointing_and_limits_all_stages():
+    config = build_terramind_sen1floods11_config(
+        sensor_mode="S1+S2",
+        s1_root="/content/sen1/S1GRDHand",
+        s2_root="/content/sen1/S2L1CHand",
+        label_root="/content/sen1/LabelHand",
+        train_split="/content/sen1/splits/train.txt",
+        val_split="/content/sen1/splits/val.txt",
+        test_split="/content/sen1/splits/test.txt",
+        run_dir="/content/runs/smoke",
+        backbone_checkpoint_path="/content/models/TerraMind_v1_base.pt",
+        max_epochs=1,
+        diagnostic_batch_limit=1,
+    )
+    trainer = config["trainer"]
+    assert trainer["fast_dev_run"] is False
+    assert trainer["max_epochs"] == 1
+    assert trainer["limit_train_batches"] == 1
+    assert trainer["limit_val_batches"] == 1
+    assert trainer["limit_predict_batches"] == 1
+    assert trainer["num_sanity_val_steps"] == 0
+    assert any(
+        callback["class_path"].endswith("ModelCheckpoint")
+        for callback in trainer["callbacks"]
+    )
+
+
+def test_diagnostic_batch_limit_must_be_positive():
+    with pytest.raises(TerraMindSen1ConfigError, match="diagnostic_batch_limit"):
+        build_terramind_sen1floods11_config(
+            sensor_mode="S1",
+            s1_root="s1",
+            s2_root="s2",
+            label_root="labels",
+            train_split="train",
+            val_split="val",
+            test_split="test",
+            run_dir="run",
+            backbone_checkpoint_path="checkpoint",
+            diagnostic_batch_limit=0,
+        )

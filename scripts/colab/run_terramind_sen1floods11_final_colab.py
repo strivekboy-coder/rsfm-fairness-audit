@@ -9,6 +9,8 @@ import subprocess
 import sys
 from typing import Any
 
+import numpy as np
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT / "src") not in sys.path:
@@ -118,7 +120,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--smoke-only",
         action="store_true",
-        help="Run one real train/validation batch per mode with Lightning fast_dev_run, then stop.",
+        help=(
+            "Run a bounded end-to-end GPU diagnostic per mode: one-epoch fit with one "
+            "train/validation batch, checkpoint reload, and one validation/test prediction "
+            "batch through the formal probability writer. Output is non-formal."
+        ),
     )
     return parser
 
@@ -168,6 +174,77 @@ def _export_complete(path: Path, expected: int) -> bool:
     return len(rows) == expected and all(
         _probability_artifact(path, row["probability_path"]).exists() for row in rows.values()
     )
+
+
+def _validate_diagnostic_export(
+    path: Path,
+    *,
+    maximum_rows: int,
+) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    for index_part in sorted((path / "index_parts").glob("*.jsonl")):
+        rows.extend(
+            json.loads(line)
+            for line in index_part.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+    if not 1 <= len(rows) <= int(maximum_rows):
+        raise RuntimeError(
+            f"Diagnostic probability export must contain 1..{maximum_rows} rows, "
+            f"observed={len(rows)} at {path}."
+        )
+    sample_ids = [str(row["sample_id"]) for row in rows]
+    if len(set(sample_ids)) != len(sample_ids):
+        raise RuntimeError(f"Diagnostic probability export has duplicate sample IDs: {path}.")
+    shape_pairs: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        artifact_path = _probability_artifact(path, row["probability_path"])
+        if not artifact_path.is_file():
+            raise RuntimeError(f"Missing diagnostic probability artifact: {artifact_path}")
+        with np.load(artifact_path) as artifact:
+            probability_array = np.asarray(artifact["probabilities"])
+            target_array = np.asarray(artifact["target"]).squeeze()
+        if probability_array.ndim != 3 or probability_array.shape[0] != 2:
+            raise RuntimeError(
+                f"Diagnostic probability map must be [2,H,W], got "
+                f"{probability_array.shape}: {artifact_path}."
+            )
+        if probability_array.shape[1:] != target_array.shape:
+            raise RuntimeError(
+                "Diagnostic probability/target shape mismatch at "
+                f"{path}, row={index}: probability={probability_array.shape}, "
+                f"target={target_array.shape}."
+            )
+        if not np.all(np.isfinite(probability_array)):
+            raise RuntimeError(f"Diagnostic probability map contains NaN/Inf: {path}, row={index}.")
+        if np.any((probability_array < 0.0) | (probability_array > 1.0)):
+            raise RuntimeError(f"Diagnostic probability map is outside [0,1]: {path}, row={index}.")
+        if not np.allclose(
+            probability_array.sum(axis=0),
+            1.0,
+            atol=2e-4,
+            rtol=2e-4,
+        ):
+            raise RuntimeError(
+                f"Diagnostic class probabilities do not sum to one: {path}, row={index}."
+            )
+        valid_array = np.isin(target_array, [0, 1])
+        if not np.any(valid_array):
+            raise RuntimeError(
+                f"Diagnostic target contains no valid hand-labeled pixels: {path}, row={index}."
+            )
+        shape_pairs.append(
+            {
+                "sample_id": sample_ids[index],
+                "probability_shape": list(probability_array.shape[1:]),
+                "valid_pixel_count": int(valid_array.sum()),
+            }
+        )
+    return {
+        "row_count": len(rows),
+        "sample_ids": sample_ids,
+        "samples": shape_pairs,
+    }
 
 
 def _checkpoint(run_dir: Path) -> Path | None:
@@ -380,8 +457,9 @@ def main() -> None:
                 "seed": seed,
                 "batch_size": args.batch_size,
                 "num_workers": args.num_workers,
-                "max_epochs": args.max_epochs,
-                "fast_dev_run": args.smoke_only,
+                "max_epochs": 1 if args.smoke_only else args.max_epochs,
+                "fast_dev_run": False,
+                "diagnostic_batch_limit": 1 if args.smoke_only else None,
                 "persistent_checkpoint_dir": (
                     args.persistent_output_dir / slug / f"seed_{seed}" / "checkpoints"
                     if args.persistent_output_dir is not None
@@ -398,19 +476,67 @@ def main() -> None:
                 config_dir / "fit.yaml", **fit_common
             )
             if args.smoke_only:
-                _run(_terratorch_command() + ["fit", "-c", str(fit_config)])
+                validation_config = write_terramind_sen1floods11_config(
+                    config_dir / "predict_validation.yaml",
+                    **prediction_common,
+                    prediction_split="validation",
+                    probability_output_dir=validation_output,
+                )
+                test_config = write_terramind_sen1floods11_config(
+                    config_dir / "predict_test.yaml",
+                    **prediction_common,
+                    prediction_split="test",
+                    probability_output_dir=test_output,
+                )
+                checkpoint = _fit_if_needed(
+                    fit_config,
+                    run_dir,
+                    backbone_checkpoint_sha256=backbone_checkpoint_sha256,
+                    dry_run=False,
+                )
+                assert checkpoint is not None
+                _run(
+                    _terratorch_command()
+                    + ["predict", "-c", str(validation_config), "--ckpt_path", str(checkpoint)]
+                )
+                _run(
+                    _terratorch_command()
+                    + ["predict", "-c", str(test_config), "--ckpt_path", str(checkpoint)]
+                )
+                validation_diagnostics = _validate_diagnostic_export(
+                    validation_output,
+                    maximum_rows=args.batch_size,
+                )
+                test_diagnostics = _validate_diagnostic_export(
+                    test_output,
+                    maximum_rows=args.batch_size,
+                )
+                overlap = sorted(
+                    set(validation_diagnostics["sample_ids"])
+                    & set(test_diagnostics["sample_ids"])
+                )
+                if overlap:
+                    raise RuntimeError(
+                        "TerraMind diagnostic validation/test sample IDs overlap: "
+                        + ", ".join(overlap[:10])
+                    )
                 smoke_manifest = run_dir / "diagnostic_manifest.json"
                 smoke_manifest.write_text(
                     json.dumps(
                         {
-                            "schema": "geobwer.sen1floods11.terramind_diagnostic.v2",
+                            "schema": "geobwer.sen1floods11.terramind_diagnostic.v3",
                             "formal_evidence": False,
-                            "reason": "real_gpu_fast_dev_run",
+                            "reason": "bounded_end_to_end_real_gpu_smoke",
                             "sensor_mode": mode,
                             "seed": seed,
                             "fit_config": str(fit_config),
                             "fit_config_sha256": file_sha256(fit_config),
                             "pretraining_checkpoint_sha256": backbone_checkpoint_sha256,
+                            "trained_checkpoint": str(checkpoint),
+                            "trained_checkpoint_sha256": file_sha256(checkpoint),
+                            "validation_export": validation_diagnostics,
+                            "test_export": test_diagnostics,
+                            "validation_test_sample_overlap": 0,
                         },
                         indent=2,
                     ),
@@ -483,12 +609,21 @@ def main() -> None:
         diagnostic_manifest.write_text(
             json.dumps(
                 {
-                    "schema": "geobwer.sen1floods11.terramind_panel_diagnostic.v1",
+                    "schema": "geobwer.sen1floods11.terramind_panel_diagnostic.v2",
                     "formal_evidence": False,
-                    "reason": "real_gpu_fast_dev_run",
+                    "reason": "bounded_end_to_end_real_gpu_smoke",
                     "modes": list(modes),
                     "seeds": list(seeds),
                     "pretraining_checkpoint_sha256": backbone_checkpoint_sha256,
+                    "checks": [
+                        "real_train_batch",
+                        "real_validation_batch",
+                        "checkpoint_saved_and_reloaded",
+                        "validation_probability_writer",
+                        "test_probability_writer",
+                        "finite_probability_maps_in_unit_interval",
+                        "validation_test_sample_disjointness",
+                    ],
                 },
                 indent=2,
             ),

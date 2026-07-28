@@ -100,3 +100,34 @@ def test_finalizes_labeled_probability_exports_without_test_tuning():
     manifest = json.loads(bundle.manifest.read_text(encoding="utf-8"))
     assert manifest["protocol"]["metadata"]["spatial_block_calibrated"] == "true"
     assert manifest["protocol"]["metadata"]["small_cluster_calibrated"] == "true"
+def test_supervised_smoke_subset_retains_multiple_event_groups():
+    from rsfm_fairness_audit.sen1_supervised_campaign import (
+        _diagnostic_prefix_subset,
+    )
+
+    ordered = [
+        *(f"Bolivia_{index:03d}" for index in range(8)),
+        *(f"Pakistan_{index:03d}" for index in range(8)),
+        *(f"Somalia_{index:03d}" for index in range(8)),
+    ]
+    selected = _diagnostic_prefix_subset(
+        ordered,
+        8,
+        require_multiple_groups=True,
+    )
+    assert len(selected) == 8
+    assert len({value.split("_", 1)[0] for value in selected}) == 3
+
+
+def test_supervised_smoke_subset_rejects_one_event_training_data():
+    from rsfm_fairness_audit.sen1_supervised_campaign import (
+        Sen1SupervisedCampaignError,
+        _diagnostic_prefix_subset,
+    )
+
+    with pytest.raises(Sen1SupervisedCampaignError, match="at least two event groups"):
+        _diagnostic_prefix_subset(
+            [f"Bolivia_{index:03d}" for index in range(8)],
+            8,
+            require_multiple_groups=True,
+        )

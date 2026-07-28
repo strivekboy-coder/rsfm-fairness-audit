@@ -119,6 +119,46 @@ def _mask(config: Sen1SupervisedConfig, prefix: str) -> np.ndarray:
     return output
 
 
+def _diagnostic_prefix_subset(
+    prefixes: Sequence[str],
+    maximum: int,
+    *,
+    require_multiple_groups: bool = False,
+) -> list[str]:
+    """Bound a smoke subset without collapsing an event-ordered split."""
+
+    if int(maximum) <= 0:
+        raise Sen1SupervisedCampaignError("diagnostic_max_samples must be positive.")
+    by_group: dict[str, list[str]] = {}
+    for prefix in prefixes:
+        by_group.setdefault(str(prefix).split("_", 1)[0], []).append(str(prefix))
+    if require_multiple_groups and len(by_group) < 2:
+        raise Sen1SupervisedCampaignError(
+            "The diagnostic training subset requires at least two event groups."
+        )
+    selected: list[str] = []
+    depth = 0
+    target = min(int(maximum), len(prefixes))
+    groups = sorted(by_group)
+    while len(selected) < target:
+        added = False
+        for group in groups:
+            members = by_group[group]
+            if depth < len(members):
+                selected.append(members[depth])
+                added = True
+                if len(selected) == target:
+                    break
+        if not added:
+            break
+        depth += 1
+    if require_multiple_groups and len({item.split("_", 1)[0] for item in selected}) < 2:
+        raise Sen1SupervisedCampaignError(
+            "diagnostic_max_samples is too small to retain two event groups."
+        )
+    return selected
+
+
 def compute_train_normalization(
     config: Sen1SupervisedConfig,
     prefixes: Sequence[str],
@@ -300,6 +340,17 @@ def _train_seed(
         in_channels=MODE_CHANNELS[mode],
         pretrained_encoder=config.pretrained_encoder,
     ).to(device)
+    parameter_device = str(next(model.parameters()).device)
+    gpu_name = (
+        torch.cuda.get_device_name(device)
+        if device.type == "cuda"
+        else "not_applicable"
+    )
+    print(
+        f"[sen1:baseline:device] resolved={device} gpu={gpu_name} "
+        f"model_parameter_device={parameter_device}",
+        flush=True,
+    )
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
     )
@@ -337,9 +388,15 @@ def _train_seed(
         train_loader = _loader(train_dataset, config, shuffle=True)
         model.train()
         losses: list[float] = []
-        for images, masks, _prefixes in train_loader:
+        for batch_index, (images, masks, _prefixes) in enumerate(train_loader):
             images = images.to(device, non_blocking=True)
             masks = masks.to(device, non_blocking=True)
+            if epoch == 1 and batch_index == 0:
+                print(
+                    f"[sen1:baseline:device] mode={mode} seed={seed} "
+                    f"input_tensor_device={images.device} mask_tensor_device={masks.device}",
+                    flush=True,
+                )
             optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=bool(config.amp and device.type == "cuda")):
                 logits = model(images)
@@ -583,7 +640,12 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
     }
     if config.diagnostic_max_samples:
         prefixes = {
-            key: values[: int(config.diagnostic_max_samples)] for key, values in prefixes.items()
+            key: _diagnostic_prefix_subset(
+                values,
+                int(config.diagnostic_max_samples),
+                require_multiple_groups=key == "train",
+            )
+            for key, values in prefixes.items()
         }
     elif {key: len(value) for key, value in prefixes.items()} != OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS:
         raise Sen1SupervisedCampaignError("Official Sen1 split counts changed.")
@@ -675,5 +737,6 @@ __all__ = [
     "Sen1SupervisedCampaignError",
     "Sen1SupervisedConfig",
     "compute_train_normalization",
+    "_diagnostic_prefix_subset",
     "run_sen1_supervised_campaign",
 ]

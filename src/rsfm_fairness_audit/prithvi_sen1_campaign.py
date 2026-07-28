@@ -178,6 +178,28 @@ def run_prithvi_sen1_probability_campaign(
     values["batch_size"] = config.batch_size
     model = PrithviSen1Floods11TLAdapter.from_config(values)
     model.load_model()
+    resolved_device = model._resolve_device()
+    parameter_device = "not_reported"
+    if hasattr(model.model, "parameters"):
+        try:
+            parameter_device = str(next(model.model.parameters()).device)
+        except (StopIteration, TypeError):
+            pass
+    try:
+        import torch
+
+        gpu_name = (
+            torch.cuda.get_device_name(resolved_device)
+            if resolved_device.type == "cuda"
+            else "not_applicable"
+        )
+    except ImportError:  # pragma: no cover - load_model already requires torch
+        gpu_name = "unavailable"
+    print(
+        f"[prithvi:sen1:device] resolved={resolved_device} gpu={gpu_name} "
+        f"model_parameter_device={parameter_device}",
+        flush=True,
+    )
     exports: dict[str, Path] = {}
     for split in ("validation", "test"):
         probabilities, targets, filenames, metadata = _predict_indices(

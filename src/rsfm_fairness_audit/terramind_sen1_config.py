@@ -56,6 +56,7 @@ def build_terramind_sen1floods11_config(
     num_workers: int = 4,
     max_epochs: int = 100,
     fast_dev_run: bool = False,
+    diagnostic_batch_limit: int | None = None,
 ) -> dict[str, Any]:
     mode = _mode(sensor_mode)
     if prediction_split not in {None, "validation", "test"}:
@@ -64,6 +65,8 @@ def build_terramind_sen1floods11_config(
         raise TerraMindSen1ConfigError("Prediction configs require probability_output_dir.")
     if int(checkpoint_mirror_every_n_epochs) <= 0:
         raise TerraMindSen1ConfigError("checkpoint_mirror_every_n_epochs must be positive.")
+    if diagnostic_batch_limit is not None and int(diagnostic_batch_limit) <= 0:
+        raise TerraMindSen1ConfigError("diagnostic_batch_limit must be positive when provided.")
     # Keep the released TerraMind *pre-training* standardisation used by IBM's
     # public Sen1Floods11 fine-tuning recipe.  TerraTorch's integration fixture
     # contains dataset statistics for a packaged downstream checkpoint; those
@@ -134,22 +137,35 @@ def build_terramind_sen1floods11_config(
                 },
             }
         )
+    trainer: dict[str, Any] = {
+        "accelerator": "auto",
+        "strategy": "auto",
+        "devices": "auto",
+        "num_nodes": 1,
+        "precision": "16-mixed",
+        "deterministic": True,
+        "logger": True,
+        "callbacks": callbacks,
+        "max_epochs": int(max_epochs),
+        "fast_dev_run": bool(fast_dev_run),
+        "log_every_n_steps": 5,
+        "default_root_dir": _path_text(run_dir),
+    }
+    if diagnostic_batch_limit is not None:
+        # Unlike Lightning fast_dev_run, this bounded diagnostic keeps
+        # checkpointing enabled so the real predict + probability-writer path
+        # can be exercised after the one-epoch fit.
+        trainer.update(
+            {
+                "limit_train_batches": int(diagnostic_batch_limit),
+                "limit_val_batches": int(diagnostic_batch_limit),
+                "limit_predict_batches": int(diagnostic_batch_limit),
+                "num_sanity_val_steps": 0,
+            }
+        )
     return {
         "seed_everything": int(seed),
-        "trainer": {
-            "accelerator": "auto",
-            "strategy": "auto",
-            "devices": "auto",
-            "num_nodes": 1,
-            "precision": "16-mixed",
-            "deterministic": True,
-            "logger": True,
-            "callbacks": callbacks,
-            "max_epochs": int(max_epochs),
-            "fast_dev_run": bool(fast_dev_run),
-            "log_every_n_steps": 5,
-            "default_root_dir": _path_text(run_dir),
-        },
+        "trainer": trainer,
         "data": {
             "class_path": datamodule,
             "init_args": {
