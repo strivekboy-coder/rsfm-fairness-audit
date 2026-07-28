@@ -138,6 +138,17 @@ def _terratorch_command() -> list[str]:
     raise RuntimeError("The official `terratorch` CLI is unavailable. Install terratorch>=1.2.5,<1.3 in Colab.")
 
 
+def _terratorch_predict_command() -> list[str]:
+    """Use the repository wrapper that filters only TerraTorch's default writer."""
+
+    validate_terratorch_runtime()
+    return [
+        sys.executable,
+        "-m",
+        "rsfm_fairness_audit.terratorch_predict_cli",
+    ]
+
+
 def _run(command: list[str]) -> None:
     print("[terramind:campaign]", " ".join(command), flush=True)
     subprocess.run(command, check=True, cwd=PROJECT_ROOT)
@@ -329,7 +340,10 @@ def _predict_if_needed(
         return
     if checkpoint is None:
         raise RuntimeError("Prediction requires a completed checkpoint.")
-    _run(_terratorch_command() + ["predict", "-c", str(config), "--ckpt_path", str(checkpoint)])
+    _run(
+        _terratorch_predict_command()
+        + ["predict", "-c", str(config), "--ckpt_path", str(checkpoint)]
+    )
     if not _export_complete(output, expected):
         raise RuntimeError(
             f"Probability export failed completeness check: expected={expected}, path={output}. "
@@ -497,11 +511,11 @@ def main() -> None:
                 )
                 assert checkpoint is not None
                 _run(
-                    _terratorch_command()
+                    _terratorch_predict_command()
                     + ["predict", "-c", str(validation_config), "--ckpt_path", str(checkpoint)]
                 )
                 _run(
-                    _terratorch_command()
+                    _terratorch_predict_command()
                     + ["predict", "-c", str(test_config), "--ckpt_path", str(checkpoint)]
                 )
                 validation_diagnostics = _validate_diagnostic_export(

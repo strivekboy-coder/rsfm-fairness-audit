@@ -567,3 +567,37 @@ def test_diagnostic_batch_limit_rejects_lightning_ambiguous_one():
             backbone_checkpoint_path="checkpoint",
             diagnostic_batch_limit=1,
         )
+
+
+def test_prediction_configs_keep_one_geobwer_writer_and_integer_bounded_batches():
+    config = build_terramind_sen1floods11_config(
+        sensor_mode="S1",
+        s1_root="s1",
+        s2_root="s2",
+        label_root="labels",
+        train_split="train",
+        val_split="validation",
+        test_split="test",
+        run_dir="run",
+        backbone_checkpoint_path="checkpoint",
+        prediction_split="validation",
+        probability_output_dir="probabilities",
+        diagnostic_batch_limit=2,
+    )
+    callbacks = config["trainer"]["callbacks"]
+    geobwer = [
+        callback
+        for callback in callbacks
+        if callback["class_path"]
+        == "rsfm_fairness_audit.terratorch_exports.GeoBWERProbabilityWriter"
+    ]
+    assert len(geobwer) == 1
+    assert config["trainer"]["limit_train_batches"] == 2
+    assert config["trainer"]["limit_val_batches"] == 2
+    assert config["trainer"]["limit_predict_batches"] == 2
+    assert isinstance(config["trainer"]["limit_predict_batches"], int)
+
+    callback_paths = {callback["class_path"] for callback in callbacks}
+    assert "lightning.pytorch.callbacks.RichProgressBar" in callback_paths
+    assert "lightning.pytorch.callbacks.ModelCheckpoint" in callback_paths
+    assert "terratorch.cli_tools.CustomWriter" not in callback_paths

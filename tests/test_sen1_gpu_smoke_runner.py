@@ -14,6 +14,7 @@ from scripts.colab.run_sen1floods11_gpu_smoke_colab import (
     validate_probability_export,
 )
 from scripts.colab.run_terramind_sen1floods11_final_colab import (
+    _terratorch_predict_command,
     _validate_diagnostic_export,
 )
 
@@ -89,3 +90,13 @@ def test_absolute_gpu_smoke_runner_help_works_outside_repo():
     )
     assert result.returncode == 0, result.stderr
     assert "TerraMind" in result.stdout
+
+
+def test_terramind_prediction_uses_repository_callback_safe_wrapper(monkeypatch):
+    monkeypatch.setattr(
+        "scripts.colab.run_terramind_sen1floods11_final_colab.validate_terratorch_runtime",
+        lambda: None,
+    )
+    command = _terratorch_predict_command()
+    assert command[:2] == [sys.executable, "-m"]
+    assert command[2] == "rsfm_fairness_audit.terratorch_predict_cli"
