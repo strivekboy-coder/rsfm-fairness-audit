@@ -37,8 +37,8 @@ python -u scripts/colab/run_sen1floods11_gpu_smoke_colab.py \
   --prithvi-prepared-data-root /content/data/sen1_prithvi_tl \
   --prithvi-prepared-metadata-csv /content/data/sen1_prithvi_tl/metadata.csv \
   --prithvi-model-config /content/rsfm-fairness-audit/configs/models/prithvi_tl_sen1floods11.yaml \
-  --output-dir /content/sen1_gpu_smoke_v0418 \
-  --persistent-output-dir /content/drive/MyDrive/rsfm_fairness_audit/outputs/geobwer_final_v3/00_smoke_evidence/sen1_gpu_smoke_v0418 \
+  --output-dir /content/sen1_gpu_smoke_v0419 \
+  --persistent-output-dir /content/drive/MyDrive/rsfm_fairness_audit/outputs/geobwer_final_v3/00_smoke_evidence/sen1_gpu_smoke_v0419 \
   --seed 42 \
   --diagnostic-max-samples 12 \
   --batch-size 2 \
@@ -47,6 +47,8 @@ python -u scripts/colab/run_sen1floods11_gpu_smoke_colab.py \
 
 路径若与当前 runtime 不同，只修改资产路径，不修改 seed、模型或科学参数。
 失败时保留原目录作为诊断证据，修复后使用新的版本化 smoke 目录，不在原目录上覆盖。
+v0.4.19 固定每个 TerraMind smoke 阶段运行 2 个 batch；这是为了避免
+Lightning 将 `1` 解析为 `1.0`（即 100% batches），不改变任何正式训练参数。
 
 ## 正式启动
 

@@ -65,8 +65,12 @@ def build_terramind_sen1floods11_config(
         raise TerraMindSen1ConfigError("Prediction configs require probability_output_dir.")
     if int(checkpoint_mirror_every_n_epochs) <= 0:
         raise TerraMindSen1ConfigError("checkpoint_mirror_every_n_epochs must be positive.")
-    if diagnostic_batch_limit is not None and int(diagnostic_batch_limit) <= 0:
-        raise TerraMindSen1ConfigError("diagnostic_batch_limit must be positive when provided.")
+    if diagnostic_batch_limit is not None and int(diagnostic_batch_limit) < 2:
+        raise TerraMindSen1ConfigError(
+            "diagnostic_batch_limit must be at least 2. Lightning treats 1/1.0 "
+            "ambiguously as 100% of batches; an integer >=2 is unambiguously a "
+            "fixed, small batch count."
+        )
     # Keep the released TerraMind *pre-training* standardisation used by IBM's
     # public Sen1Floods11 fine-tuning recipe.  TerraTorch's integration fixture
     # contains dataset statistics for a packaged downstream checkpoint; those

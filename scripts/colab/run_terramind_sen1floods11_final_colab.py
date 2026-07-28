@@ -40,6 +40,7 @@ from rsfm_fairness_audit.terramind_sen1_config import (  # noqa: E402
 
 
 MODES = ("S1", "S2", "S1+S2")
+SMOKE_BATCH_LIMIT = 2
 
 
 def _csv_ints(value: str) -> tuple[int, ...]:
@@ -459,7 +460,7 @@ def main() -> None:
                 "num_workers": args.num_workers,
                 "max_epochs": 1 if args.smoke_only else args.max_epochs,
                 "fast_dev_run": False,
-                "diagnostic_batch_limit": 1 if args.smoke_only else None,
+                "diagnostic_batch_limit": SMOKE_BATCH_LIMIT if args.smoke_only else None,
                 "persistent_checkpoint_dir": (
                     args.persistent_output_dir / slug / f"seed_{seed}" / "checkpoints"
                     if args.persistent_output_dir is not None
@@ -505,11 +506,11 @@ def main() -> None:
                 )
                 validation_diagnostics = _validate_diagnostic_export(
                     validation_output,
-                    maximum_rows=args.batch_size,
+                    maximum_rows=args.batch_size * SMOKE_BATCH_LIMIT,
                 )
                 test_diagnostics = _validate_diagnostic_export(
                     test_output,
-                    maximum_rows=args.batch_size,
+                    maximum_rows=args.batch_size * SMOKE_BATCH_LIMIT,
                 )
                 overlap = sorted(
                     set(validation_diagnostics["sample_ids"])
@@ -537,6 +538,7 @@ def main() -> None:
                             "validation_export": validation_diagnostics,
                             "test_export": test_diagnostics,
                             "validation_test_sample_overlap": 0,
+                            "bounded_batch_count": SMOKE_BATCH_LIMIT,
                         },
                         indent=2,
                     ),
@@ -615,6 +617,7 @@ def main() -> None:
                     "modes": list(modes),
                     "seeds": list(seeds),
                     "pretraining_checkpoint_sha256": backbone_checkpoint_sha256,
+                    "bounded_batch_count_per_stage": SMOKE_BATCH_LIMIT,
                     "checks": [
                         "real_train_batch",
                         "real_validation_batch",

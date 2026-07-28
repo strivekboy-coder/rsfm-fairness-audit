@@ -15,6 +15,32 @@ class TerraTorchExportError(RuntimeError):
     """Raised when a formal TerraTorch probability export is incomplete."""
 
 
+def segmentation_probabilities_from_logits(logits: Any) -> Any:
+    """Validate raw segmentation logits and retain every class probability.
+
+    TerraTorch's ``select_classes`` is an inference presentation hook.  With
+    ``output_on_inference='prediction'`` it returns an argmax tuple rather than
+    logits, so it must never participate in a lossless audit export.
+    """
+
+    try:
+        import torch
+    except ImportError as exc:  # pragma: no cover - Colab runtime requires torch
+        raise TerraTorchExportError(
+            "PyTorch is required to convert segmentation logits to probabilities."
+        ) from exc
+    if not torch.is_tensor(logits):
+        raise TerraTorchExportError(
+            "Segmentation model output must be the raw logits tensor [N,K,H,W]; "
+            f"got {type(logits).__name__}."
+        )
+    if logits.ndim != 4 or logits.shape[1] < 2:
+        raise TerraTorchExportError(
+            f"Segmentation logits must be [N,K,H,W] with K>=2, got {tuple(logits.shape)}."
+        )
+    return torch.softmax(logits, dim=1)
+
+
 def _as_numpy(value: Any) -> np.ndarray:
     if hasattr(value, "detach"):
         value = value.detach().cpu().numpy()
@@ -362,13 +388,8 @@ else:  # pragma: no cover - executed in the Colab model runtime
                 logits = tiled_inference(model_forward, x, **self.tiled_inference_parameters, **rest)
             else:
                 logits = model_forward(x, **rest)
-            logits = self.select_classes(logits)
-            if logits.ndim != 4 or logits.shape[1] < 2:
-                raise TerraTorchExportError(
-                    f"Segmentation logits must be [N,K,H,W] with K>=2, got {tuple(logits.shape)}."
-                )
             return {
-                "probabilities": torch.softmax(logits, dim=1),
+                "probabilities": segmentation_probabilities_from_logits(logits),
                 "target": batch.get("mask"),
                 "filename": file_names,
             }

@@ -275,7 +275,7 @@ def test_generated_fit_yaml_parses_with_frozen_terratorch_cli(tmp_path):
         test_split="/content/sen1/splits/flood_test_data.txt",
         run_dir="/content/outputs/terramind_sen1_smoke",
         backbone_checkpoint_path="/content/models/TerraMind_v1_base.pt",
-        fast_dev_run=True,
+        diagnostic_batch_limit=2,
     )
     project_root = Path(__file__).resolve().parents[1]
     env = os.environ.copy()
@@ -308,6 +308,9 @@ def test_generated_fit_yaml_parses_with_frozen_terratorch_cli(tmp_path):
     )
     assert "lightning.pytorch.cli.ReduceLROnPlateau" in result.stdout
     assert "monitor: val/loss" in result.stdout
+    assert "limit_train_batches: 2" in result.stdout
+    assert "limit_val_batches: 2" in result.stdout
+    assert "limit_predict_batches: 2" in result.stdout
 
 
 @pytest.mark.skipif(
@@ -500,6 +503,8 @@ def test_real_gpu_smoke_uses_lightning_fast_dev_run():
 
 
 def test_bounded_end_to_end_smoke_keeps_checkpointing_and_limits_all_stages():
+    import yaml
+
     config = build_terramind_sen1floods11_config(
         sensor_mode="S1+S2",
         s1_root="/content/sen1/S1GRDHand",
@@ -511,19 +516,25 @@ def test_bounded_end_to_end_smoke_keeps_checkpointing_and_limits_all_stages():
         run_dir="/content/runs/smoke",
         backbone_checkpoint_path="/content/models/TerraMind_v1_base.pt",
         max_epochs=1,
-        diagnostic_batch_limit=1,
+        diagnostic_batch_limit=2,
     )
     trainer = config["trainer"]
     assert trainer["fast_dev_run"] is False
     assert trainer["max_epochs"] == 1
-    assert trainer["limit_train_batches"] == 1
-    assert trainer["limit_val_batches"] == 1
-    assert trainer["limit_predict_batches"] == 1
+    assert trainer["limit_train_batches"] == 2
+    assert trainer["limit_val_batches"] == 2
+    assert trainer["limit_predict_batches"] == 2
+    assert isinstance(trainer["limit_train_batches"], int)
+    assert isinstance(trainer["limit_val_batches"], int)
+    assert isinstance(trainer["limit_predict_batches"], int)
     assert trainer["num_sanity_val_steps"] == 0
     assert any(
         callback["class_path"].endswith("ModelCheckpoint")
         for callback in trainer["callbacks"]
     )
+    round_trip = yaml.safe_load(yaml.safe_dump(config, sort_keys=False))
+    assert round_trip["trainer"]["limit_train_batches"] == 2
+    assert isinstance(round_trip["trainer"]["limit_train_batches"], int)
 
 
 def test_diagnostic_batch_limit_must_be_positive():
@@ -539,4 +550,20 @@ def test_diagnostic_batch_limit_must_be_positive():
             run_dir="run",
             backbone_checkpoint_path="checkpoint",
             diagnostic_batch_limit=0,
+        )
+
+
+def test_diagnostic_batch_limit_rejects_lightning_ambiguous_one():
+    with pytest.raises(TerraMindSen1ConfigError, match="ambiguously"):
+        build_terramind_sen1floods11_config(
+            sensor_mode="S1",
+            s1_root="s1",
+            s2_root="s2",
+            label_root="labels",
+            train_split="train",
+            val_split="val",
+            test_split="test",
+            run_dir="run",
+            backbone_checkpoint_path="checkpoint",
+            diagnostic_batch_limit=1,
         )
