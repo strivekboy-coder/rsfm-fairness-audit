@@ -28,6 +28,7 @@ class Sen1SupervisedCampaignError(RuntimeError):
 
 SENSOR_MODES = ("S1", "S2", "S1+S2")
 MODE_CHANNELS = {"S1": 2, "S2": 13, "S1+S2": 15}
+FORMAL_MASK_VALUES = {-1, 0, 1}
 
 
 @dataclass(frozen=True)
@@ -111,12 +112,41 @@ def _mask(config: Sen1SupervisedConfig, prefix: str) -> np.ndarray:
     value = np.asarray(_read_raster(_paths(config, prefix)["label"])).squeeze()
     if value.ndim != 2:
         raise Sen1SupervisedCampaignError(f"Expected a 2D label mask for {prefix}, got {value.shape}.")
-    output = np.full(value.shape, -1, dtype=np.int64)
-    output[value == 0] = 0
-    output[value == 1] = 1
-    if not np.any(output >= 0):
-        raise Sen1SupervisedCampaignError(f"Label mask has no valid 0/1 pixels for {prefix}.")
-    return output
+    raw_values = np.unique(value).tolist()
+    try:
+        numeric_values = [float(item) for item in raw_values]
+    except (TypeError, ValueError) as exc:
+        raise Sen1SupervisedCampaignError(
+            f"Label mask contains non-numeric values for {prefix}: {raw_values}."
+        ) from exc
+    invalid_values = sorted(
+        item
+        for item in numeric_values
+        if not np.isfinite(item) or item not in {-1.0, 0.0, 1.0}
+    )
+    if invalid_values:
+        raise Sen1SupervisedCampaignError(
+            f"Label mask values must belong to {{-1,0,1}} for {prefix}; "
+            f"invalid={invalid_values}."
+        )
+    # Preserve the official ignore semantics. A chip containing only -1 is a
+    # valid split member even though it contributes no supervised pixels.
+    return np.asarray(value, dtype=np.int64)
+
+
+def _prefix_sha256(prefixes: Sequence[str]) -> str:
+    return hashlib.sha256(
+        ("\n".join(map(str, prefixes)) + "\n").encode("utf-8")
+    ).hexdigest()
+
+
+def _prefix_lineage(prefixes: Sequence[str]) -> dict[str, Any]:
+    values = [str(prefix) for prefix in prefixes]
+    return {
+        "sample_count": len(values),
+        "prefix_sha256": _prefix_sha256(values),
+        "prefixes": values,
+    }
 
 
 def _diagnostic_prefix_subset(
@@ -193,11 +223,14 @@ def compute_train_normalization(
     mean = total / count
     variance = np.maximum(square / count - np.square(mean), 1e-12)
     return {
-        "schema": "geobwer.sen1floods11.train_normalization.v1",
+        "schema": "geobwer.sen1floods11.train_normalization.v2",
         "sensor_mode": mode,
         "selection_split": "official_train",
         "test_rows_used": False,
+        "normalization_sample_count": len(prefixes),
         "sample_count": len(prefixes),
+        "sample_prefix_sha256": _prefix_sha256(prefixes),
+        "sample_prefixes": list(map(str, prefixes)),
         "pixel_count": int(count),
         "mean": mean.tolist(),
         "std": np.sqrt(variance).tolist(),
@@ -238,6 +271,15 @@ class _Dataset:
         torch = _require_torch()
         prefix = self.prefixes[index]
         image = (_mode_array(self.config, prefix, self.mode) - self.mean) / self.std
+        if not np.all(np.isfinite(image)):
+            raw = _mode_array(self.config, prefix, self.mode)
+            raise Sen1SupervisedCampaignError(
+                "Normalized input contains NaN/Inf: "
+                f"prefix={prefix}, mode={self.mode}, "
+                f"raw_range=[{float(np.nanmin(raw))},{float(np.nanmax(raw))}], "
+                f"normalization_mean={self.mean[:, 0, 0].tolist()}, "
+                f"normalization_std={self.std[:, 0, 0].tolist()}."
+            )
         mask = _mask(self.config, prefix)
         if self.augment:
             rng = random.Random(
@@ -295,20 +337,104 @@ def _confusion(probability: np.ndarray, target: np.ndarray) -> tuple[int, int, i
     )
 
 
-def _evaluate(model: Any, loader: Any, device: Any) -> tuple[float, list[np.ndarray], list[np.ndarray], list[str]]:
+def _tensor_range(value: Any) -> dict[str, Any]:
+    torch = _require_torch()
+    detached = value.detach()
+    finite = torch.isfinite(detached)
+    finite_count = int(finite.sum().item())
+    if finite_count == 0:
+        return {
+            "shape": list(detached.shape),
+            "finite_count": 0,
+            "minimum": None,
+            "maximum": None,
+        }
+    selected = detached[finite]
+    return {
+        "shape": list(detached.shape),
+        "finite_count": finite_count,
+        "minimum": float(selected.min().cpu()),
+        "maximum": float(selected.max().cpu()),
+    }
+
+
+def _batch_support(masks: Any, prefixes: Sequence[str]) -> dict[str, Any]:
+    torch = _require_torch()
+    unique_values = sorted(int(value) for value in torch.unique(masks).detach().cpu().tolist())
+    invalid_values = sorted(set(unique_values) - FORMAL_MASK_VALUES)
+    if invalid_values:
+        raise Sen1SupervisedCampaignError(
+            "Training/evaluation mask values must belong to {-1,0,1}: "
+            f"prefixes={list(map(str, prefixes))}, invalid={invalid_values}."
+        )
+    valid_by_sample = (
+        torch.isin(masks, torch.tensor([0, 1], device=masks.device))
+        .reshape(masks.shape[0], -1)
+        .sum(dim=1)
+        .detach()
+        .cpu()
+        .tolist()
+    )
+    return {
+        "prefixes": list(map(str, prefixes)),
+        "valid_pixel_counts": [int(value) for value in valid_by_sample],
+        "aggregate_valid_pixel_count": int(sum(valid_by_sample)),
+        "observed_target_values": unique_values,
+    }
+
+
+def _evaluate(
+    model: Any,
+    loader: Any,
+    device: Any,
+    *,
+    mode: str,
+) -> tuple[
+    float,
+    list[np.ndarray],
+    list[np.ndarray],
+    list[str],
+    dict[str, Any],
+]:
     torch = _require_torch()
     model.eval()
     tp = fp = fn = 0
     probabilities: list[np.ndarray] = []
     targets: list[np.ndarray] = []
     prefixes: list[str] = []
+    aggregate_valid_pixel_count = 0
+    all_ignore_row_count = 0
+    observed_target_values: set[int] = set()
     with torch.inference_mode():
         for images, masks, batch_prefixes in loader:
             images = images.to(device, non_blocking=True)
+            if not bool(torch.isfinite(images).all().item()):
+                raise Sen1SupervisedCampaignError(
+                    "Evaluation input contains NaN/Inf: "
+                    f"mode={mode}, prefixes={list(map(str, batch_prefixes))}, "
+                    f"input_range={_tensor_range(images)}."
+                )
             logits = model(images)
+            if not bool(torch.isfinite(logits).all().item()):
+                raise Sen1SupervisedCampaignError(
+                    "Evaluation logits contain NaN/Inf: "
+                    f"mode={mode}, prefixes={list(map(str, batch_prefixes))}, "
+                    f"input_range={_tensor_range(images)}, "
+                    f"logits_range={_tensor_range(logits)}."
+                )
             probs = torch.sigmoid(logits).detach().cpu().numpy().astype(np.float32)
             mask_values = masks.numpy().astype(np.int16)
             for probability, target, prefix in zip(probs, mask_values, batch_prefixes):
+                target_values = {int(value) for value in np.unique(target).tolist()}
+                invalid_values = sorted(target_values - FORMAL_MASK_VALUES)
+                if invalid_values:
+                    raise Sen1SupervisedCampaignError(
+                        f"Evaluation target values are invalid for {prefix}: {invalid_values}."
+                    )
+                valid_pixel_count = int(np.isin(target, [0, 1]).sum())
+                aggregate_valid_pixel_count += valid_pixel_count
+                all_ignore_row_count += int(valid_pixel_count == 0)
+                observed_target_values.update(target_values)
                 ctp, cfp, cfn = _confusion(probability, target)
                 tp += ctp
                 fp += cfp
@@ -316,8 +442,129 @@ def _evaluate(model: Any, loader: Any, device: Any) -> tuple[float, list[np.ndar
                 probabilities.append(probability)
                 targets.append(target)
                 prefixes.append(str(prefix))
+    if aggregate_valid_pixel_count <= 0:
+        raise Sen1SupervisedCampaignError(
+            f"Evaluation split has no valid 0/1 pixels across any row for mode={mode}."
+        )
     union = tp + fp + fn
-    return (float(tp / union) if union else 1.0), probabilities, targets, prefixes
+    support = {
+        "row_count": len(prefixes),
+        "all_ignore_row_count": all_ignore_row_count,
+        "valid_row_count": len(prefixes) - all_ignore_row_count,
+        "aggregate_valid_pixel_count": aggregate_valid_pixel_count,
+        "observed_target_values": sorted(observed_target_values),
+        "valid_pixel_counts": [
+            int(np.isin(target, [0, 1]).sum()) for target in targets
+        ],
+    }
+    return (
+        float(tp / union) if union else 1.0,
+        probabilities,
+        targets,
+        prefixes,
+        support,
+    )
+
+
+def _training_batch_step(
+    *,
+    model: Any,
+    optimizer: Any,
+    scaler: Any,
+    images: Any,
+    masks: Any,
+    prefixes: Sequence[str],
+    device: Any,
+    mode: str,
+    amp: bool,
+) -> dict[str, Any]:
+    """Execute one effective optimization step or explicitly skip all-ignore."""
+
+    torch = _require_torch()
+    support = _batch_support(masks, prefixes)
+    if not bool(torch.isfinite(images).all().item()):
+        raise Sen1SupervisedCampaignError(
+            "Normalized training input contains NaN/Inf: "
+            f"mode={mode}, prefixes={support['prefixes']}, "
+            f"input_range={_tensor_range(images)}, "
+            f"valid_pixel_counts={support['valid_pixel_counts']}."
+        )
+    if support["aggregate_valid_pixel_count"] == 0:
+        return {
+            **support,
+            "skipped_all_ignore": True,
+            "loss": None,
+        }
+    optimizer.zero_grad(set_to_none=True)
+    with torch.amp.autocast(
+        "cuda", enabled=bool(amp and device.type == "cuda")
+    ):
+        logits = model(images)
+        if not bool(torch.isfinite(logits).all().item()):
+            raise Sen1SupervisedCampaignError(
+                "Training logits contain NaN/Inf: "
+                f"mode={mode}, prefixes={support['prefixes']}, "
+                f"input_range={_tensor_range(images)}, "
+                f"logits_range={_tensor_range(logits)}, "
+                f"valid_pixel_counts={support['valid_pixel_counts']}."
+            )
+        loss = masked_bce_dice_loss(logits, masks)
+    if not bool(torch.isfinite(loss).all().item()):
+        raise Sen1SupervisedCampaignError(
+            "Training loss is NaN/Inf for an effective batch: "
+            f"mode={mode}, prefixes={support['prefixes']}, "
+            f"input_range={_tensor_range(images)}, "
+            f"logits_range={_tensor_range(logits)}, "
+            f"valid_pixel_counts={support['valid_pixel_counts']}."
+        )
+    scale_before = float(scaler.get_scale())
+    if not np.isfinite(scale_before):
+        raise Sen1SupervisedCampaignError(
+            "AMP gradient scale is NaN/Inf before backward: "
+            f"mode={mode}, prefixes={support['prefixes']}, scale={scale_before}."
+        )
+    scaler.scale(loss).backward()
+    scaler.unscale_(optimizer)
+    invalid_gradient_parameters = [
+        name
+        for name, parameter in model.named_parameters()
+        if parameter.grad is not None
+        and not bool(torch.isfinite(parameter.grad).all().item())
+    ]
+    if invalid_gradient_parameters:
+        optimizer.zero_grad(set_to_none=True)
+        raise Sen1SupervisedCampaignError(
+            "Training gradients contain NaN/Inf before optimizer.step: "
+            f"mode={mode}, prefixes={support['prefixes']}, "
+            f"parameters={invalid_gradient_parameters[:20]}, "
+            f"input_range={_tensor_range(images)}, "
+            f"logits_range={_tensor_range(logits)}, "
+            f"valid_pixel_counts={support['valid_pixel_counts']}."
+        )
+    scaler.step(optimizer)
+    scaler.update()
+    scale_after = float(scaler.get_scale())
+    if not np.isfinite(scale_after):
+        raise Sen1SupervisedCampaignError(
+            "AMP gradient scale is NaN/Inf after optimizer update: "
+            f"mode={mode}, prefixes={support['prefixes']}, scale={scale_after}."
+        )
+    invalid_parameter_values = [
+        name
+        for name, parameter in model.named_parameters()
+        if not bool(torch.isfinite(parameter).all().item())
+    ]
+    if invalid_parameter_values:
+        raise Sen1SupervisedCampaignError(
+            "Model parameters contain NaN/Inf after optimizer.step: "
+            f"mode={mode}, prefixes={support['prefixes']}, "
+            f"parameters={invalid_parameter_values[:20]}."
+        )
+    return {
+        **support,
+        "skipped_all_ignore": False,
+        "loss": float(loss.detach().cpu()),
+    }
 
 
 def _train_seed(
@@ -383,11 +630,13 @@ def _train_seed(
     best_state: dict[str, Any] | None = None
     no_improvement = 0
     history: list[dict[str, Any]] = []
+    skipped_all_ignore_batch_count = 0
     for epoch in range(1, config.max_epochs + 1):
         train_dataset.set_epoch(epoch)
         train_loader = _loader(train_dataset, config, shuffle=True)
         model.train()
         losses: list[float] = []
+        epoch_skipped_all_ignore_batch_count = 0
         for batch_index, (images, masks, _prefixes) in enumerate(train_loader):
             images = images.to(device, non_blocking=True)
             masks = masks.to(device, non_blocking=True)
@@ -397,21 +646,45 @@ def _train_seed(
                     f"input_tensor_device={images.device} mask_tensor_device={masks.device}",
                     flush=True,
                 )
-            optimizer.zero_grad(set_to_none=True)
-            with torch.amp.autocast("cuda", enabled=bool(config.amp and device.type == "cuda")):
-                logits = model(images)
-                loss = masked_bce_dice_loss(logits, masks)
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            losses.append(float(loss.detach().cpu()))
-        selection_iou, _, _, _ = _evaluate(model, selection_loader, device)
+            batch_result = _training_batch_step(
+                model=model,
+                optimizer=optimizer,
+                scaler=scaler,
+                images=images,
+                masks=masks,
+                prefixes=_prefixes,
+                device=device,
+                mode=mode,
+                amp=config.amp,
+            )
+            if batch_result["skipped_all_ignore"]:
+                skipped_all_ignore_batch_count += 1
+                epoch_skipped_all_ignore_batch_count += 1
+                print(
+                    "[sen1:baseline] skipped all-ignore training batch "
+                    f"mode={mode} seed={seed} epoch={epoch} "
+                    f"prefixes={batch_result['prefixes']}",
+                    flush=True,
+                )
+                continue
+            losses.append(float(batch_result["loss"]))
+        if not losses:
+            raise Sen1SupervisedCampaignError(
+                f"Training epoch has no effective 0/1 pixels: mode={mode}, "
+                f"seed={seed}, epoch={epoch}."
+            )
+        selection_iou, _, _, _, selection_support = _evaluate(
+            model, selection_loader, device, mode=mode
+        )
         scheduler.step(selection_iou)
         history.append(
             {
                 "epoch": epoch,
                 "train_loss": float(np.mean(losses)),
                 "inner_selection_micro_iou": selection_iou,
+                "inner_selection_support": selection_support,
+                "effective_batch_count": len(losses),
+                "skipped_all_ignore_batch_count": epoch_skipped_all_ignore_batch_count,
                 "learning_rate": float(optimizer.param_groups[0]["lr"]),
             }
         )
@@ -451,26 +724,45 @@ def _train_seed(
         config, train_prefixes, mode, normalization, augment=True, seed=seed + 100_003
     )
     refit_history: list[dict[str, Any]] = []
+    refit_skipped_all_ignore_batch_count = 0
     for epoch in range(1, best_epoch + 1):
         full_train_dataset.set_epoch(epoch)
         model.train()
         losses: list[float] = []
+        epoch_skipped_all_ignore_batch_count = 0
         for images, masks, _prefixes in _loader(
             full_train_dataset, config, shuffle=True
         ):
             images = images.to(device, non_blocking=True)
             masks = masks.to(device, non_blocking=True)
-            optimizer.zero_grad(set_to_none=True)
-            with torch.amp.autocast(
-                "cuda", enabled=bool(config.amp and device.type == "cuda")
-            ):
-                loss = masked_bce_dice_loss(model(images), masks)
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            losses.append(float(loss.detach().cpu()))
+            batch_result = _training_batch_step(
+                model=model,
+                optimizer=optimizer,
+                scaler=scaler,
+                images=images,
+                masks=masks,
+                prefixes=_prefixes,
+                device=device,
+                mode=mode,
+                amp=config.amp,
+            )
+            if batch_result["skipped_all_ignore"]:
+                refit_skipped_all_ignore_batch_count += 1
+                epoch_skipped_all_ignore_batch_count += 1
+                continue
+            losses.append(float(batch_result["loss"]))
+        if not losses:
+            raise Sen1SupervisedCampaignError(
+                f"Refit epoch has no effective 0/1 pixels: mode={mode}, "
+                f"seed={seed}, epoch={epoch}."
+            )
         refit_history.append(
-            {"epoch": epoch, "full_train_loss": float(np.mean(losses))}
+            {
+                "epoch": epoch,
+                "full_train_loss": float(np.mean(losses)),
+                "effective_batch_count": len(losses),
+                "skipped_all_ignore_batch_count": epoch_skipped_all_ignore_batch_count,
+            }
         )
     best_state = {
         key: value.detach().cpu().clone() for key, value in model.state_dict().items()
@@ -496,12 +788,13 @@ def _train_seed(
     )
     exports: dict[str, Path] = {}
     split_metrics: dict[str, float] = {}
+    split_support: dict[str, dict[str, Any]] = {}
     for split in ("validation", "test"):
         dataset = _Dataset(
             config, split_prefixes[split], mode, normalization, augment=False, seed=seed
         )
-        iou, probabilities, targets, prefixes = _evaluate(
-            model, _loader(dataset, config, shuffle=False), device
+        iou, probabilities, targets, prefixes, support = _evaluate(
+            model, _loader(dataset, config, shuffle=False), device, mode=mode
         )
         filenames = [
             {
@@ -517,12 +810,31 @@ def _train_seed(
             filenames=filenames,
             batch_size=config.batch_size,
         )
+        support_path = exports[split] / "support_contract.json"
+        support_path.write_text(
+            json.dumps(
+                {
+                    "schema": "geobwer.sen1floods11.probability_support.v1",
+                    "split": split,
+                    "sensor_mode": mode,
+                    **support,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        split_support[split] = {
+            **support,
+            "support_contract": str(support_path),
+            "support_contract_sha256": file_sha256(support_path),
+        }
         split_metrics[split] = iou
     manifest = output_dir / "run_manifest.json"
     manifest.write_text(
         json.dumps(
             {
-                "schema": "geobwer.sen1floods11.supervised_resnet34_unet.v1",
+                "schema": "geobwer.sen1floods11.supervised_resnet34_unet.v2",
                 "formal_evidence": config.diagnostic_max_samples is None,
                 "architecture": "resnet34_unet",
                 "adaptation_protocol": "supervised_from_scratch_decoder_imagenet_encoder_initialization"
@@ -541,6 +853,9 @@ def _train_seed(
                 "checkpoint_sha256": file_sha256(checkpoint),
                 "normalization": dict(normalization),
                 "probability_exports": {key: str(value) for key, value in exports.items()},
+                "split_support": split_support,
+                "skipped_all_ignore_batch_count": skipped_all_ignore_batch_count,
+                "refit_skipped_all_ignore_batch_count": refit_skipped_all_ignore_batch_count,
                 "history": history,
                 "refit_history": refit_history,
             },
@@ -574,7 +889,7 @@ def _reuse_completed_seed(
         return None
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     if (
-        payload.get("schema") != "geobwer.sen1floods11.supervised_resnet34_unet.v1"
+        payload.get("schema") != "geobwer.sen1floods11.supervised_resnet34_unet.v2"
         or str(payload.get("sensor_mode")) != mode
         or int(payload.get("seed", -1)) != int(seed)
         or str(payload.get("checkpoint_sha256", "")) != file_sha256(checkpoint)
@@ -588,7 +903,8 @@ def _reuse_completed_seed(
     }
     for split, expected in (("validation", expected_validation), ("test", expected_test)):
         index = exports[split] / "index_parts" / "part-000000.jsonl"
-        if not index.is_file():
+        support_path = exports[split] / "support_contract.json"
+        if not index.is_file() or not support_path.is_file():
             return None
         rows = [
             json.loads(line)
@@ -602,6 +918,19 @@ def _reuse_completed_seed(
             for row in rows
         ):
             return None
+        support = json.loads(support_path.read_text(encoding="utf-8"))
+        manifest_support = payload.get("split_support", {}).get(split, {})
+        if (
+            support.get("schema")
+            != "geobwer.sen1floods11.probability_support.v1"
+            or int(support.get("row_count", -1)) != expected
+            or int(support.get("aggregate_valid_pixel_count", 0)) <= 0
+            or str(manifest_support.get("support_contract_sha256", ""))
+            != file_sha256(support_path)
+        ):
+            raise Sen1SupervisedCampaignError(
+                f"Completed probability support contract is invalid: {support_path}."
+            )
     print(f"[sen1:baseline] reusing completed mode={mode} seed={seed}", flush=True)
     return {
         "checkpoint": checkpoint,
@@ -633,11 +962,20 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
         },
         config.output_dir / "official_split_adapter",
     )
-    prefixes = {
+    official_prefixes = {
         "train": read_sen1floods11_split_prefixes(config.train_split),
         "validation": read_sen1floods11_split_prefixes(config.validation_split),
         "test": read_sen1floods11_split_prefixes(config.test_split),
     }
+    official_counts = {
+        key: len(value) for key, value in official_prefixes.items()
+    }
+    if official_counts != OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS:
+        raise Sen1SupervisedCampaignError(
+            "Official Sen1 split counts changed: "
+            f"expected={OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS}, "
+            f"observed={official_counts}."
+        )
     if config.diagnostic_max_samples:
         prefixes = {
             key: _diagnostic_prefix_subset(
@@ -645,31 +983,56 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
                 int(config.diagnostic_max_samples),
                 require_multiple_groups=key == "train",
             )
-            for key, values in prefixes.items()
+            for key, values in official_prefixes.items()
         }
-    elif {key: len(value) for key, value in prefixes.items()} != OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS:
-        raise Sen1SupervisedCampaignError("Official Sen1 split counts changed.")
+    else:
+        prefixes = {
+            key: list(values) for key, values in official_prefixes.items()
+        }
     output = config.output_dir
     output.mkdir(parents=True, exist_ok=True)
     results: dict[str, Any] = {}
+    normalization_contracts: dict[str, dict[str, Any]] = {}
     for mode in config.sensor_modes:
         mode = str(mode).upper().replace(" ", "")
         normalization_path = output / "normalization" / f"{mode.lower().replace('+', '_plus_')}.json"
         normalization_path.parent.mkdir(parents=True, exist_ok=True)
+        expected_normalization_hash = _prefix_sha256(official_prefixes["train"])
         if normalization_path.exists():
             normalization = json.loads(normalization_path.read_text(encoding="utf-8"))
             if (
-                normalization.get("selection_split") != "official_train"
+                normalization.get("schema")
+                != "geobwer.sen1floods11.train_normalization.v2"
+                or normalization.get("sensor_mode") != mode
+                or normalization.get("selection_split") != "official_train"
                 or normalization.get("test_rows_used") is not False
+                or int(normalization.get("normalization_sample_count", -1))
+                != OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS["train"]
+                or normalization.get("sample_prefix_sha256")
+                != expected_normalization_hash
+                or list(normalization.get("sample_prefixes", []))
+                != list(official_prefixes["train"])
             ):
                 raise Sen1SupervisedCampaignError(
                     f"Invalid cached normalization contract: {normalization_path}"
                 )
         else:
-            normalization = compute_train_normalization(config, prefixes["train"], mode)
+            normalization = compute_train_normalization(
+                config, official_prefixes["train"], mode
+            )
             normalization_path.write_text(
                 json.dumps(normalization, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+        normalization_contracts[mode] = {
+            "path": str(normalization_path),
+            "sha256": file_sha256(normalization_path),
+            "normalization_sample_count": int(
+                normalization["normalization_sample_count"]
+            ),
+            "sample_prefix_sha256": str(
+                normalization["sample_prefix_sha256"]
+            ),
+        }
         for seed in config.seeds:
             name = f"resnet34_unet_{mode.lower().replace('+', '_plus_')}_seed_{int(seed)}"
             run_dir = (
@@ -706,13 +1069,22 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
     campaign_manifest.write_text(
         json.dumps(
             {
-                "schema": "geobwer.sen1floods11.supervised_panel.v2",
+                "schema": "geobwer.sen1floods11.supervised_panel.v3",
                 "formal_evidence": config.diagnostic_max_samples is None,
                 "design": "resnet34_unet_x_sensor_mode_x_seed",
                 "sensor_modes": list(config.sensor_modes),
                 "seeds": list(config.seeds),
                 "config": asdict(config),
                 "official_split_report": split_report,
+                "official_split_lineage": {
+                    key: _prefix_lineage(value)
+                    for key, value in official_prefixes.items()
+                },
+                "execution_split_lineage": {
+                    key: _prefix_lineage(value)
+                    for key, value in prefixes.items()
+                },
+                "normalization_contracts": normalization_contracts,
                 "runs": {
                     name: {
                         key: str(value) if isinstance(value, Path) else value
