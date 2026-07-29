@@ -1,0 +1,184 @@
+seed_everything: 42
+trainer:
+  accelerator: auto
+  strategy: auto
+  devices: auto
+  num_nodes: 1
+  precision: 16-mixed
+  deterministic: true
+  logger: true
+  callbacks:
+  - class_path: lightning.pytorch.callbacks.RichProgressBar
+  - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+    init_args:
+      logging_interval: epoch
+  - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    init_args:
+      dirpath: D:/Codex/rsfm-fairness-audit/work/pytest_full_v0427_final/test_final_runner_dry_run_rewi0/runner_output/s1_plus_s2/seed_42/checkpoints
+      filename: best-{epoch:03d}
+      monitor: val/loss
+      mode: min
+      save_top_k: 1
+      save_last: true
+      auto_insert_metric_name: false
+  - class_path: rsfm_fairness_audit.terratorch_exports.GeoBWERProbabilityWriter
+    init_args:
+      output_dir: D:/Codex/rsfm-fairness-audit/work/pytest_full_v0427_final/test_final_runner_dry_run_rewi0/runner_output/s1_plus_s2/seed_42/probabilities/test
+      write_interval: batch
+  max_epochs: 100
+  fast_dev_run: false
+  log_every_n_steps: 5
+  default_root_dir: D:/Codex/rsfm-fairness-audit/work/pytest_full_v0427_final/test_final_runner_dry_run_rewi0/runner_output/s1_plus_s2/seed_42
+data:
+  class_path: rsfm_fairness_audit.terratorch_exports.LabeledTestAsPredictDataModule
+  init_args:
+    task: segmentation
+    batch_size: 8
+    num_workers: 4
+    modalities: &id003
+    - S2L1C
+    - S1GRD
+    allow_substring_file_names: true
+    channel_position: -3
+    check_stackability: true
+    concat_bands: false
+    data_with_sample_dim: false
+    dataset_bands: &id001
+      S2L1C:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
+      - 11
+      - 12
+      S1GRD:
+      - 0
+      - 1
+    expand_temporal_dimension: false
+    output_bands: *id001
+    reduce_zero_label: false
+    rgb_indices:
+      S2L1C:
+      - 3
+      - 2
+      - 1
+    rgb_modality: S2L1C
+    sample_replace: false
+    shared_transforms: true
+    train_data_root: &id002
+      S2L1C: D:/Codex/rsfm-fairness-audit/work/pytest_full_v0427_final/test_final_runner_dry_run_rewi0/S2L1CHand
+      S1GRD: D:/Codex/rsfm-fairness-audit/work/pytest_full_v0427_final/test_final_runner_dry_run_rewi0/S1GRDHand
+    val_data_root: *id002
+    test_data_root: *id002
+    train_label_data_root: D:/Codex/rsfm-fairness-audit/work/pytest_full_v0427_final/test_final_runner_dry_run_rewi0/LabelHand
+    val_label_data_root: D:/Codex/rsfm-fairness-audit/work/pytest_full_v0427_final/test_final_runner_dry_run_rewi0/LabelHand
+    test_label_data_root: D:/Codex/rsfm-fairness-audit/work/pytest_full_v0427_final/test_final_runner_dry_run_rewi0/LabelHand
+    train_split: D:/Codex/rsfm-fairness-audit/work/pytest_full_v0427_final/test_final_runner_dry_run_rewi0/runner_output/terratorch_splits/train_prefixes.txt
+    val_split: D:/Codex/rsfm-fairness-audit/work/pytest_full_v0427_final/test_final_runner_dry_run_rewi0/runner_output/terratorch_splits/validation_prefixes.txt
+    test_split: D:/Codex/rsfm-fairness-audit/work/pytest_full_v0427_final/test_final_runner_dry_run_rewi0/runner_output/terratorch_splits/test_prefixes.txt
+    image_grep:
+      S2L1C: '*_S2Hand.tif'
+      S1GRD: '*_S1Hand.tif'
+    label_grep: '*_LabelHand.tif'
+    no_label_replace: -1
+    no_data_replace: null
+    num_classes: 2
+    means:
+      S2L1C:
+      - 2357.089
+      - 2137.385
+      - 2018.788
+      - 2082.986
+      - 2295.651
+      - 2854.537
+      - 3122.849
+      - 3040.56
+      - 3306.481
+      - 1473.847
+      - 506.07
+      - 2472.825
+      - 1838.929
+      S1GRD:
+      - -12.599
+      - -20.293
+    stds:
+      S2L1C:
+      - 1624.683
+      - 1675.806
+      - 1557.708
+      - 1833.702
+      - 1823.738
+      - 1733.977
+      - 1732.131
+      - 1679.732
+      - 1727.26
+      - 1024.687
+      - 442.165
+      - 1331.411
+      - 1160.419
+      S1GRD:
+      - 5.195
+      - 5.89
+    drop_last: true
+    pin_memory: true
+    train_transform:
+    - class_path: albumentations.D4
+      init_args:
+        p: 1.0
+    - class_path: albumentations.pytorch.transforms.ToTensorV2
+      init_args:
+        transpose_mask: false
+model:
+  class_path: rsfm_fairness_audit.terratorch_exports.GeoBWERSemanticSegmentationTask
+  init_args:
+    model_factory: EncoderDecoderFactory
+    model_args:
+      backbone: terramind_v1_base
+      backbone_pretrained: false
+      backbone_ckpt_path: D:/Codex/rsfm-fairness-audit/work/pytest_full_v0427_final/test_final_runner_dry_run_rewi0/TerraMind_v1_base.pt
+      backbone_modalities: *id003
+      backbone_bands: *id001
+      backbone_merge_method: mean
+      necks:
+      - name: SelectIndices
+        indices:
+        - 2
+        - 5
+        - 8
+        - 11
+      - name: ReshapeTokensToImage
+        remove_cls_token: false
+      - name: LearnedInterpolateToPyramidal
+      decoder: UNetDecoder
+      decoder_channels:
+      - 512
+      - 256
+      - 128
+      - 64
+      head_dropout: 0.1
+      num_classes: 2
+    loss: dice
+    ignore_index: -1
+    freeze_backbone: false
+    freeze_decoder: false
+    freeze_head: false
+    class_names:
+    - Others
+    - Flood
+optimizer:
+  class_path: torch.optim.AdamW
+  init_args:
+    lr: 2.0e-05
+lr_scheduler:
+  class_path: lightning.pytorch.cli.ReduceLROnPlateau
+  init_args:
+    monitor: val/loss
+    factor: 0.5
+    patience: 5

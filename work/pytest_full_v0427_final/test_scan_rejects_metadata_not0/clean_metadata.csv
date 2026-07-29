@@ -1,0 +1,125 @@
+sample_id,site_id,location_id,split,category,country,continent,un_region,region
+test-000,airport|site-000,site-000,test,airport,DEU,Europe,Western Europe,Western Europe
+train-000,airport|train-site-000,train-site-000,train,airport,DEU,Europe,Western Europe,Western Europe
+test-001,airport_hangar|site-001,site-001,test,airport_hangar,USA,North America,Northern America,Northern America
+train-001,airport_hangar|train-site-001,train-site-001,train,airport_hangar,USA,North America,Northern America,Northern America
+test-002,airport_terminal|site-002,site-002,test,airport_terminal,DEU,Europe,Western Europe,Western Europe
+train-002,airport_terminal|train-site-002,train-site-002,train,airport_terminal,DEU,Europe,Western Europe,Western Europe
+test-003,amusement_park|site-003,site-003,test,amusement_park,USA,North America,Northern America,Northern America
+train-003,amusement_park|train-site-003,train-site-003,train,amusement_park,USA,North America,Northern America,Northern America
+test-004,aquaculture|site-004,site-004,test,aquaculture,DEU,Europe,Western Europe,Western Europe
+train-004,aquaculture|train-site-004,train-site-004,train,aquaculture,DEU,Europe,Western Europe,Western Europe
+test-005,archaeological_site|site-005,site-005,test,archaeological_site,USA,North America,Northern America,Northern America
+train-005,archaeological_site|train-site-005,train-site-005,train,archaeological_site,USA,North America,Northern America,Northern America
+test-006,barn|site-006,site-006,test,barn,DEU,Europe,Western Europe,Western Europe
+train-006,barn|train-site-006,train-site-006,train,barn,DEU,Europe,Western Europe,Western Europe
+test-007,border_checkpoint|site-007,site-007,test,border_checkpoint,USA,North America,Northern America,Northern America
+train-007,border_checkpoint|train-site-007,train-site-007,train,border_checkpoint,USA,North America,Northern America,Northern America
+test-008,burial_site|site-008,site-008,test,burial_site,DEU,Europe,Western Europe,Western Europe
+train-008,burial_site|train-site-008,train-site-008,train,burial_site,DEU,Europe,Western Europe,Western Europe
+test-009,car_dealership|site-009,site-009,test,car_dealership,USA,North America,Northern America,Northern America
+train-009,car_dealership|train-site-009,train-site-009,train,car_dealership,USA,North America,Northern America,Northern America
+test-010,construction_site|site-010,site-010,test,construction_site,DEU,Europe,Western Europe,Western Europe
+train-010,construction_site|train-site-010,train-site-010,train,construction_site,DEU,Europe,Western Europe,Western Europe
+test-011,crop_field|site-011,site-011,test,crop_field,DEU,Europe,Western Europe,Western Europe
+train-011,crop_field|train-site-011,train-site-011,train,crop_field,DEU,Europe,Western Europe,Western Europe
+test-012,dam|site-012,site-012,test,dam,DEU,Europe,Western Europe,Western Europe
+train-012,dam|train-site-012,train-site-012,train,dam,DEU,Europe,Western Europe,Western Europe
+test-013,debris_or_rubble|site-013,site-013,test,debris_or_rubble,USA,North America,Northern America,Northern America
+train-013,debris_or_rubble|train-site-013,train-site-013,train,debris_or_rubble,USA,North America,Northern America,Northern America
+test-014,educational_institution|site-014,site-014,test,educational_institution,DEU,Europe,Western Europe,Western Europe
+train-014,educational_institution|train-site-014,train-site-014,train,educational_institution,DEU,Europe,Western Europe,Western Europe
+test-015,electric_substation|site-015,site-015,test,electric_substation,USA,North America,Northern America,Northern America
+train-015,electric_substation|train-site-015,train-site-015,train,electric_substation,USA,North America,Northern America,Northern America
+test-016,factory_or_powerplant|site-016,site-016,test,factory_or_powerplant,DEU,Europe,Western Europe,Western Europe
+train-016,factory_or_powerplant|train-site-016,train-site-016,train,factory_or_powerplant,DEU,Europe,Western Europe,Western Europe
+test-017,fire_station|site-017,site-017,test,fire_station,USA,North America,Northern America,Northern America
+train-017,fire_station|train-site-017,train-site-017,train,fire_station,USA,North America,Northern America,Northern America
+test-018,flooded_road|site-018,site-018,test,flooded_road,DEU,Europe,Western Europe,Western Europe
+train-018,flooded_road|train-site-018,train-site-018,train,flooded_road,DEU,Europe,Western Europe,Western Europe
+test-019,fountain|site-019,site-019,test,fountain,USA,North America,Northern America,Northern America
+train-019,fountain|train-site-019,train-site-019,train,fountain,USA,North America,Northern America,Northern America
+test-020,gas_station|site-020,site-020,test,gas_station,DEU,Europe,Western Europe,Western Europe
+train-020,gas_station|train-site-020,train-site-020,train,gas_station,DEU,Europe,Western Europe,Western Europe
+test-021,golf_course|site-021,site-021,test,golf_course,USA,North America,Northern America,Northern America
+train-021,golf_course|train-site-021,train-site-021,train,golf_course,USA,North America,Northern America,Northern America
+test-022,ground_transportation_station|site-022,site-022,test,ground_transportation_station,DEU,Europe,Western Europe,Western Europe
+train-022,ground_transportation_station|train-site-022,train-site-022,train,ground_transportation_station,DEU,Europe,Western Europe,Western Europe
+test-023,helipad|site-023,site-023,test,helipad,USA,North America,Northern America,Northern America
+train-023,helipad|train-site-023,train-site-023,train,helipad,USA,North America,Northern America,Northern America
+test-024,hospital|site-024,site-024,test,hospital,DEU,Europe,Western Europe,Western Europe
+train-024,hospital|train-site-024,train-site-024,train,hospital,DEU,Europe,Western Europe,Western Europe
+test-025,impoverished_settlement|site-025,site-025,test,impoverished_settlement,USA,North America,Northern America,Northern America
+train-025,impoverished_settlement|train-site-025,train-site-025,train,impoverished_settlement,USA,North America,Northern America,Northern America
+test-026,interchange|site-026,site-026,test,interchange,DEU,Europe,Western Europe,Western Europe
+train-026,interchange|train-site-026,train-site-026,train,interchange,DEU,Europe,Western Europe,Western Europe
+test-027,lake_or_pond|site-027,site-027,test,lake_or_pond,USA,North America,Northern America,Northern America
+train-027,lake_or_pond|train-site-027,train-site-027,train,lake_or_pond,USA,North America,Northern America,Northern America
+test-028,lighthouse|site-028,site-028,test,lighthouse,DEU,Europe,Western Europe,Western Europe
+train-028,lighthouse|train-site-028,train-site-028,train,lighthouse,DEU,Europe,Western Europe,Western Europe
+test-029,military_facility|site-029,site-029,test,military_facility,USA,North America,Northern America,Northern America
+train-029,military_facility|train-site-029,train-site-029,train,military_facility,USA,North America,Northern America,Northern America
+test-030,multi-unit_residential|site-030,site-030,test,multi-unit_residential,DEU,Europe,Western Europe,Western Europe
+train-030,multi-unit_residential|train-site-030,train-site-030,train,multi-unit_residential,DEU,Europe,Western Europe,Western Europe
+test-031,nuclear_powerplant|site-031,site-031,test,nuclear_powerplant,USA,North America,Northern America,Northern America
+train-031,nuclear_powerplant|train-site-031,train-site-031,train,nuclear_powerplant,USA,North America,Northern America,Northern America
+test-032,office_building|site-032,site-032,test,office_building,DEU,Europe,Western Europe,Western Europe
+train-032,office_building|train-site-032,train-site-032,train,office_building,DEU,Europe,Western Europe,Western Europe
+test-033,oil_or_gas_facility|site-033,site-033,test,oil_or_gas_facility,USA,North America,Northern America,Northern America
+train-033,oil_or_gas_facility|train-site-033,train-site-033,train,oil_or_gas_facility,USA,North America,Northern America,Northern America
+test-034,park|site-034,site-034,test,park,DEU,Europe,Western Europe,Western Europe
+train-034,park|train-site-034,train-site-034,train,park,DEU,Europe,Western Europe,Western Europe
+test-035,parking_lot_or_garage|site-035,site-035,test,parking_lot_or_garage,USA,North America,Northern America,Northern America
+train-035,parking_lot_or_garage|train-site-035,train-site-035,train,parking_lot_or_garage,USA,North America,Northern America,Northern America
+test-036,place_of_worship|site-036,site-036,test,place_of_worship,DEU,Europe,Western Europe,Western Europe
+train-036,place_of_worship|train-site-036,train-site-036,train,place_of_worship,DEU,Europe,Western Europe,Western Europe
+test-037,police_station|site-037,site-037,test,police_station,USA,North America,Northern America,Northern America
+train-037,police_station|train-site-037,train-site-037,train,police_station,USA,North America,Northern America,Northern America
+test-038,port|site-038,site-038,test,port,DEU,Europe,Western Europe,Western Europe
+train-038,port|train-site-038,train-site-038,train,port,DEU,Europe,Western Europe,Western Europe
+test-039,prison|site-039,site-039,test,prison,USA,North America,Northern America,Northern America
+train-039,prison|train-site-039,train-site-039,train,prison,USA,North America,Northern America,Northern America
+test-040,race_track|site-040,site-040,test,race_track,DEU,Europe,Western Europe,Western Europe
+train-040,race_track|train-site-040,train-site-040,train,race_track,DEU,Europe,Western Europe,Western Europe
+test-041,railway_bridge|site-041,site-041,test,railway_bridge,USA,North America,Northern America,Northern America
+train-041,railway_bridge|train-site-041,train-site-041,train,railway_bridge,USA,North America,Northern America,Northern America
+test-042,recreational_facility|site-042,site-042,test,recreational_facility,DEU,Europe,Western Europe,Western Europe
+train-042,recreational_facility|train-site-042,train-site-042,train,recreational_facility,DEU,Europe,Western Europe,Western Europe
+test-043,road_bridge|site-043,site-043,test,road_bridge,USA,North America,Northern America,Northern America
+train-043,road_bridge|train-site-043,train-site-043,train,road_bridge,USA,North America,Northern America,Northern America
+test-044,runway|site-044,site-044,test,runway,DEU,Europe,Western Europe,Western Europe
+train-044,runway|train-site-044,train-site-044,train,runway,DEU,Europe,Western Europe,Western Europe
+test-045,shipyard|site-045,site-045,test,shipyard,USA,North America,Northern America,Northern America
+train-045,shipyard|train-site-045,train-site-045,train,shipyard,USA,North America,Northern America,Northern America
+test-046,shopping_mall|site-046,site-046,test,shopping_mall,DEU,Europe,Western Europe,Western Europe
+train-046,shopping_mall|train-site-046,train-site-046,train,shopping_mall,DEU,Europe,Western Europe,Western Europe
+test-047,single-unit_residential|site-047,site-047,test,single-unit_residential,USA,North America,Northern America,Northern America
+train-047,single-unit_residential|train-site-047,train-site-047,train,single-unit_residential,USA,North America,Northern America,Northern America
+test-048,smokestack|site-048,site-048,test,smokestack,DEU,Europe,Western Europe,Western Europe
+train-048,smokestack|train-site-048,train-site-048,train,smokestack,DEU,Europe,Western Europe,Western Europe
+test-049,solar_farm|site-049,site-049,test,solar_farm,USA,North America,Northern America,Northern America
+train-049,solar_farm|train-site-049,train-site-049,train,solar_farm,USA,North America,Northern America,Northern America
+test-050,space_facility|site-050,site-050,test,space_facility,DEU,Europe,Western Europe,Western Europe
+train-050,space_facility|train-site-050,train-site-050,train,space_facility,DEU,Europe,Western Europe,Western Europe
+test-051,stadium|site-051,site-051,test,stadium,USA,North America,Northern America,Northern America
+train-051,stadium|train-site-051,train-site-051,train,stadium,USA,North America,Northern America,Northern America
+test-052,storage_tank|site-052,site-052,test,storage_tank,DEU,Europe,Western Europe,Western Europe
+train-052,storage_tank|train-site-052,train-site-052,train,storage_tank,DEU,Europe,Western Europe,Western Europe
+test-053,surface_mine|site-053,site-053,test,surface_mine,USA,North America,Northern America,Northern America
+train-053,surface_mine|train-site-053,train-site-053,train,surface_mine,USA,North America,Northern America,Northern America
+test-054,swimming_pool|site-054,site-054,test,swimming_pool,DEU,Europe,Western Europe,Western Europe
+train-054,swimming_pool|train-site-054,train-site-054,train,swimming_pool,DEU,Europe,Western Europe,Western Europe
+test-055,toll_booth|site-055,site-055,test,toll_booth,USA,North America,Northern America,Northern America
+train-055,toll_booth|train-site-055,train-site-055,train,toll_booth,USA,North America,Northern America,Northern America
+test-056,tower|site-056,site-056,test,tower,DEU,Europe,Western Europe,Western Europe
+train-056,tower|train-site-056,train-site-056,train,tower,DEU,Europe,Western Europe,Western Europe
+test-057,tunnel_opening|site-057,site-057,test,tunnel_opening,USA,North America,Northern America,Northern America
+train-057,tunnel_opening|train-site-057,train-site-057,train,tunnel_opening,USA,North America,Northern America,Northern America
+test-058,waste_disposal|site-058,site-058,test,waste_disposal,DEU,Europe,Western Europe,Western Europe
+train-058,waste_disposal|train-site-058,train-site-058,train,waste_disposal,DEU,Europe,Western Europe,Western Europe
+test-059,water_treatment_facility|site-059,site-059,test,water_treatment_facility,USA,North America,Northern America,Northern America
+train-059,water_treatment_facility|train-site-059,train-site-059,train,water_treatment_facility,USA,North America,Northern America,Northern America
+test-060,wind_farm|site-060,site-060,test,wind_farm,DEU,Europe,Western Europe,Western Europe
+train-060,wind_farm|train-site-060,train-site-060,train,wind_farm,DEU,Europe,Western Europe,Western Europe
+test-061,zoo|site-061,site-061,test,zoo,USA,North America,Northern America,Northern America
+train-061,zoo|train-site-061,train-site-061,train,zoo,USA,North America,Northern America,Northern America

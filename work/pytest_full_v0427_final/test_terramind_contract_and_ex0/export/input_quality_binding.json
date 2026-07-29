@@ -1,0 +1,537 @@
+{
+  "schema": "geobwer.sen1floods11.input_quality_binding.v1",
+  "split": "test",
+  "split_role": "standard_test",
+  "sensor_mode": "S1+S2",
+  "imputation_policy": "official_train_band_mean_normalized_zero",
+  "input_quality_contract": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0427_final\\test_terramind_contract_and_ex0\\quality\\s1_plus_s2.json",
+  "input_quality_contract_sha256": "ceb986bd473c454fe93e6e540f7b413224f56cd3ff0fbfc44b9a4cf730050565",
+  "prefix_sha256": "5d56a12918859b6bdab5ac20d0ce8f6845d9fcaab823871f6df878a2d60df2e6",
+  "summary": {
+    "sample_count": 1,
+    "samples_with_imputation": 1,
+    "aggregate_imputed_value_count": 8,
+    "maximum_imputed_fraction": 0.13333333333333333,
+    "fully_missing_modality_count": 1,
+    "fully_missing_sample_count": 1,
+    "fully_missing_sample_ids": [
+      "Paraguay_34417"
+    ],
+    "fully_missing_modalities_by_sample": {
+      "Paraguay_34417": [
+        "S1"
+      ]
+    },
+    "partial_nonfinite_sample_count": 0,
+    "partial_nonfinite_sample_ids": [],
+    "partial_nonfinite_modalities_by_sample": {},
+    "modality_totals": {
+      "S2": {
+        "sample_count": 1,
+        "fully_missing_modality_count": 0,
+        "partial_nonfinite_sample_count": 0,
+        "nonfinite_count": 0
+      },
+      "S1": {
+        "sample_count": 1,
+        "fully_missing_modality_count": 1,
+        "partial_nonfinite_sample_count": 0,
+        "nonfinite_count": 8
+      }
+    },
+    "channel_totals": [
+      {
+        "channel_index": 0,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "nonfinite_count": 0,
+        "finite_count": 4,
+        "value_count": 4
+      },
+      {
+        "channel_index": 1,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "nonfinite_count": 0,
+        "finite_count": 4,
+        "value_count": 4
+      },
+      {
+        "channel_index": 2,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "nonfinite_count": 0,
+        "finite_count": 4,
+        "value_count": 4
+      },
+      {
+        "channel_index": 3,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "nonfinite_count": 0,
+        "finite_count": 4,
+        "value_count": 4
+      },
+      {
+        "channel_index": 4,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "nonfinite_count": 0,
+        "finite_count": 4,
+        "value_count": 4
+      },
+      {
+        "channel_index": 5,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "nonfinite_count": 0,
+        "finite_count": 4,
+        "value_count": 4
+      },
+      {
+        "channel_index": 6,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "nonfinite_count": 0,
+        "finite_count": 4,
+        "value_count": 4
+      },
+      {
+        "channel_index": 7,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "nonfinite_count": 0,
+        "finite_count": 4,
+        "value_count": 4
+      },
+      {
+        "channel_index": 8,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "nonfinite_count": 0,
+        "finite_count": 4,
+        "value_count": 4
+      },
+      {
+        "channel_index": 9,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "nonfinite_count": 0,
+        "finite_count": 4,
+        "value_count": 4
+      },
+      {
+        "channel_index": 10,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "nonfinite_count": 0,
+        "finite_count": 4,
+        "value_count": 4
+      },
+      {
+        "channel_index": 11,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "nonfinite_count": 0,
+        "finite_count": 4,
+        "value_count": 4
+      },
+      {
+        "channel_index": 12,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "nonfinite_count": 0,
+        "finite_count": 4,
+        "value_count": 4
+      },
+      {
+        "channel_index": 13,
+        "nan_count": 4,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "nonfinite_count": 4,
+        "finite_count": 0,
+        "value_count": 4
+      },
+      {
+        "channel_index": 14,
+        "nan_count": 4,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "nonfinite_count": 4,
+        "finite_count": 0,
+        "value_count": 4
+      }
+    ]
+  },
+  "fully_missing_modality_records": [
+    {
+      "prefix": "Paraguay_34417",
+      "sample_id": "Paraguay_34417",
+      "sensor_mode": "S1+S2",
+      "split_role": "standard_test",
+      "availability_status": "fully_missing_modality",
+      "fully_missing_modality": true,
+      "fully_missing_modalities": [
+        "S1"
+      ],
+      "partial_nonfinite_imputed": false,
+      "partial_nonfinite_modalities": [],
+      "imputation_policy": "official_train_band_mean_normalized_zero",
+      "modalities": [
+        {
+          "modality": "S2",
+          "availability_status": "available",
+          "fully_missing_modality": false,
+          "partial_nonfinite_imputed": false,
+          "finite_count": 52,
+          "nan_count": 0,
+          "posinf_count": 0,
+          "neginf_count": 0,
+          "nonfinite_count": 0,
+          "value_count": 52,
+          "pixel_count": 4,
+          "jointly_finite_pixel_count": 4,
+          "channel_counts": [
+            {
+              "channel_index": 0,
+              "modality_channel_index": 0,
+              "nan_count": 0,
+              "posinf_count": 0,
+              "neginf_count": 0,
+              "nonfinite_count": 0,
+              "finite_count": 4,
+              "value_count": 4
+            },
+            {
+              "channel_index": 1,
+              "modality_channel_index": 1,
+              "nan_count": 0,
+              "posinf_count": 0,
+              "neginf_count": 0,
+              "nonfinite_count": 0,
+              "finite_count": 4,
+              "value_count": 4
+            },
+            {
+              "channel_index": 2,
+              "modality_channel_index": 2,
+              "nan_count": 0,
+              "posinf_count": 0,
+              "neginf_count": 0,
+              "nonfinite_count": 0,
+              "finite_count": 4,
+              "value_count": 4
+            },
+            {
+              "channel_index": 3,
+              "modality_channel_index": 3,
+              "nan_count": 0,
+              "posinf_count": 0,
+              "neginf_count": 0,
+              "nonfinite_count": 0,
+              "finite_count": 4,
+              "value_count": 4
+            },
+            {
+              "channel_index": 4,
+              "modality_channel_index": 4,
+              "nan_count": 0,
+              "posinf_count": 0,
+              "neginf_count": 0,
+              "nonfinite_count": 0,
+              "finite_count": 4,
+              "value_count": 4
+            },
+            {
+              "channel_index": 5,
+              "modality_channel_index": 5,
+              "nan_count": 0,
+              "posinf_count": 0,
+              "neginf_count": 0,
+              "nonfinite_count": 0,
+              "finite_count": 4,
+              "value_count": 4
+            },
+            {
+              "channel_index": 6,
+              "modality_channel_index": 6,
+              "nan_count": 0,
+              "posinf_count": 0,
+              "neginf_count": 0,
+              "nonfinite_count": 0,
+              "finite_count": 4,
+              "value_count": 4
+            },
+            {
+              "channel_index": 7,
+              "modality_channel_index": 7,
+              "nan_count": 0,
+              "posinf_count": 0,
+              "neginf_count": 0,
+              "nonfinite_count": 0,
+              "finite_count": 4,
+              "value_count": 4
+            },
+            {
+              "channel_index": 8,
+              "modality_channel_index": 8,
+              "nan_count": 0,
+              "posinf_count": 0,
+              "neginf_count": 0,
+              "nonfinite_count": 0,
+              "finite_count": 4,
+              "value_count": 4
+            },
+            {
+              "channel_index": 9,
+              "modality_channel_index": 9,
+              "nan_count": 0,
+              "posinf_count": 0,
+              "neginf_count": 0,
+              "nonfinite_count": 0,
+              "finite_count": 4,
+              "value_count": 4
+            },
+            {
+              "channel_index": 10,
+              "modality_channel_index": 10,
+              "nan_count": 0,
+              "posinf_count": 0,
+              "neginf_count": 0,
+              "nonfinite_count": 0,
+              "finite_count": 4,
+              "value_count": 4
+            },
+            {
+              "channel_index": 11,
+              "modality_channel_index": 11,
+              "nan_count": 0,
+              "posinf_count": 0,
+              "neginf_count": 0,
+              "nonfinite_count": 0,
+              "finite_count": 4,
+              "value_count": 4
+            },
+            {
+              "channel_index": 12,
+              "modality_channel_index": 12,
+              "nan_count": 0,
+              "posinf_count": 0,
+              "neginf_count": 0,
+              "nonfinite_count": 0,
+              "finite_count": 4,
+              "value_count": 4
+            }
+          ]
+        },
+        {
+          "modality": "S1",
+          "availability_status": "fully_missing",
+          "fully_missing_modality": true,
+          "partial_nonfinite_imputed": false,
+          "finite_count": 0,
+          "nan_count": 8,
+          "posinf_count": 0,
+          "neginf_count": 0,
+          "nonfinite_count": 8,
+          "value_count": 8,
+          "pixel_count": 4,
+          "jointly_finite_pixel_count": 0,
+          "channel_counts": [
+            {
+              "channel_index": 13,
+              "modality_channel_index": 0,
+              "nan_count": 4,
+              "posinf_count": 0,
+              "neginf_count": 0,
+              "nonfinite_count": 4,
+              "finite_count": 0,
+              "value_count": 4
+            },
+            {
+              "channel_index": 14,
+              "modality_channel_index": 1,
+              "nan_count": 4,
+              "posinf_count": 0,
+              "neginf_count": 0,
+              "nonfinite_count": 4,
+              "finite_count": 0,
+              "value_count": 4
+            }
+          ]
+        }
+      ],
+      "channel_counts": [
+        {
+          "channel_index": 0,
+          "modality_channel_index": 0,
+          "nan_count": 0,
+          "posinf_count": 0,
+          "neginf_count": 0,
+          "nonfinite_count": 0,
+          "finite_count": 4,
+          "value_count": 4
+        },
+        {
+          "channel_index": 1,
+          "modality_channel_index": 1,
+          "nan_count": 0,
+          "posinf_count": 0,
+          "neginf_count": 0,
+          "nonfinite_count": 0,
+          "finite_count": 4,
+          "value_count": 4
+        },
+        {
+          "channel_index": 2,
+          "modality_channel_index": 2,
+          "nan_count": 0,
+          "posinf_count": 0,
+          "neginf_count": 0,
+          "nonfinite_count": 0,
+          "finite_count": 4,
+          "value_count": 4
+        },
+        {
+          "channel_index": 3,
+          "modality_channel_index": 3,
+          "nan_count": 0,
+          "posinf_count": 0,
+          "neginf_count": 0,
+          "nonfinite_count": 0,
+          "finite_count": 4,
+          "value_count": 4
+        },
+        {
+          "channel_index": 4,
+          "modality_channel_index": 4,
+          "nan_count": 0,
+          "posinf_count": 0,
+          "neginf_count": 0,
+          "nonfinite_count": 0,
+          "finite_count": 4,
+          "value_count": 4
+        },
+        {
+          "channel_index": 5,
+          "modality_channel_index": 5,
+          "nan_count": 0,
+          "posinf_count": 0,
+          "neginf_count": 0,
+          "nonfinite_count": 0,
+          "finite_count": 4,
+          "value_count": 4
+        },
+        {
+          "channel_index": 6,
+          "modality_channel_index": 6,
+          "nan_count": 0,
+          "posinf_count": 0,
+          "neginf_count": 0,
+          "nonfinite_count": 0,
+          "finite_count": 4,
+          "value_count": 4
+        },
+        {
+          "channel_index": 7,
+          "modality_channel_index": 7,
+          "nan_count": 0,
+          "posinf_count": 0,
+          "neginf_count": 0,
+          "nonfinite_count": 0,
+          "finite_count": 4,
+          "value_count": 4
+        },
+        {
+          "channel_index": 8,
+          "modality_channel_index": 8,
+          "nan_count": 0,
+          "posinf_count": 0,
+          "neginf_count": 0,
+          "nonfinite_count": 0,
+          "finite_count": 4,
+          "value_count": 4
+        },
+        {
+          "channel_index": 9,
+          "modality_channel_index": 9,
+          "nan_count": 0,
+          "posinf_count": 0,
+          "neginf_count": 0,
+          "nonfinite_count": 0,
+          "finite_count": 4,
+          "value_count": 4
+        },
+        {
+          "channel_index": 10,
+          "modality_channel_index": 10,
+          "nan_count": 0,
+          "posinf_count": 0,
+          "neginf_count": 0,
+          "nonfinite_count": 0,
+          "finite_count": 4,
+          "value_count": 4
+        },
+        {
+          "channel_index": 11,
+          "modality_channel_index": 11,
+          "nan_count": 0,
+          "posinf_count": 0,
+          "neginf_count": 0,
+          "nonfinite_count": 0,
+          "finite_count": 4,
+          "value_count": 4
+        },
+        {
+          "channel_index": 12,
+          "modality_channel_index": 12,
+          "nan_count": 0,
+          "posinf_count": 0,
+          "neginf_count": 0,
+          "nonfinite_count": 0,
+          "finite_count": 4,
+          "value_count": 4
+        },
+        {
+          "channel_index": 13,
+          "modality_channel_index": 0,
+          "nan_count": 4,
+          "posinf_count": 0,
+          "neginf_count": 0,
+          "nonfinite_count": 4,
+          "finite_count": 0,
+          "value_count": 4
+        },
+        {
+          "channel_index": 14,
+          "modality_channel_index": 1,
+          "nan_count": 4,
+          "posinf_count": 0,
+          "neginf_count": 0,
+          "nonfinite_count": 4,
+          "finite_count": 0,
+          "value_count": 4
+        }
+      ],
+      "jointly_finite_pixel_count": null,
+      "pixel_count": 4,
+      "imputed_value_count": 8,
+      "imputed_fraction": 0.13333333333333333,
+      "split": "test"
+    }
+  ]
+}
