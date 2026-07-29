@@ -360,6 +360,23 @@ def main() -> None:
     prithvi_manifest = _json(prithvi_manifest_path)
     if prithvi_manifest.get("formal_evidence") is not False:
         raise RuntimeError("Prithvi smoke was not marked non-formal.")
+    if prithvi_manifest.get("schema") != "geobwer.sen1floods11.prithvi_tl_probability_migration.v2":
+        raise RuntimeError("Prithvi smoke did not use the hardened v2 inference contract.")
+    prithvi_device = prithvi_manifest.get("device_contract", {})
+    if (
+        not str(prithvi_device.get("resolved_device", "")).startswith("cuda")
+        or not str(prithvi_device.get("model_parameter_device", "")).startswith("cuda")
+        or not str(prithvi_device.get("model_input_device", "")).startswith("cuda")
+    ):
+        raise RuntimeError(f"Prithvi smoke did not execute model and inputs on CUDA: {prithvi_device}")
+    for split in ("validation", "test"):
+        runtime_validation = prithvi_manifest.get("split_runtime_validation", {}).get(split, {})
+        if (
+            runtime_validation.get("full_probability_layout") != "[B,2,H,W]"
+            or float(runtime_validation.get("maximum_probability_sum_error", 1.0)) > 1e-5
+            or runtime_validation.get("target_shape_matches_probability_shape") is not True
+        ):
+            raise RuntimeError(f"Invalid Prithvi {split} probability contract: {runtime_validation}")
     checks["prithvi"]["s2"] = _validate_pair(
         prithvi_root / "probabilities/validation",
         prithvi_root / "probabilities/test",

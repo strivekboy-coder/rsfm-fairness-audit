@@ -99,11 +99,21 @@ def _predict_indices(
     model: PrithviSen1Floods11TLAdapter,
     *,
     batch_size: int,
-) -> tuple[list[np.ndarray], list[np.ndarray], list[Any], list[dict[str, Any]]]:
+    capture_full_probabilities: bool = False,
+) -> tuple[
+    list[np.ndarray],
+    list[np.ndarray],
+    list[Any],
+    list[dict[str, Any]],
+    dict[str, Any],
+    np.ndarray | None,
+]:
     probabilities: list[np.ndarray] = []
     targets: list[np.ndarray] = []
     filenames: list[Any] = []
     metadata: list[dict[str, Any]] = []
+    captured: list[np.ndarray] = []
+    maximum_probability_sum_error = 0.0
     for start in range(0, len(indices), batch_size):
         batch_indices = list(indices[start : start + batch_size])
         samples = [dataset.load_sample(index) for index in batch_indices]
@@ -115,7 +125,32 @@ def _predict_indices(
             raise PrithviSen1CampaignError(
                 f"Official Prithvi output must contain [B,2,H,W] probabilities, got {full_probabilities.shape}."
             )
+        if not np.all(np.isfinite(full_probabilities)):
+            raise PrithviSen1CampaignError("Official Prithvi probabilities contain NaN/Inf.")
+        if np.min(full_probabilities) < -1e-6 or np.max(full_probabilities) > 1.0 + 1e-6:
+            raise PrithviSen1CampaignError("Official Prithvi probabilities fall outside [0,1].")
+        probability_sum_error = float(
+            np.max(np.abs(np.sum(full_probabilities, axis=1) - 1.0))
+        )
+        maximum_probability_sum_error = max(
+            maximum_probability_sum_error,
+            probability_sum_error,
+        )
+        if probability_sum_error > 1e-5:
+            raise PrithviSen1CampaignError(
+                "Official Prithvi class probabilities do not sum to one; "
+                f"maximum_error={probability_sum_error}."
+            )
         masks = np.asarray(prepared["masks"])
+        if masks.shape[0] != full_probabilities.shape[0]:
+            raise PrithviSen1CampaignError("Prithvi target/probability batch sizes differ.")
+        if tuple(masks.shape[-2:]) != tuple(full_probabilities.shape[-2:]):
+            raise PrithviSen1CampaignError(
+                "Prithvi target/probability spatial shapes differ: "
+                f"targets={masks.shape}, probabilities={full_probabilities.shape}."
+            )
+        if capture_full_probabilities:
+            captured.append(full_probabilities.copy())
         for local, row in enumerate(batch_rows):
             prefix = _row_prefix(row)
             probabilities.append(full_probabilities[local, 1])
@@ -142,7 +177,16 @@ def _predict_indices(
                     "region": str(row.get("region") or row.get("event_id") or ""),
                 }
             )
-    return probabilities, targets, filenames, metadata
+    validation = {
+        "row_count": len(probabilities),
+        "full_probability_layout": "[B,2,H,W]",
+        "probabilities_finite": True,
+        "probabilities_in_unit_interval": True,
+        "maximum_probability_sum_error": maximum_probability_sum_error,
+        "target_shape_matches_probability_shape": True,
+    }
+    full_bundle = np.concatenate(captured, axis=0) if captured else None
+    return probabilities, targets, filenames, metadata, validation, full_bundle
 
 
 def run_prithvi_sen1_probability_campaign(
@@ -201,14 +245,34 @@ def run_prithvi_sen1_probability_campaign(
         flush=True,
     )
     exports: dict[str, Path] = {}
+    split_runtime_validation: dict[str, dict[str, Any]] = {}
+    diagnostic_full_probability_artifacts: dict[str, str] = {}
     for split in ("validation", "test"):
-        probabilities, targets, filenames, metadata = _predict_indices(
+        probabilities, targets, filenames, metadata, runtime_validation, full_bundle = _predict_indices(
             dataset,
             rows,
             split_indices[split],
             model,
             batch_size=config.batch_size,
+            capture_full_probabilities=config.diagnostic_max_samples is not None,
         )
+        split_runtime_validation[split] = runtime_validation
+        if full_bundle is not None:
+            diagnostic_dir = output / "diagnostic_probe"
+            diagnostic_dir.mkdir(parents=True, exist_ok=True)
+            diagnostic_path = diagnostic_dir / f"{split}_full_probabilities.npz"
+            sample_ids = np.asarray(
+                [_row_prefix(rows[index]) for index in split_indices[split]],
+                dtype=np.str_,
+            )
+            np.savez_compressed(
+                diagnostic_path,
+                probabilities=full_bundle.astype(np.float32),
+                targets=np.stack(targets).astype(np.int16),
+                sample_ids=sample_ids,
+                split_role=np.asarray([split] * len(sample_ids), dtype=np.str_),
+            )
+            diagnostic_full_probability_artifacts[split] = str(diagnostic_path)
         exports[split] = write_sen1_probability_export(
             output / "probabilities" / split,
             probabilities=probabilities,
@@ -231,7 +295,7 @@ def run_prithvi_sen1_probability_campaign(
     manifest.write_text(
         json.dumps(
             {
-                "schema": "geobwer.sen1floods11.prithvi_tl_probability_migration.v1",
+                "schema": "geobwer.sen1floods11.prithvi_tl_probability_migration.v2",
                 "formal_evidence": config.diagnostic_max_samples is None,
                 "role": "task_specific_external_validity_reference",
                 "model": model.protocol_model_name,
@@ -245,6 +309,10 @@ def run_prithvi_sen1_probability_campaign(
                     file_sha256(checkpoint_path) if checkpoint_path.is_file() else ""
                 ),
                 "model_load_diagnostics": getattr(model, "load_diagnostics", {}),
+                "device_contract": getattr(model, "device_contract", {}),
+                "inference_debug_records": getattr(model, "debug_records", []),
+                "split_runtime_validation": split_runtime_validation,
+                "diagnostic_full_probability_artifacts": diagnostic_full_probability_artifacts,
                 "probability_exports": {key: str(value) for key, value in exports.items()},
                 "config": asdict(config),
             },

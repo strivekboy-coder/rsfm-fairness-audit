@@ -13,6 +13,66 @@ class PrithviConfigurationError(RuntimeError):
     """Raised when Prithvi-EO-2.0 cannot be loaded or shaped safely."""
 
 
+PRITHVI_SEN1_OFFICIAL_INFERENCE_SOURCE = (
+    "https://huggingface.co/ibm-nasa-geospatial/"
+    "Prithvi-EO-2.0-300M-TL-Sen1Floods11/blob/main/inference.py"
+)
+PRITHVI_SEN1_OFFICIAL_WINDOW_SIZE = 512
+PRITHVI_SEN1_PADDING_POLICY = "numpy_reflect_right_bottom_spatial_only"
+
+
+def pad_prithvi_sen1_official_windows(
+    values: np.ndarray,
+    *,
+    window_size: int = PRITHVI_SEN1_OFFICIAL_WINDOW_SIZE,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Apply the official Sen1Floods11 inference padding to [B,C,T,H,W].
+
+    The released inference script uses NumPy ``reflect`` padding on only the
+    final two spatial axes before extracting 512x512 windows. Keeping this as a
+    NumPy helper avoids PyTorch's unsupported four-value reflect padding on a
+    five-dimensional tensor and makes the frozen policy independently testable.
+    """
+
+    array = np.asarray(values, dtype=np.float32)
+    if array.ndim != 5:
+        raise PrithviConfigurationError(
+            f"Official Prithvi Sen1 padding expects [B,C,T,H,W], got {array.shape}."
+        )
+    if window_size <= 0:
+        raise PrithviConfigurationError("Official Prithvi inference window must be positive.")
+    original_shape = tuple(int(value) for value in array.shape)
+    height, width = original_shape[-2:]
+    pad_h = (int(window_size) - (height % int(window_size))) % int(window_size)
+    pad_w = (int(window_size) - (width % int(window_size))) % int(window_size)
+    if (pad_h and height < 2) or (pad_w and width < 2):
+        raise PrithviConfigurationError(
+            "NumPy reflect padding requires spatial axes of length at least two."
+        )
+    if pad_h or pad_w:
+        array = np.pad(
+            array,
+            ((0, 0), (0, 0), (0, 0), (0, pad_h), (0, pad_w)),
+            mode="reflect",
+        )
+    padded_shape = tuple(int(value) for value in array.shape)
+    if padded_shape[:3] != original_shape[:3]:
+        raise PrithviConfigurationError("Official padding changed batch, channel, or temporal dimensions.")
+    if padded_shape[-2] % window_size or padded_shape[-1] % window_size:
+        raise PrithviConfigurationError("Official padding did not produce complete inference windows.")
+    contract = {
+        "policy": PRITHVI_SEN1_PADDING_POLICY,
+        "official_source": PRITHVI_SEN1_OFFICIAL_INFERENCE_SOURCE,
+        "window_size": int(window_size),
+        "original_shape_B_C_T_H_W": list(original_shape),
+        "padded_shape_B_C_T_H_W": list(padded_shape),
+        "pad_bottom": int(pad_h),
+        "pad_right": int(pad_w),
+        "temporal_dimension_preserved": padded_shape[2] == original_shape[2],
+    }
+    return np.asarray(array, dtype=np.float32), contract
+
+
 class PrithviAdapter(ModelAdapter):
     """Prithvi-EO-2.0 300M non-TL adapter for Sen1Floods11 smoke runs."""
 
@@ -135,9 +195,12 @@ class PrithviAdapter(ModelAdapter):
         name = "cuda" if self.device == "auto" and torch.cuda.is_available() else self.device
         if name == "auto":
             name = "cpu"
-        if name == "cuda" and not torch.cuda.is_available():
+        if str(name).startswith("cuda") and not torch.cuda.is_available():
             raise PrithviConfigurationError("Prithvi device='cuda' was requested, but CUDA is not available.")
-        self._torch_device = torch.device(name)
+        resolved = torch.device(name)
+        if resolved.type == "cuda" and resolved.index is None:
+            resolved = torch.device("cuda", torch.cuda.current_device())
+        self._torch_device = resolved
         return self._torch_device
 
     def _move_to_device(self, model: Any) -> Any:
@@ -298,7 +361,9 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
         self.datamodule: Any | None = None
         self.load_diagnostics: dict[str, Any] = {}
         self.debug_records: list[dict[str, Any]] = []
-        self.official_inference_window_size = 512
+        self.device_contract: dict[str, Any] = {}
+        self._device_input_logged = False
+        self.official_inference_window_size = PRITHVI_SEN1_OFFICIAL_WINDOW_SIZE
 
     @classmethod
     def from_config(
@@ -326,6 +391,7 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
     def load_model(self) -> None:
         self._validate_config()
         if self.model is not None:
+            self.model = self._move_and_validate_requested_device(self.model)
             self._maybe_eval()
             self._set_load_diagnostics("injected_model")
             return
@@ -389,10 +455,96 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
         if hasattr(model, "model"):
             self.datamodule = getattr(model, "datamodule", None)
             wrapped = model.model
-            if hasattr(wrapped, "device"):
-                self._torch_device = wrapped.device
-            return wrapped
-        return self._move_to_device(model)
+            return self._move_and_validate_requested_device(wrapped)
+        return self._move_and_validate_requested_device(model)
+
+    @staticmethod
+    def _tensor_devices(model: Any) -> list[str]:
+        devices: list[str] = []
+        for accessor in ("parameters", "buffers"):
+            if not hasattr(model, accessor):
+                continue
+            try:
+                tensors = getattr(model, accessor)()
+            except TypeError:
+                continue
+            for tensor in tensors:
+                if hasattr(tensor, "device"):
+                    devices.append(str(tensor.device))
+        return devices
+
+    def _move_and_validate_requested_device(self, model: Any) -> Any:
+        has_tensor_interface = any(
+            hasattr(model, accessor) for accessor in ("to", "parameters", "buffers")
+        )
+        if not has_tensor_interface and str(self.device) in {"cpu", "auto"}:
+            # Lightweight NumPy mocks keep the core package testable without
+            # installing Torch. Official Lightning models always expose the
+            # tensor interface and therefore always take the strict path below.
+            self.device_contract = {
+                "requested_device": str(self.device),
+                "resolved_device": "not_applicable_numpy_mock",
+                "model_tensor_count": 0,
+                "model_tensor_devices": [],
+                "model_parameter_device": "no_tensors_reported",
+                "strict_no_cpu_fallback": False,
+                "status": "non_torch_test_double",
+            }
+            return model
+        requested = self._resolve_device()
+        if hasattr(model, "to"):
+            moved = model.to(requested)
+            if moved is not None:
+                model = moved
+        devices = self._tensor_devices(model)
+        if requested.type == "cuda" and not devices:
+            raise PrithviConfigurationError(
+                "Prithvi device='cuda' requires a model exposing parameters or buffers; "
+                "the official model device could not be certified."
+            )
+        mismatches = sorted({value for value in devices if value != str(requested)})
+        if mismatches:
+            raise PrithviConfigurationError(
+                "Prithvi model parameters/buffers did not move to the requested device "
+                f"{requested}; observed={sorted(set(devices))}."
+            )
+        self._torch_device = requested
+        self.device_contract = {
+            "requested_device": str(self.device),
+            "resolved_device": str(requested),
+            "model_tensor_count": len(devices),
+            "model_tensor_devices": sorted(set(devices)),
+            "model_parameter_device": devices[0] if devices else "no_tensors_reported",
+            "strict_no_cpu_fallback": str(self.device).startswith("cuda"),
+            "status": "pass",
+        }
+        return model
+
+    def _validate_runtime_device_contract(self, model_input: Any | None = None) -> None:
+        requested = self._resolve_device()
+        devices = self._tensor_devices(self.model)
+        mismatches = sorted({value for value in devices if value != str(requested)})
+        if mismatches:
+            raise PrithviConfigurationError(
+                "Prithvi device contract drifted before forward: "
+                f"requested={requested}, model_devices={sorted(set(devices))}."
+            )
+        if model_input is not None:
+            input_device = str(getattr(model_input, "device", "not_reported"))
+            if input_device != str(requested):
+                raise PrithviConfigurationError(
+                    f"Prithvi input device {input_device} does not match model device {requested}."
+                )
+            self.device_contract["model_input_device"] = input_device
+            if not self._device_input_logged:
+                print(
+                    "[prithvi:sen1:device] "
+                    f"resolved={requested} "
+                    f"model_parameter_device={self.device_contract.get('model_parameter_device')} "
+                    f"model_input_device={input_device}",
+                    flush=True,
+                )
+                self._device_input_logged = True
 
     def _set_load_diagnostics(self, load_source: str) -> None:
         missing_keys = getattr(self.model, "missing_keys", None)
@@ -418,7 +570,10 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
             "expected_band_order": self.official_band_names,
             "official_preprocessing": "scale_to_0_1_then_datamodule.test_transform_and_aug_then_restore_[B,C,1,H,W]",
             "official_inference_window_size": self.official_inference_window_size,
-            "expected_input_size_note": "Official inference uses 512x512 sliding windows; config trains with 224x224 random crops. This adapter pads/crops through 512x512 windows to match official inference.",
+            "official_inference_source": PRITHVI_SEN1_OFFICIAL_INFERENCE_SOURCE,
+            "padding_policy": PRITHVI_SEN1_PADDING_POLICY,
+            "device_contract": dict(self.device_contract),
+            "expected_input_size_note": "Official inference uses 512x512 sliding windows; config trains with 224x224 random crops. This adapter applies the released NumPy spatial reflect-padding/window/crop policy.",
         }
 
     def preprocess(self, batch: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -489,15 +644,21 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
         except ImportError as exc:
             raise PrithviConfigurationError("PyTorch is required for official Prithvi Sen1Floods11 TL inference.") from exc
         array = np.asarray(images, dtype=np.float32)
+        if array.ndim != 5:
+            raise PrithviConfigurationError(f"Expected prepared Prithvi input [B,T,C,H,W], got {array.shape}.")
+        if not np.all(np.isfinite(array)):
+            raise PrithviConfigurationError("Prepared Prithvi input contains NaN/Inf.")
         if np.nanmax(array) > 1.5:
             array = array / 10000.0
-        tensor = torch.as_tensor(array, dtype=torch.float32).permute(0, 2, 1, 3, 4)
-        original_h, original_w = tensor.shape[-2:]
+        official_layout = np.transpose(array, (0, 2, 1, 3, 4))
+        original_h, original_w = official_layout.shape[-2:]
         window_size = int(self.official_inference_window_size)
-        pad_h = (window_size - (original_h % window_size)) % window_size
-        pad_w = (window_size - (original_w % window_size)) % window_size
-        if pad_h or pad_w:
-            tensor = F.pad(tensor, (0, pad_w, 0, pad_h), mode="reflect")
+        padded, padding_contract = pad_prithvi_sen1_official_windows(
+            official_layout,
+            window_size=window_size,
+        )
+        tensor = torch.as_tensor(padded, dtype=torch.float32)
+        self._validate_runtime_device_contract()
         batch_logits = []
         model_inputs_seen: list[list[int]] = []
         with torch.no_grad():
@@ -508,6 +669,12 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
                     for left in range(0, sample.shape[-1], window_size):
                         window = sample[:, :, top : top + window_size, left : left + window_size]
                         model_input = self._prepare_official_window(window).to(self._resolve_device())
+                        if tuple(model_input.shape[2:]) != (self.expected_frames, window_size, window_size):
+                            raise PrithviConfigurationError(
+                                "Official Prithvi transformed input must preserve T and the 512x512 window; "
+                                f"got {tuple(model_input.shape)}."
+                            )
+                        self._validate_runtime_device_contract(model_input)
                         model_inputs_seen.append(list(model_input.shape))
                         try:
                             output = self.model(model_input, temporal_coords=None, location_coords=None)
@@ -521,6 +688,13 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
                             logits_window = logits_window.mean(dim=2)
                         if logits_window.ndim == 3:
                             logits_window = logits_window.unsqueeze(0)
+                        if logits_window.ndim != 4 or logits_window.shape[1] < 2:
+                            raise PrithviConfigurationError(
+                                "Official Prithvi raw model output must be [B,K,H,W] with K>=2; "
+                                f"got {tuple(logits_window.shape)}."
+                            )
+                        if not bool(torch.isfinite(logits_window).all()):
+                            raise PrithviConfigurationError("Official Prithvi raw logits contain NaN/Inf.")
                         if logits_window.shape[-2:] != (window_size, window_size):
                             logits_window = F.interpolate(logits_window, size=(window_size, window_size), mode="bilinear", align_corners=False)
                         row_logits.append(logits_window)
@@ -536,6 +710,7 @@ class PrithviSen1Floods11TLAdapter(PrithviAdapter):
                 "scaled_input_max": float(np.nanmax(array)),
                 "scaled_input_mean": float(np.nanmean(array)),
                 "padded_tensor_shape_B_C_T_H_W": list(tensor.shape),
+                "padding_contract": padding_contract,
                 "model_window_input_shapes": model_inputs_seen[:5],
                 "official_inference_window_size": window_size,
                 "used_datamodule_transform": bool(self.datamodule is not None and hasattr(self.datamodule, "test_transform") and hasattr(self.datamodule, "aug")),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import sys
 
@@ -52,6 +53,22 @@ def main() -> None:
         )
     )
     print(f"[prithvi:sen1] probability migration complete: {artifacts['manifest']}")
+    if args.diagnostic_max_samples is not None:
+        manifest = json.loads(Path(artifacts["manifest"]).read_text(encoding="utf-8"))
+        expected = int(args.diagnostic_max_samples)
+        if (
+            int(manifest.get("validation_count", -1)) != expected
+            or int(manifest.get("test_count", -1)) != expected
+            or manifest.get("formal_evidence") is not False
+        ):
+            raise RuntimeError("Prithvi-only diagnostic contract did not preserve the requested bounded split counts.")
+        for split in ("validation", "test"):
+            validation = manifest["split_runtime_validation"][split]
+            if validation.get("full_probability_layout") != "[B,2,H,W]":
+                raise RuntimeError(f"Prithvi-only {split} output did not preserve full class probabilities.")
+            if float(validation.get("maximum_probability_sum_error", 1.0)) > 1e-5:
+                raise RuntimeError(f"Prithvi-only {split} probabilities failed the unit-sum contract.")
+        print("PRITHVI_ONLY_GPU_PROBE=PASS")
     print("[prithvi:sen1] GeoBWER finalization remains blocked until the all-model "
           "validation-only spatial calibration is frozen.")
 
