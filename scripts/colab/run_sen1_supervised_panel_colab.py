@@ -46,6 +46,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--persistent-output-dir", type=Path)
+    parser.add_argument(
+        "--carry-forward-manifest",
+        type=Path,
+        help=(
+            "Optional validated v0.4.27 -> v0.4.28 seed migration manifest. "
+            "Legacy directories are never accepted without this evidence."
+        ),
+    )
     parser.add_argument("--mode", action="append", choices=SENSOR_MODES)
     parser.add_argument("--seeds", type=_csv_ints, default=(42, 73, 101))
     parser.add_argument("--max-epochs", type=int, default=100)
@@ -92,6 +100,7 @@ def main() -> None:
             pretrained_encoder=args.pretrained_encoder,
             device=args.device,
             diagnostic_max_samples=args.diagnostic_max_samples,
+            carry_forward_manifest=args.carry_forward_manifest,
         )
     )
     print(f"[sen1:supervised] complete: {artifacts['campaign_manifest']}")

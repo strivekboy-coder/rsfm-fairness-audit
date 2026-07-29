@@ -638,7 +638,7 @@ def test_diagnostic_normalization_uses_all_252_official_train_prefixes_for_all_m
         contract["normalization_sample_count"] == 252
         for contract in manifest["normalization_contracts"].values()
     )
-    assert manifest["schema"] == "geobwer.sen1floods11.supervised_panel.v5"
+    assert manifest["schema"] == "geobwer.sen1floods11.supervised_panel.v6"
     assert all(
         contract["imputation_policy"] == IMPUTATION_POLICY
         for contract in manifest["input_quality_contracts"].values()

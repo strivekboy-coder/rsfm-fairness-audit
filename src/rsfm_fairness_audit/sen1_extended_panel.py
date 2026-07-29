@@ -10,6 +10,10 @@ from rsfm_fairness_audit.formal_outputs import file_sha256
 from rsfm_fairness_audit.geobwer_extensions import run_segmentation_uncertainty_suite
 from rsfm_fairness_audit.geobwer_panel import run_geobwer_model_panel
 from rsfm_fairness_audit.persistent_cache import hydrate_output, persist_output
+from rsfm_fairness_audit.sen1_amp_carry_forward import (
+    load_carry_forward_manifest,
+    reuse_carry_forward_seed,
+)
 from rsfm_fairness_audit.sen1floods11_formal import (
     combine_sen1_evaluation_exports,
     finalize_sen1_probability_export,
@@ -197,6 +201,29 @@ def run_sen1_extended_panel(config: Sen1ExtendedPanelConfig) -> dict[str, Path]:
     calibration_path = config.terramind_root / "common_spatial_block_calibration.json"
     calibration = _json(calibration_path)
     calibrated_models = set(map(str, calibration.get("models", {})))
+    supervised_campaign = _json(
+        config.supervised_root / "campaign_manifest.json"
+    )
+    if (
+        supervised_campaign.get("schema")
+        != "geobwer.sen1floods11.supervised_panel.v6"
+    ):
+        raise Sen1ExtendedPanelError(
+            "The supervised panel must use the v0.4.28 completion schema."
+        )
+    carry_summary = supervised_campaign.get("carry_forward")
+    carry_forward = None
+    if isinstance(carry_summary, Mapping):
+        carry_path = Path(str(carry_summary.get("manifest", "")))
+        carry_forward = load_carry_forward_manifest(carry_path)
+        if (
+            str(carry_summary.get("manifest_sha256", ""))
+            != str(carry_forward["_manifest_sha256"])
+        ):
+            raise Sen1ExtendedPanelError(
+                "Supervised carry-forward manifest SHA does not match the "
+                "campaign contract."
+            )
 
     tables, panel_protocol = _terramind_tables(config.terramind_root, config.seeds)
     required_calibration_models = set(tables)
@@ -214,6 +241,47 @@ def run_sen1_extended_panel(config: Sen1ExtendedPanelConfig) -> dict[str, Path]:
                 or int(source_manifest.get("seed", -1)) != seed
             ):
                 raise Sen1ExtendedPanelError(f"Supervised run identity drift at {run_root}.")
+            source_schema = str(source_manifest.get("schema", ""))
+            if source_schema == "geobwer.sen1floods11.supervised_resnet34_unet.v5":
+                carried = reuse_carry_forward_seed(
+                    carry_forward,
+                    mode=mode,
+                    seed=seed,
+                    expected_normalization_sha256=str(
+                        source_manifest.get("normalization_sha256", "")
+                    ),
+                    expected_input_quality_contract_sha256=str(
+                        source_manifest.get(
+                            "input_quality_contract", {}
+                        ).get("sha256", "")
+                    ),
+                    candidate_run_dir=run_root,
+                )
+                if carried is None:
+                    raise Sen1ExtendedPanelError(
+                        "Legacy supervised seed has no validated v0.4.27 -> "
+                        f"v0.4.28 carry-forward evidence: {run_root}."
+                    )
+            elif source_schema == "geobwer.sen1floods11.supervised_resnet34_unet.v6":
+                records = source_manifest.get("amp_overflow_records")
+                if (
+                    not isinstance(records, list)
+                    or int(source_manifest.get("amp_overflow_count", -1))
+                    != len(records)
+                    or int(
+                        source_manifest.get(
+                            "skipped_optimizer_step_count", -1
+                        )
+                    )
+                    != len(records)
+                ):
+                    raise Sen1ExtendedPanelError(
+                        f"Supervised AMP completion contract is invalid: {run_root}."
+                    )
+            else:
+                raise Sen1ExtendedPanelError(
+                    f"Unsupported supervised run schema at {run_root}: {source_schema}."
+                )
             checkpoint = run_root / "best_resnet34_unet.pt"
             table, current_protocol = _finalize_one(
                 model_name=model_name,
@@ -244,6 +312,10 @@ def run_sen1_extended_panel(config: Sen1ExtendedPanelConfig) -> dict[str, Path]:
                     "outer_validation_used_for_model_selection": False,
                     "bolivia_holdout_used_for_model_selection": False,
                     "full_probability_export": True,
+                    "amp_overflow_count": int(
+                        source_manifest.get("amp_overflow_count", 0)
+                    ),
+                    "amp_carry_forward": source_schema.endswith(".v5"),
                 },
                 dataset_lineage={
                     "dataset": "Sen1Floods11-v1.1-HandLabeled",

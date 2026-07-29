@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import random
+import subprocess
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -12,6 +13,10 @@ import numpy as np
 from rsfm_fairness_audit.formal_outputs import file_sha256
 from rsfm_fairness_audit.persistent_cache import hydrate_output, persist_output
 from rsfm_fairness_audit.probe_selection import group_disjoint_inner_split
+from rsfm_fairness_audit.sen1_amp_carry_forward import (
+    load_carry_forward_manifest,
+    reuse_carry_forward_seed,
+)
 from rsfm_fairness_audit.sen1_input_quality import (
     FORMAL_COMPLETE_MODALITY_MISSING_EXPECTATION,
     SEN1_IMPUTATION_POLICY,
@@ -38,6 +43,36 @@ SENSOR_MODES = ("S1", "S2", "S1+S2")
 MODE_CHANNELS = {"S1": 2, "S2": 13, "S1+S2": 15}
 FORMAL_MASK_VALUES = {-1, 0, 1}
 IMPUTATION_POLICY = SEN1_IMPUTATION_POLICY
+AMP_OVERFLOW_POLICY_SCHEMA = "geobwer.sen1floods11.amp_overflow.v1"
+AMP_MAX_CONSECUTIVE_OVERFLOWS = 3
+AMP_MAX_TOTAL_OVERFLOWS = 20
+
+
+def _code_identity(*, formal: bool) -> dict[str, str]:
+    from rsfm_fairness_audit import __version__
+
+    completed = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=Path(__file__).resolve().parents[2],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    commit = completed.stdout.strip() if completed.returncode == 0 else ""
+    if formal and not _is_git_sha1(commit):
+        raise Sen1SupervisedCampaignError(
+            "Formal Sen1 training requires a Git-frozen source checkout."
+        )
+    return {
+        "package_version": str(__version__),
+        "code_commit": commit or "unavailable",
+    }
+
+
+def _is_git_sha1(value: str) -> bool:
+    return len(value) == 40 and all(
+        character in "0123456789abcdef" for character in value
+    )
 
 
 @dataclass(frozen=True)
@@ -64,6 +99,7 @@ class Sen1SupervisedConfig:
     device: str = "auto"
     amp: bool = True
     diagnostic_max_samples: int | None = None
+    carry_forward_manifest: Path | None = None
 
     def __post_init__(self) -> None:
         normalized = tuple(str(value).upper().replace(" ", "") for value in self.sensor_modes)
@@ -624,6 +660,114 @@ def _evaluate(
     )
 
 
+def _finish_scaled_optimizer_step(
+    *,
+    model: Any,
+    optimizer: Any,
+    scaler: Any,
+    amp: bool,
+    scale_before: float,
+    mode: str,
+    seed: int | None,
+    epoch: int | None,
+    batch_index: int | None,
+    training_stage: str,
+    sample_ids: Sequence[str],
+    error_context: str = "",
+) -> dict[str, Any]:
+    """Finish a scaled step, recovering only GradScaler-detected overflow."""
+
+    torch = _require_torch()
+    scaler.unscale_(optimizer)
+    invalid_gradient_parameters = [
+        name
+        for name, parameter in model.named_parameters()
+        if parameter.grad is not None
+        and not bool(torch.isfinite(parameter.grad).all().item())
+    ]
+    if invalid_gradient_parameters:
+        amp_enabled = bool(
+            amp
+            and callable(getattr(scaler, "is_enabled", None))
+            and scaler.is_enabled()
+        )
+        if not amp_enabled:
+            optimizer.zero_grad(set_to_none=True)
+            raise Sen1SupervisedCampaignError(
+                "Training gradients contain NaN/Inf with AMP disabled: "
+                f"mode={mode}, seed={seed}, epoch={epoch}, "
+                f"batch_index={batch_index}, prefixes={list(sample_ids)}, "
+                f"parameters={invalid_gradient_parameters[:20]}"
+                f"{error_context}."
+            )
+        scaler.step(optimizer)
+        scaler.update()
+        scale_after = float(scaler.get_scale())
+        optimizer.zero_grad(set_to_none=True)
+        if not np.isfinite(scale_after) or not scale_after < scale_before:
+            raise Sen1SupervisedCampaignError(
+                "AMP overflow recovery did not reduce the gradient scale: "
+                f"mode={mode}, seed={seed}, epoch={epoch}, "
+                f"batch_index={batch_index}, prefixes={list(sample_ids)}, "
+                f"scale_before={scale_before}, scale_after={scale_after}."
+            )
+        invalid_parameter_values = [
+            name
+            for name, parameter in model.named_parameters()
+            if not bool(torch.isfinite(parameter).all().item())
+        ]
+        if invalid_parameter_values:
+            raise Sen1SupervisedCampaignError(
+                "Model parameters contain NaN/Inf after a skipped AMP update: "
+                f"mode={mode}, seed={seed}, epoch={epoch}, "
+                f"batch_index={batch_index}, "
+                f"parameters={invalid_parameter_values[:20]}."
+            )
+        return {
+            "amp_overflow": True,
+            "optimizer_step_skipped": True,
+            "amp_overflow_record": {
+                "schema": AMP_OVERFLOW_POLICY_SCHEMA,
+                "mode": mode,
+                "seed": seed,
+                "training_stage": training_stage,
+                "epoch": epoch,
+                "batch_index": batch_index,
+                "sample_ids": list(sample_ids),
+                "scale_before": scale_before,
+                "scale_after": scale_after,
+                "overflow_parameter_names": list(
+                    invalid_gradient_parameters
+                ),
+                "optimizer_step_skipped": True,
+            },
+        }
+    scaler.step(optimizer)
+    scaler.update()
+    scale_after = float(scaler.get_scale())
+    if not np.isfinite(scale_after):
+        raise Sen1SupervisedCampaignError(
+            "AMP gradient scale is NaN/Inf after optimizer update: "
+            f"mode={mode}, prefixes={list(sample_ids)}, scale={scale_after}."
+        )
+    invalid_parameter_values = [
+        name
+        for name, parameter in model.named_parameters()
+        if not bool(torch.isfinite(parameter).all().item())
+    ]
+    if invalid_parameter_values:
+        raise Sen1SupervisedCampaignError(
+            "Model parameters contain NaN/Inf after optimizer.step: "
+            f"mode={mode}, prefixes={list(sample_ids)}, "
+            f"parameters={invalid_parameter_values[:20]}."
+        )
+    return {
+        "amp_overflow": False,
+        "optimizer_step_skipped": False,
+        "amp_overflow_record": None,
+    }
+
+
 def _training_batch_step(
     *,
     model: Any,
@@ -635,6 +779,10 @@ def _training_batch_step(
     device: Any,
     mode: str,
     amp: bool,
+    seed: int | None = None,
+    epoch: int | None = None,
+    batch_index: int | None = None,
+    training_stage: str = "unspecified",
 ) -> dict[str, Any]:
     """Execute one effective optimization step or explicitly skip all-ignore."""
 
@@ -651,6 +799,9 @@ def _training_batch_step(
         return {
             **support,
             "skipped_all_ignore": True,
+            "amp_overflow": False,
+            "optimizer_step_skipped": True,
+            "amp_overflow_record": None,
             "loss": None,
         }
     optimizer.zero_grad(set_to_none=True)
@@ -682,47 +833,110 @@ def _training_batch_step(
             f"mode={mode}, prefixes={support['prefixes']}, scale={scale_before}."
         )
     scaler.scale(loss).backward()
-    scaler.unscale_(optimizer)
-    invalid_gradient_parameters = [
-        name
-        for name, parameter in model.named_parameters()
-        if parameter.grad is not None
-        and not bool(torch.isfinite(parameter.grad).all().item())
-    ]
-    if invalid_gradient_parameters:
-        optimizer.zero_grad(set_to_none=True)
-        raise Sen1SupervisedCampaignError(
-            "Training gradients contain NaN/Inf before optimizer.step: "
-            f"mode={mode}, prefixes={support['prefixes']}, "
-            f"parameters={invalid_gradient_parameters[:20]}, "
-            f"input_range={_tensor_range(images)}, "
+    optimizer_outcome = _finish_scaled_optimizer_step(
+        model=model,
+        optimizer=optimizer,
+        scaler=scaler,
+        amp=amp,
+        scale_before=scale_before,
+        mode=mode,
+        seed=seed,
+        epoch=epoch,
+        batch_index=batch_index,
+        training_stage=training_stage,
+        sample_ids=support["prefixes"],
+        error_context=(
+            f", input_range={_tensor_range(images)}, "
             f"logits_range={_tensor_range(logits)}, "
-            f"valid_pixel_counts={support['valid_pixel_counts']}."
-        )
-    scaler.step(optimizer)
-    scaler.update()
-    scale_after = float(scaler.get_scale())
-    if not np.isfinite(scale_after):
-        raise Sen1SupervisedCampaignError(
-            "AMP gradient scale is NaN/Inf after optimizer update: "
-            f"mode={mode}, prefixes={support['prefixes']}, scale={scale_after}."
-        )
-    invalid_parameter_values = [
-        name
-        for name, parameter in model.named_parameters()
-        if not bool(torch.isfinite(parameter).all().item())
-    ]
-    if invalid_parameter_values:
-        raise Sen1SupervisedCampaignError(
-            "Model parameters contain NaN/Inf after optimizer.step: "
-            f"mode={mode}, prefixes={support['prefixes']}, "
-            f"parameters={invalid_parameter_values[:20]}."
-        )
+            f"valid_pixel_counts={support['valid_pixel_counts']}"
+        ),
+    )
     return {
         **support,
         "skipped_all_ignore": False,
+        **optimizer_outcome,
         "loss": float(loss.detach().cpu()),
     }
+
+
+def _new_amp_overflow_tracker() -> dict[str, Any]:
+    return {
+        "schema": AMP_OVERFLOW_POLICY_SCHEMA,
+        "max_consecutive_overflows": AMP_MAX_CONSECUTIVE_OVERFLOWS,
+        "max_total_overflows": AMP_MAX_TOTAL_OVERFLOWS,
+        "amp_overflow_count": 0,
+        "consecutive_amp_overflow_count": 0,
+        "maximum_consecutive_amp_overflow_count": 0,
+        "skipped_optimizer_step_count": 0,
+        "amp_overflow_records": [],
+    }
+
+
+def _amp_manifest_fields(tracker: Mapping[str, Any]) -> dict[str, Any]:
+    records = [dict(record) for record in tracker["amp_overflow_records"]]
+    return {
+        "amp_overflow_policy_schema": AMP_OVERFLOW_POLICY_SCHEMA,
+        "amp_max_consecutive_overflows": AMP_MAX_CONSECUTIVE_OVERFLOWS,
+        "amp_max_total_overflows": AMP_MAX_TOTAL_OVERFLOWS,
+        "amp_overflow_count": int(tracker["amp_overflow_count"]),
+        "amp_overflow_records": records,
+        "skipped_optimizer_step_count": int(
+            tracker["skipped_optimizer_step_count"]
+        ),
+        "maximum_consecutive_amp_overflow_count": int(
+            tracker["maximum_consecutive_amp_overflow_count"]
+        ),
+    }
+
+
+def _record_optimizer_outcome(
+    tracker: dict[str, Any],
+    batch_result: Mapping[str, Any],
+    *,
+    journal_path: Path,
+) -> None:
+    """Record an optimizer outcome and enforce bounded AMP recovery."""
+
+    if batch_result.get("skipped_all_ignore"):
+        return
+    if not batch_result.get("amp_overflow"):
+        tracker["consecutive_amp_overflow_count"] = 0
+        return
+    record = batch_result.get("amp_overflow_record")
+    if not isinstance(record, Mapping):
+        raise Sen1SupervisedCampaignError(
+            "AMP overflow outcome is missing its audit record."
+        )
+    tracker["amp_overflow_count"] += 1
+    tracker["consecutive_amp_overflow_count"] += 1
+    tracker["maximum_consecutive_amp_overflow_count"] = max(
+        int(tracker["maximum_consecutive_amp_overflow_count"]),
+        int(tracker["consecutive_amp_overflow_count"]),
+    )
+    tracker["skipped_optimizer_step_count"] += 1
+    tracker["amp_overflow_records"].append(dict(record))
+    journal_path.parent.mkdir(parents=True, exist_ok=True)
+    journal_path.write_text(
+        json.dumps(tracker, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    if (
+        int(tracker["consecutive_amp_overflow_count"])
+        > AMP_MAX_CONSECUTIVE_OVERFLOWS
+    ):
+        raise Sen1SupervisedCampaignError(
+            "AMP overflow safety limit exceeded: "
+            f"consecutive={tracker['consecutive_amp_overflow_count']}, "
+            f"allowed={AMP_MAX_CONSECUTIVE_OVERFLOWS}. "
+            f"Last record={dict(record)}."
+        )
+    if int(tracker["amp_overflow_count"]) > AMP_MAX_TOTAL_OVERFLOWS:
+        raise Sen1SupervisedCampaignError(
+            "AMP overflow safety limit exceeded: "
+            f"total={tracker['amp_overflow_count']}, "
+            f"allowed={AMP_MAX_TOTAL_OVERFLOWS}. "
+            f"Last record={dict(record)}."
+        )
 
 
 def _train_seed(
@@ -739,6 +953,9 @@ def _train_seed(
     output_dir: Path,
 ) -> dict[str, Any]:
     torch = _require_torch()
+    code_identity = _code_identity(
+        formal=config.diagnostic_max_samples is None
+    )
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
@@ -800,12 +1017,15 @@ def _train_seed(
     no_improvement = 0
     history: list[dict[str, Any]] = []
     skipped_all_ignore_batch_count = 0
+    amp_overflow_tracker = _new_amp_overflow_tracker()
+    amp_overflow_journal = output_dir / "amp_overflow_journal.json"
     for epoch in range(1, config.max_epochs + 1):
         train_dataset.set_epoch(epoch)
         train_loader = _loader(train_dataset, config, shuffle=True)
         model.train()
         losses: list[float] = []
         epoch_skipped_all_ignore_batch_count = 0
+        epoch_amp_overflow_count = 0
         for batch_index, (images, masks, _prefixes) in enumerate(train_loader):
             images = images.to(device, non_blocking=True)
             masks = masks.to(device, non_blocking=True)
@@ -825,6 +1045,10 @@ def _train_seed(
                 device=device,
                 mode=mode,
                 amp=config.amp,
+                seed=seed,
+                epoch=epoch,
+                batch_index=batch_index,
+                training_stage="inner_event_disjoint_selection_fit",
             )
             if batch_result["skipped_all_ignore"]:
                 skipped_all_ignore_batch_count += 1
@@ -832,6 +1056,23 @@ def _train_seed(
                 print(
                     "[sen1:baseline] skipped all-ignore training batch "
                     f"mode={mode} seed={seed} epoch={epoch} "
+                    f"prefixes={batch_result['prefixes']}",
+                    flush=True,
+                )
+                continue
+            _record_optimizer_outcome(
+                amp_overflow_tracker,
+                batch_result,
+                journal_path=amp_overflow_journal,
+            )
+            if batch_result["amp_overflow"]:
+                epoch_amp_overflow_count += 1
+                print(
+                    "[sen1:baseline:amp-overflow] recovered "
+                    f"mode={mode} seed={seed} epoch={epoch} "
+                    f"batch_index={batch_index} "
+                    f"scale_before={batch_result['amp_overflow_record']['scale_before']} "
+                    f"scale_after={batch_result['amp_overflow_record']['scale_after']} "
                     f"prefixes={batch_result['prefixes']}",
                     flush=True,
                 )
@@ -854,6 +1095,8 @@ def _train_seed(
                 "inner_selection_support": selection_support,
                 "effective_batch_count": len(losses),
                 "skipped_all_ignore_batch_count": epoch_skipped_all_ignore_batch_count,
+                "amp_overflow_count": epoch_amp_overflow_count,
+                "skipped_optimizer_step_count": epoch_amp_overflow_count,
                 "learning_rate": float(optimizer.param_groups[0]["lr"]),
             }
         )
@@ -889,6 +1132,7 @@ def _train_seed(
         model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
     )
     scaler = torch.amp.GradScaler("cuda", enabled=bool(config.amp and device.type == "cuda"))
+    amp_overflow_tracker["consecutive_amp_overflow_count"] = 0
     full_train_dataset = _Dataset(
         config,
         train_prefixes,
@@ -905,8 +1149,9 @@ def _train_seed(
         model.train()
         losses: list[float] = []
         epoch_skipped_all_ignore_batch_count = 0
-        for images, masks, _prefixes in _loader(
-            full_train_dataset, config, shuffle=True
+        epoch_amp_overflow_count = 0
+        for batch_index, (images, masks, _prefixes) in enumerate(
+            _loader(full_train_dataset, config, shuffle=True)
         ):
             images = images.to(device, non_blocking=True)
             masks = masks.to(device, non_blocking=True)
@@ -920,10 +1165,31 @@ def _train_seed(
                 device=device,
                 mode=mode,
                 amp=config.amp,
+                seed=seed,
+                epoch=epoch,
+                batch_index=batch_index,
+                training_stage="official_train_refit",
             )
             if batch_result["skipped_all_ignore"]:
                 refit_skipped_all_ignore_batch_count += 1
                 epoch_skipped_all_ignore_batch_count += 1
+                continue
+            _record_optimizer_outcome(
+                amp_overflow_tracker,
+                batch_result,
+                journal_path=amp_overflow_journal,
+            )
+            if batch_result["amp_overflow"]:
+                epoch_amp_overflow_count += 1
+                print(
+                    "[sen1:baseline:amp-overflow] recovered "
+                    f"mode={mode} seed={seed} stage=official_train_refit "
+                    f"epoch={epoch} batch_index={batch_index} "
+                    f"scale_before={batch_result['amp_overflow_record']['scale_before']} "
+                    f"scale_after={batch_result['amp_overflow_record']['scale_after']} "
+                    f"prefixes={batch_result['prefixes']}",
+                    flush=True,
+                )
                 continue
             losses.append(float(batch_result["loss"]))
         if not losses:
@@ -937,6 +1203,8 @@ def _train_seed(
                 "full_train_loss": float(np.mean(losses)),
                 "effective_batch_count": len(losses),
                 "skipped_all_ignore_batch_count": epoch_skipped_all_ignore_batch_count,
+                "amp_overflow_count": epoch_amp_overflow_count,
+                "skipped_optimizer_step_count": epoch_amp_overflow_count,
             }
         )
     best_state = {
@@ -963,6 +1231,10 @@ def _train_seed(
             "input_quality_contract_sha256": str(
                 input_quality_contract_sha256
             ),
+            "amp_overflow_policy": _amp_manifest_fields(
+                amp_overflow_tracker
+            ),
+            **code_identity,
             "config": asdict(config),
         },
         checkpoint,
@@ -1069,7 +1341,8 @@ def _train_seed(
     manifest.write_text(
         json.dumps(
             {
-                "schema": "geobwer.sen1floods11.supervised_resnet34_unet.v5",
+                "schema": "geobwer.sen1floods11.supervised_resnet34_unet.v6",
+                **code_identity,
                 "formal_evidence": config.diagnostic_max_samples is None,
                 "architecture": "resnet34_unet",
                 "adaptation_protocol": "supervised_from_scratch_decoder_imagenet_encoder_initialization"
@@ -1099,6 +1372,17 @@ def _train_seed(
                 "split_support": split_support,
                 "skipped_all_ignore_batch_count": skipped_all_ignore_batch_count,
                 "refit_skipped_all_ignore_batch_count": refit_skipped_all_ignore_batch_count,
+                **_amp_manifest_fields(amp_overflow_tracker),
+                "amp_overflow_journal": (
+                    str(amp_overflow_journal)
+                    if amp_overflow_journal.is_file()
+                    else None
+                ),
+                "amp_overflow_journal_sha256": (
+                    file_sha256(amp_overflow_journal)
+                    if amp_overflow_journal.is_file()
+                    else None
+                ),
                 "history": history,
                 "refit_history": refit_history,
             },
@@ -1136,8 +1420,12 @@ def _reuse_completed_seed(
     if not manifest_path.is_file() or not checkpoint.is_file():
         return None
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    overflow_records = payload.get("amp_overflow_records")
+    overflow_journal = run_dir / "amp_overflow_journal.json"
     if (
-        payload.get("schema") != "geobwer.sen1floods11.supervised_resnet34_unet.v5"
+        payload.get("schema") != "geobwer.sen1floods11.supervised_resnet34_unet.v6"
+        or str(payload.get("package_version", "")) != "0.4.28"
+        or not _is_git_sha1(str(payload.get("code_commit", "")))
         or str(payload.get("sensor_mode")) != mode
         or int(payload.get("seed", -1)) != int(seed)
         or str(payload.get("checkpoint_sha256", "")) != file_sha256(checkpoint)
@@ -1146,6 +1434,30 @@ def _reuse_completed_seed(
         or str(payload.get("imputation_policy", "")) != IMPUTATION_POLICY
         or str(payload.get("input_quality_contract", {}).get("sha256", ""))
         != str(expected_input_quality_contract_sha256)
+        or payload.get("amp_overflow_policy_schema")
+        != AMP_OVERFLOW_POLICY_SCHEMA
+        or not isinstance(overflow_records, list)
+        or int(payload.get("amp_overflow_count", -1))
+        != len(overflow_records)
+        or int(payload.get("skipped_optimizer_step_count", -1))
+        != len(overflow_records)
+        or int(payload.get("maximum_consecutive_amp_overflow_count", -1))
+        > AMP_MAX_CONSECUTIVE_OVERFLOWS
+        or int(payload.get("amp_overflow_count", -1))
+        > AMP_MAX_TOTAL_OVERFLOWS
+        or any(
+            record.get("optimizer_step_skipped") is not True
+            or record.get("schema") != AMP_OVERFLOW_POLICY_SCHEMA
+            for record in overflow_records
+        )
+        or (
+            len(overflow_records) > 0
+            and (
+                not overflow_journal.is_file()
+                or str(payload.get("amp_overflow_journal_sha256", ""))
+                != file_sha256(overflow_journal)
+            )
+        )
     ):
         raise Sen1SupervisedCampaignError(
             f"Completed seed artifacts conflict with the frozen protocol under {run_dir}."
@@ -1220,6 +1532,10 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
     """
 
     hydrate_output(config.output_dir, config.persistent_output_dir)
+    code_identity = _code_identity(
+        formal=config.diagnostic_max_samples is None
+    )
+    carry_forward = load_carry_forward_manifest(config.carry_forward_manifest)
     split_report = prepare_terramind_sen1_splits(
         {
             "s1_root": config.s1_root,
@@ -1371,7 +1687,14 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
                 / mode.lower().replace("+", "_plus_")
                 / f"seed_{int(seed)}"
             )
-            results[name] = _reuse_completed_seed(
+            carried = reuse_carry_forward_seed(
+                carry_forward,
+                mode=mode,
+                seed=int(seed),
+                expected_normalization_sha256=normalization_sha256,
+                expected_input_quality_contract_sha256=quality_sha256,
+            )
+            results[name] = carried or _reuse_completed_seed(
                 run_dir,
                 mode=mode,
                 seed=int(seed),
@@ -1392,22 +1715,24 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
                 input_quality_contract_sha256=quality_sha256,
                 output_dir=run_dir,
             )
-            persist_output(
-                run_dir,
-                (
-                    config.persistent_output_dir
-                    / mode.lower().replace("+", "_plus_")
-                    / f"seed_{int(seed)}"
-                    if config.persistent_output_dir
-                    else None
-                ),
-                label=f"{name}-complete",
-            )
+            if not results[name].get("carry_forward"):
+                persist_output(
+                    run_dir,
+                    (
+                        config.persistent_output_dir
+                        / mode.lower().replace("+", "_plus_")
+                        / f"seed_{int(seed)}"
+                        if config.persistent_output_dir
+                        else None
+                    ),
+                    label=f"{name}-complete",
+                )
     campaign_manifest = output / "campaign_manifest.json"
     campaign_manifest.write_text(
         json.dumps(
             {
-                "schema": "geobwer.sen1floods11.supervised_panel.v5",
+                "schema": "geobwer.sen1floods11.supervised_panel.v6",
+                **code_identity,
                 "formal_evidence": config.diagnostic_max_samples is None,
                 "design": "resnet34_unet_x_sensor_mode_x_seed",
                 "split_protocol": "official_252_89_90_plus_15_bolivia_holdout",
@@ -1431,6 +1756,20 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
                 },
                 "normalization_contracts": normalization_contracts,
                 "input_quality_contracts": input_quality_contracts,
+                "carry_forward": (
+                    {
+                        "manifest": str(config.carry_forward_manifest),
+                        "manifest_sha256": carry_forward[
+                            "_manifest_sha256"
+                        ],
+                        "source_commit": carry_forward["source_commit"],
+                        "source_version": carry_forward["source_version"],
+                        "target_version": carry_forward["target_version"],
+                        "target_commit": carry_forward["target_commit"],
+                    }
+                    if carry_forward is not None
+                    else None
+                ),
                 "runs": {
                     name: {
                         key: str(value) if isinstance(value, Path) else value
