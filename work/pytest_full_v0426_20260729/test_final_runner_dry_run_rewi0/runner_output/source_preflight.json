@@ -1,0 +1,107 @@
+{
+  "status": "ready",
+  "schema": "geobwer.sen1floods11.terratorch_split_adapter.v2",
+  "counts": {
+    "s1": 446,
+    "s2": 446,
+    "label": 446
+  },
+  "split_counts": {
+    "train": 252,
+    "validation": 89,
+    "test": 90,
+    "bolivia_holdout": 15
+  },
+  "selected_unique_samples": 446,
+  "unused_complete_samples": 0,
+  "complete_event_count": 11,
+  "complete_events": [
+    "Bolivia",
+    "Event00",
+    "Event01",
+    "Event02",
+    "Event03",
+    "Event04",
+    "Event05",
+    "Event06",
+    "Event07",
+    "Event08",
+    "Event09"
+  ],
+  "standard_test_events": [
+    "Event00",
+    "Event01",
+    "Event02",
+    "Event03",
+    "Event04",
+    "Event05",
+    "Event06",
+    "Event07",
+    "Event08",
+    "Event09"
+  ],
+  "bolivia_holdout_events": [
+    "Bolivia"
+  ],
+  "combined_evaluation_sample_count": 105,
+  "combined_evaluation_event_count": 11,
+  "no_training_or_calibration_leakage": true,
+  "source_split_paths": {
+    "train": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\official_splits\\train.csv",
+    "validation": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\official_splits\\val.csv",
+    "test": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\official_splits\\test.csv",
+    "bolivia_holdout": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\official_splits\\bolivia_holdout.csv"
+  },
+  "source_split_sha256": {
+    "train": "bec412ad5cae2f0d7a40ea6ac12a584ee024a3f477c90e6d4ea63ee3f916d8fc",
+    "validation": "cf82db29c1a9be69bc64bdd5e914fadef9014b08508850088e6f2644cc642288",
+    "test": "4b000624eb2ab21732bbc5bdba6745e36120be2d0a221b61c5d12e42e1bcbe6f",
+    "bolivia_holdout": "1a5ae2613a5871aeaeb301467826cf62aa8a0dbfc1b629dcb6fdc0219dc0a6f4"
+  },
+  "terratorch_split_paths": {
+    "train": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\train_prefixes.txt",
+    "validation": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\validation_prefixes.txt",
+    "test": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\test_prefixes.txt",
+    "bolivia_holdout": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\bolivia_holdout_prefixes.txt"
+  },
+  "terratorch_split_sha256": {
+    "train": "9c78c516660e9e1d839af0df73ebedf46c186895474e4698f94838649fdebe5f",
+    "validation": "f425fc93c2001827a3ff731fbf18823f07a1f1b5f182f1e4286d81aed258277f",
+    "test": "3c4779d60b52df49aa6a08bffaec3c8582a6d4a44cb146dea0dbbfb3c8f31ae8",
+    "bolivia_holdout": "22f36145dd43ca5342820e8848f4b298a6870b3ec468ad21151072fcce420665"
+  },
+  "roots": {
+    "s1": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\S1GRDHand",
+    "s2": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\S2L1CHand",
+    "label": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\LabelHand"
+  },
+  "terramind_checkpoint": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\TerraMind_v1_base.pt",
+  "terramind_checkpoint_sha256": "83c3a0938067c83867a46e564443c2fa38383bf4f966d931b11cb025b847d7ec",
+  "terramind_revision": "fb96c70d0a5f68dcc44030b89cbfd8ec3fb0c67a",
+  "model_selection": {
+    "42": {
+      "policy": "official_train_inner_event_disjoint",
+      "fit_split": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\model_selection_seed_42\\fit_prefixes.txt",
+      "selection_split": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\model_selection_seed_42\\selection_prefixes.txt",
+      "fit_count": 202,
+      "selection_count": 50,
+      "outer_validation_used_for_model_selection": false
+    },
+    "73": {
+      "policy": "official_train_inner_event_disjoint",
+      "fit_split": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\model_selection_seed_73\\fit_prefixes.txt",
+      "selection_split": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\model_selection_seed_73\\selection_prefixes.txt",
+      "fit_count": 201,
+      "selection_count": 51,
+      "outer_validation_used_for_model_selection": false
+    },
+    "101": {
+      "policy": "official_train_inner_event_disjoint",
+      "fit_split": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\model_selection_seed_101\\fit_prefixes.txt",
+      "selection_split": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_full_v0426_20260729\\test_final_runner_dry_run_rewi0\\runner_output\\terratorch_splits\\model_selection_seed_101\\selection_prefixes.txt",
+      "fit_count": 202,
+      "selection_count": 50,
+      "outer_validation_used_for_model_selection": false
+    }
+  }
+}

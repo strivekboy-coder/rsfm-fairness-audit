@@ -1,0 +1,111 @@
+{
+  "schema": "geobwer.fmow.superclass_feasibility.v1",
+  "formal_evidence": false,
+  "evidence_role": "metadata_only_design_feasibility",
+  "model_outputs_used": false,
+  "performance_outcomes_used": false,
+  "metadata": {
+    "filename": "clean_metadata.csv",
+    "sha256": "21b671fcddb3bab4674f7853e700f7a9a68a82bf0007ed824de61545a7c4397c",
+    "row_count": 124,
+    "selected_split": "test",
+    "selected_row_count": 62,
+    "selected_assignment_hash": "ff1e19655eed72fe0312033318b807a152369d211f18643512509600c52a701f"
+  },
+  "taxonomy": {
+    "taxonomy_id": "fmow_macro_functional_superclasses_v1",
+    "schema": "geobwer.fmow.superclass_taxonomy.v1",
+    "sha256": "f4424ca6a25432fd0cf5399383efa0f33087b9c62e88d96a4855e3ca66297e4d",
+    "class_count": 62,
+    "superclass_count": 8
+  },
+  "geography_contract": {
+    "filename": "geography_contract.json",
+    "file_sha256": "2dfca30486e7edf2540fbda25b25db97b6e6206561cb1561aa10c6072340030c",
+    "contract_hash": "7131db3d2db8f007d5b9b3617bf76996eeb581546048468ba50871d2f01f32e3",
+    "mapping_artifact_type": "country_region_map",
+    "metadata_sha256": "21b671fcddb3bab4674f7853e700f7a9a68a82bf0007ed824de61545a7c4397c",
+    "assignment_hashes": {
+      "test": "ec8403daf09726d960a1da1dd98a5f9e7f6312f98fe148a17ec05b5c80a75210",
+      "train": "78c0d8f2d1787f9d12c7676f0af10b83db7d0222053b4c52b9c8168b2df4a5ed"
+    },
+    "unresolved_country_row_count": 0,
+    "rows_dropped": 0
+  },
+  "support_contract": {
+    "min_samples_per_cell": 1,
+    "min_sites_per_cell": 1,
+    "confirmatory_min_sites_per_cell": 2,
+    "site_definition": "metadata.site_id, otherwise category-scoped site_id=category|location_id",
+    "fixed_universe": "observed geography levels in selected split x all pre-registered superclasses"
+  },
+  "used_metadata_fields": [
+    "sample_id",
+    "split",
+    "category",
+    "site_id_or_location_id",
+    "country",
+    "first_nonempty(region,un_region,continent)"
+  ],
+  "summaries": [
+    {
+      "axis": "country_superclass",
+      "fixed_universe_cell_count": 16,
+      "observed_cell_count": 15,
+      "zero_support_cell_count": 1,
+      "descriptive_supported_cell_count": 15,
+      "descriptive_supported_cell_fraction": 0.9375,
+      "confirmatory_supported_cell_count": 14,
+      "confirmatory_supported_cell_fraction": 0.875,
+      "descriptive_supported_sample_count": 62,
+      "descriptive_supported_sample_fraction": 1.0,
+      "confirmatory_supported_sample_count": 61,
+      "confirmatory_supported_sample_fraction": 0.9838709677419355,
+      "observed_cell_sample_min": 1,
+      "observed_cell_sample_median": 4.0,
+      "observed_cell_sample_max": 8,
+      "axis_decision_status": "pending_preregistered_axis_freeze"
+    },
+    {
+      "axis": "region_superclass",
+      "fixed_universe_cell_count": 16,
+      "observed_cell_count": 15,
+      "zero_support_cell_count": 1,
+      "descriptive_supported_cell_count": 15,
+      "descriptive_supported_cell_fraction": 0.9375,
+      "confirmatory_supported_cell_count": 14,
+      "confirmatory_supported_cell_fraction": 0.875,
+      "descriptive_supported_sample_count": 62,
+      "descriptive_supported_sample_fraction": 1.0,
+      "confirmatory_supported_sample_count": 61,
+      "confirmatory_supported_sample_fraction": 0.9838709677419355,
+      "observed_cell_sample_min": 1,
+      "observed_cell_sample_median": 4.0,
+      "observed_cell_sample_max": 8,
+      "axis_decision_status": "pending_preregistered_axis_freeze"
+    }
+  ],
+  "artifacts": {
+    "taxonomy_snapshot": {
+      "filename": "superclass_taxonomy.json",
+      "sha256": "f4424ca6a25432fd0cf5399383efa0f33087b9c62e88d96a4855e3ca66297e4d"
+    },
+    "class_to_superclass": {
+      "filename": "class_to_superclass.csv",
+      "sha256": "24a1de3c35563c2dcc554f76051a601f07b5e12f3112dabe8228a31414302dc9"
+    },
+    "cells": {
+      "filename": "superclass_feasibility_cells.csv",
+      "sha256": "f303a17140ed2d909a0fa520d2535c18c3ff12aaa220ce940b17f8fbc5cd82d7"
+    },
+    "summary": {
+      "filename": "superclass_feasibility_summary.csv",
+      "sha256": "6c7d6a18e683ac6dcabf8a342bfee155598726f31a68be5c4d1a24d0f6b41672"
+    },
+    "report": {
+      "filename": "superclass_feasibility_report.md",
+      "sha256": "453b1b8359fd84a8cd0d486a9cc7922ae875f509e54d94c05ffb50260180b707"
+    }
+  },
+  "contract_hash": "59d6b0fcc7f8f0fc30f8e7105d1131f15ec695a066a63191ac9d6f7fdb216c7e"
+}

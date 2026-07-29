@@ -1,0 +1,2 @@
+axis,validity,protocol_hash,metric_version,bwer,ci_low,ci_high,lower_confidence_bound
+country,descriptive_only,protocol-1,geobwer_fractional_1.1,0.2,0.0,0.7,0.0

@@ -1,0 +1,1 @@
+{"training": {"selected_epoch": 2, "inner_validation_cross_entropy": 0.5, "calibration_metrics": {"accuracy": 0.5}, "test_metrics": {"accuracy": 0.5}}}

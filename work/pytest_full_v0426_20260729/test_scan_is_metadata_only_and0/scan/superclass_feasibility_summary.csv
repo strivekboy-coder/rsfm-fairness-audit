@@ -1,0 +1,3 @@
+axis,fixed_universe_cell_count,observed_cell_count,zero_support_cell_count,descriptive_supported_cell_count,descriptive_supported_cell_fraction,confirmatory_supported_cell_count,confirmatory_supported_cell_fraction,descriptive_supported_sample_count,descriptive_supported_sample_fraction,confirmatory_supported_sample_count,confirmatory_supported_sample_fraction,observed_cell_sample_min,observed_cell_sample_median,observed_cell_sample_max,axis_decision_status
+country_superclass,16,15,1,15,0.9375,14,0.875,62,1.0,61,0.9838709677419355,1,4.0,8,pending_preregistered_axis_freeze
+region_superclass,16,15,1,15,0.9375,14,0.875,62,1.0,61,0.9838709677419355,1,4.0,8,pending_preregistered_axis_freeze

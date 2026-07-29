@@ -1,0 +1,721 @@
+sample_id,site_id,split,original_country,mapped_country,mapped_continent,mapped_un_region,mapped_region,mapping_source,polygon_point_latitude,polygon_point_longitude,nearest_boundary_distance_km,nearest_boundary_latitude,nearest_boundary_longitude,natural_earth_admin,natural_earth_geounit,spatial_match_count
+remapped-0000,site-0000,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_nearest_boundary:admin,40.0,-75.0,0.1,40.1,-75.1,United States of America,United States of America,0
+remapped-0001,site-0001,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_nearest_boundary:admin,40.0,-75.0,0.1,40.1,-75.1,Germany,Germany,0
+remapped-0002,site-0002,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_nearest_boundary:admin,40.0,-75.0,0.1,40.1,-75.1,United States of America,United States of America,0
+remapped-0003,site-0003,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_nearest_boundary:admin,40.0,-75.0,0.1,40.1,-75.1,Germany,Germany,0
+remapped-0004,site-0004,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_nearest_boundary:admin,40.0,-75.0,0.1,40.1,-75.1,United States of America,United States of America,0
+remapped-0005,site-0005,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_nearest_boundary:admin,40.0,-75.0,0.1,40.1,-75.1,Germany,Germany,0
+remapped-0006,site-0006,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_nearest_boundary:admin,40.0,-75.0,0.1,40.1,-75.1,United States of America,United States of America,0
+remapped-0007,site-0007,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_nearest_boundary:admin,40.0,-75.0,0.1,40.1,-75.1,Germany,Germany,0
+remapped-0008,site-0008,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_nearest_boundary:admin,40.0,-75.0,0.1,40.1,-75.1,United States of America,United States of America,0
+remapped-0009,site-0009,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_nearest_boundary:admin,40.0,-75.0,2.4919390970832245,40.1,-75.1,Germany,Germany,0
+remapped-0010,site-0010,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0011,site-0011,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0012,site-0012,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0013,site-0013,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0014,site-0014,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0015,site-0015,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0016,site-0016,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0017,site-0017,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0018,site-0018,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0019,site-0019,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0020,site-0020,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0021,site-0021,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0022,site-0022,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0023,site-0023,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0024,site-0024,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0025,site-0025,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0026,site-0026,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0027,site-0027,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0028,site-0028,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0029,site-0029,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0030,site-0030,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0031,site-0031,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0032,site-0032,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0033,site-0033,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0034,site-0034,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0035,site-0035,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0036,site-0036,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0037,site-0037,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0038,site-0038,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0039,site-0039,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0040,site-0040,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0041,site-0041,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0042,site-0042,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0043,site-0043,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0044,site-0044,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0045,site-0045,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0046,site-0046,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0047,site-0047,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0048,site-0048,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0049,site-0049,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0050,site-0050,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0051,site-0051,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0052,site-0052,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0053,site-0053,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0054,site-0054,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0055,site-0055,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0056,site-0056,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0057,site-0057,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0058,site-0058,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0059,site-0059,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0060,site-0060,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0061,site-0061,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0062,site-0062,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0063,site-0063,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0064,site-0064,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0065,site-0065,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0066,site-0066,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0067,site-0067,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0068,site-0068,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0069,site-0069,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0070,site-0070,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0071,site-0071,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0072,site-0072,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0073,site-0073,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0074,site-0074,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0075,site-0075,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0076,site-0076,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0077,site-0077,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0078,site-0078,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0079,site-0079,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0080,site-0080,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0081,site-0081,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0082,site-0082,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0083,site-0083,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0084,site-0084,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0085,site-0085,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0086,site-0086,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0087,site-0087,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0088,site-0088,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0089,site-0089,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0090,site-0090,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0091,site-0091,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0092,site-0092,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0093,site-0093,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0094,site-0094,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0095,site-0095,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0096,site-0096,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0097,site-0097,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0098,site-0098,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0099,site-0099,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0100,site-0100,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0101,site-0101,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0102,site-0102,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0103,site-0103,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0104,site-0104,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0105,site-0105,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0106,site-0106,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0107,site-0107,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0108,site-0108,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0109,site-0109,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0110,site-0110,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0111,site-0111,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0112,site-0112,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0113,site-0113,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0114,site-0114,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0115,site-0115,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0116,site-0116,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0117,site-0117,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0118,site-0118,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0119,site-0119,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0120,site-0120,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0121,site-0121,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0122,site-0122,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0123,site-0123,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0124,site-0124,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0125,site-0125,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0126,site-0126,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0127,site-0127,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0128,site-0128,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0129,site-0129,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0130,site-0130,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0131,site-0131,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0132,site-0132,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0133,site-0133,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0134,site-0134,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0135,site-0135,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0136,site-0136,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0137,site-0137,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0138,site-0138,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0139,site-0139,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0140,site-0140,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0141,site-0141,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0142,site-0142,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0143,site-0143,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0144,site-0144,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0145,site-0145,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0146,site-0146,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0147,site-0147,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0148,site-0148,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0149,site-0149,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0150,site-0150,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0151,site-0151,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0152,site-0152,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0153,site-0153,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0154,site-0154,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0155,site-0155,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0156,site-0156,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0157,site-0157,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0158,site-0158,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0159,site-0159,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0160,site-0160,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0161,site-0161,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0162,site-0162,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0163,site-0163,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0164,site-0164,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0165,site-0165,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0166,site-0166,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0167,site-0167,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0168,site-0168,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0169,site-0169,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0170,site-0170,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0171,site-0171,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0172,site-0172,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0173,site-0173,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0174,site-0174,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0175,site-0175,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0176,site-0176,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0177,site-0177,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0178,site-0178,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0179,site-0179,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0180,site-0180,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0181,site-0181,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0182,site-0182,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0183,site-0183,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0184,site-0184,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0185,site-0185,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0186,site-0186,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0187,site-0187,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0188,site-0188,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0189,site-0189,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0190,site-0190,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0191,site-0191,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0192,site-0192,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0193,site-0193,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0194,site-0194,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0195,site-0195,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0196,site-0196,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0197,site-0197,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0198,site-0198,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0199,site-0199,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0200,site-0200,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0201,site-0201,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0202,site-0202,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0203,site-0203,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0204,site-0204,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0205,site-0205,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0206,site-0206,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0207,site-0207,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0208,site-0208,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0209,site-0209,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0210,site-0210,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0211,site-0211,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0212,site-0212,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0213,site-0213,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0214,site-0214,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0215,site-0215,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0216,site-0216,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0217,site-0217,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0218,site-0218,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0219,site-0219,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0220,site-0220,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0221,site-0221,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0222,site-0222,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0223,site-0223,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0224,site-0224,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0225,site-0225,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0226,site-0226,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0227,site-0227,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0228,site-0228,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0229,site-0229,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0230,site-0230,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0231,site-0231,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0232,site-0232,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0233,site-0233,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0234,site-0234,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0235,site-0235,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0236,site-0236,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0237,site-0237,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0238,site-0238,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0239,site-0239,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0240,site-0240,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0241,site-0241,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0242,site-0242,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0243,site-0243,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0244,site-0244,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0245,site-0245,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0246,site-0246,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0247,site-0247,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0248,site-0248,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0249,site-0249,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0250,site-0250,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0251,site-0251,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0252,site-0252,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0253,site-0253,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0254,site-0254,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0255,site-0255,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0256,site-0256,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0257,site-0257,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0258,site-0258,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0259,site-0259,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0260,site-0260,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0261,site-0261,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0262,site-0262,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0263,site-0263,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0264,site-0264,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0265,site-0265,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0266,site-0266,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0267,site-0267,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0268,site-0268,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0269,site-0269,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0270,site-0270,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0271,site-0271,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0272,site-0272,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0273,site-0273,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0274,site-0274,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0275,site-0275,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0276,site-0276,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0277,site-0277,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0278,site-0278,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0279,site-0279,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0280,site-0280,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0281,site-0281,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0282,site-0282,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0283,site-0283,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0284,site-0284,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0285,site-0285,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0286,site-0286,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0287,site-0287,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0288,site-0288,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0289,site-0289,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0290,site-0290,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0291,site-0291,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0292,site-0292,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0293,site-0293,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0294,site-0294,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0295,site-0295,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0296,site-0296,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0297,site-0297,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0298,site-0298,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0299,site-0299,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0300,site-0300,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0301,site-0301,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0302,site-0302,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0303,site-0303,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0304,site-0304,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0305,site-0305,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0306,site-0306,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0307,site-0307,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0308,site-0308,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0309,site-0309,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0310,site-0310,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0311,site-0311,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0312,site-0312,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0313,site-0313,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0314,site-0314,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0315,site-0315,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0316,site-0316,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0317,site-0317,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0318,site-0318,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0319,site-0319,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0320,site-0320,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0321,site-0321,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0322,site-0322,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0323,site-0323,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0324,site-0324,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0325,site-0325,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0326,site-0326,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0327,site-0327,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0328,site-0328,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0329,site-0329,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0330,site-0330,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0331,site-0331,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0332,site-0332,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0333,site-0333,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0334,site-0334,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0335,site-0335,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0336,site-0336,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0337,site-0337,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0338,site-0338,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0339,site-0339,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0340,site-0340,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0341,site-0341,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0342,site-0342,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0343,site-0343,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0344,site-0344,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0345,site-0345,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0346,site-0346,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0347,site-0347,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0348,site-0348,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0349,site-0349,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0350,site-0350,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0351,site-0351,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0352,site-0352,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0353,site-0353,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0354,site-0354,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0355,site-0355,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0356,site-0356,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0357,site-0357,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0358,site-0358,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0359,site-0359,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0360,site-0360,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0361,site-0361,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0362,site-0362,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0363,site-0363,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0364,site-0364,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0365,site-0365,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0366,site-0366,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0367,site-0367,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0368,site-0368,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0369,site-0369,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0370,site-0370,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0371,site-0371,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0372,site-0372,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0373,site-0373,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0374,site-0374,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0375,site-0375,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0376,site-0376,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0377,site-0377,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0378,site-0378,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0379,site-0379,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0380,site-0380,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0381,site-0381,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0382,site-0382,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0383,site-0383,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0384,site-0384,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0385,site-0385,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0386,site-0386,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0387,site-0387,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0388,site-0388,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0389,site-0389,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0390,site-0390,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0391,site-0391,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0392,site-0392,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0393,site-0393,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0394,site-0394,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0395,site-0395,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0396,site-0396,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0397,site-0397,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0398,site-0398,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0399,site-0399,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0400,site-0400,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0401,site-0401,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0402,site-0402,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0403,site-0403,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0404,site-0404,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0405,site-0405,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0406,site-0406,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0407,site-0407,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0408,site-0408,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0409,site-0409,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0410,site-0410,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0411,site-0411,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0412,site-0412,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0413,site-0413,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0414,site-0414,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0415,site-0415,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0416,site-0416,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0417,site-0417,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0418,site-0418,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0419,site-0419,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0420,site-0420,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0421,site-0421,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0422,site-0422,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0423,site-0423,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0424,site-0424,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0425,site-0425,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0426,site-0426,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0427,site-0427,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0428,site-0428,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0429,site-0429,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0430,site-0430,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0431,site-0431,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0432,site-0432,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0433,site-0433,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0434,site-0434,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0435,site-0435,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0436,site-0436,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0437,site-0437,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0438,site-0438,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0439,site-0439,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0440,site-0440,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0441,site-0441,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0442,site-0442,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0443,site-0443,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0444,site-0444,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0445,site-0445,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0446,site-0446,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0447,site-0447,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0448,site-0448,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0449,site-0449,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0450,site-0450,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0451,site-0451,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0452,site-0452,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0453,site-0453,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0454,site-0454,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0455,site-0455,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0456,site-0456,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0457,site-0457,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0458,site-0458,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0459,site-0459,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0460,site-0460,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0461,site-0461,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0462,site-0462,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0463,site-0463,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0464,site-0464,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0465,site-0465,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0466,site-0466,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0467,site-0467,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0468,site-0468,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0469,site-0469,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0470,site-0470,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0471,site-0471,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0472,site-0472,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0473,site-0473,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0474,site-0474,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0475,site-0475,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0476,site-0476,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0477,site-0477,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0478,site-0478,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0479,site-0479,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0480,site-0480,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0481,site-0481,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0482,site-0482,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0483,site-0483,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0484,site-0484,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0485,site-0485,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0486,site-0486,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0487,site-0487,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0488,site-0488,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0489,site-0489,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0490,site-0490,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0491,site-0491,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0492,site-0492,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0493,site-0493,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0494,site-0494,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0495,site-0495,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0496,site-0496,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0497,site-0497,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0498,site-0498,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0499,site-0499,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0500,site-0500,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0501,site-0501,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0502,site-0502,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0503,site-0503,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0504,site-0504,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0505,site-0505,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0506,site-0506,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0507,site-0507,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0508,site-0508,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0509,site-0509,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0510,site-0510,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0511,site-0511,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0512,site-0512,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0513,site-0513,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0514,site-0514,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0515,site-0515,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0516,site-0516,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0517,site-0517,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0518,site-0518,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0519,site-0519,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0520,site-0520,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0521,site-0521,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0522,site-0522,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0523,site-0523,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0524,site-0524,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0525,site-0525,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0526,site-0526,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0527,site-0527,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0528,site-0528,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0529,site-0529,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0530,site-0530,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0531,site-0531,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0532,site-0532,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0533,site-0533,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0534,site-0534,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0535,site-0535,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0536,site-0536,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0537,site-0537,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0538,site-0538,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0539,site-0539,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0540,site-0540,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0541,site-0541,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0542,site-0542,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0543,site-0543,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0544,site-0544,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0545,site-0545,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0546,site-0546,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0547,site-0547,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0548,site-0548,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0549,site-0549,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0550,site-0550,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0551,site-0551,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0552,site-0552,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0553,site-0553,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0554,site-0554,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0555,site-0555,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0556,site-0556,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0557,site-0557,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0558,site-0558,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0559,site-0559,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0560,site-0560,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0561,site-0561,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0562,site-0562,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0563,site-0563,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0564,site-0564,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0565,site-0565,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0566,site-0566,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0567,site-0567,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0568,site-0568,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0569,site-0569,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0570,site-0570,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0571,site-0571,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0572,site-0572,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0573,site-0573,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0574,site-0574,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0575,site-0575,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0576,site-0576,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0577,site-0577,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0578,site-0578,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0579,site-0579,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0580,site-0580,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0581,site-0581,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0582,site-0582,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0583,site-0583,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0584,site-0584,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0585,site-0585,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0586,site-0586,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0587,site-0587,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0588,site-0588,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0589,site-0589,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0590,site-0590,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0591,site-0591,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0592,site-0592,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0593,site-0593,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0594,site-0594,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0595,site-0595,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0596,site-0596,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0597,site-0597,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0598,site-0598,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0599,site-0599,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0600,site-0600,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0601,site-0601,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0602,site-0602,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0603,site-0603,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0604,site-0604,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0605,site-0605,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0606,site-0606,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0607,site-0607,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0608,site-0608,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0609,site-0609,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0610,site-0610,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0611,site-0611,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0612,site-0612,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0613,site-0613,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0614,site-0614,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0615,site-0615,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0616,site-0616,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0617,site-0617,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0618,site-0618,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0619,site-0619,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0620,site-0620,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0621,site-0621,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0622,site-0622,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0623,site-0623,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0624,site-0624,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0625,site-0625,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0626,site-0626,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0627,site-0627,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0628,site-0628,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0629,site-0629,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0630,site-0630,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0631,site-0631,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0632,site-0632,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0633,site-0633,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0634,site-0634,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0635,site-0635,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0636,site-0636,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0637,site-0637,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0638,site-0638,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0639,site-0639,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0640,site-0640,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0641,site-0641,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0642,site-0642,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0643,site-0643,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0644,site-0644,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0645,site-0645,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0646,site-0646,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0647,site-0647,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0648,site-0648,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0649,site-0649,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0650,site-0650,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0651,site-0651,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0652,site-0652,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0653,site-0653,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0654,site-0654,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0655,site-0655,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0656,site-0656,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0657,site-0657,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0658,site-0658,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0659,site-0659,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0660,site-0660,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0661,site-0661,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0662,site-0662,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0663,site-0663,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0664,site-0664,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0665,site-0665,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0666,site-0666,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0667,site-0667,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0668,site-0668,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0669,site-0669,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0670,site-0670,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0671,site-0671,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0672,site-0672,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0673,site-0673,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0674,site-0674,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0675,site-0675,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0676,site-0676,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0677,site-0677,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0678,site-0678,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0679,site-0679,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0680,site-0680,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0681,site-0681,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0682,site-0682,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0683,site-0683,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0684,site-0684,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0685,site-0685,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0686,site-0686,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0687,site-0687,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0688,site-0688,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0689,site-0689,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0690,site-0690,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0691,site-0691,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0692,site-0692,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0693,site-0693,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0694,site-0694,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0695,site-0695,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0696,site-0696,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0697,site-0697,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0698,site-0698,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0699,site-0699,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0700,site-0700,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0701,site-0701,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0702,site-0702,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0703,site-0703,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0704,site-0704,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0705,site-0705,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0706,site-0706,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0707,site-0707,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0708,site-0708,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0709,site-0709,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0710,site-0710,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0711,site-0711,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0712,site-0712,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0713,site-0713,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0714,site-0714,train,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0715,site-0715,calibration,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0716,site-0716,test,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0717,site-0717,train,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
+remapped-0718,site-0718,calibration,ambiguous_country,USA,North America,Northern America,Northern America,natural_earth_polygon,40.0,-75.0,0.0,,,United States of America,United States of America,1
+remapped-0000,site-0719,test,CA-,DEU,Europe,Western Europe,Western Europe,natural_earth_polygon,40.0,-75.0,0.0,,,Germany,Germany,1
