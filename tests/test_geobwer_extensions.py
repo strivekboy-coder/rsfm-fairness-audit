@@ -303,6 +303,8 @@ def test_multilabel_and_segmentation_crc_use_calibration_only() -> None:
     # Confirm ignore pixels are carried by the formal output and excluded from CRC.
     masks[0][0, 0] = 255
     valid[0][0, 0] = False
+    calibration_valid = [value.copy() for value in valid]
+    calibration_valid[0][:] = False
     seg_formal = write_segmentation_bundle(
         tmp_path / "segmentation_formal",
         sample_rows=_rows(40),
@@ -323,7 +325,7 @@ def test_multilabel_and_segmentation_crc_use_calibration_only() -> None:
         tmp_path / "segmentation_extensions",
         protocol=segmentation_protocol,
         group_columns=("country",),
-        calibration_valid_masks=valid,
+        calibration_valid_masks=calibration_valid,
         calibration_sample_ids=[f"calibration-{index:03d}" for index in range(40)],
         crc_alpha=0.2,
         n_bootstrap=20,
@@ -331,6 +333,15 @@ def test_multilabel_and_segmentation_crc_use_calibration_only() -> None:
     )
     assert segmentation_artifacts["summary"].exists()
     segmentation_summary = read_csv_rows(segmentation_artifacts["summary"])
+    segmentation_crc = next(
+        row
+        for row in segmentation_summary
+        if row["extension"] == "conformal_risk_control"
+    )
+    assert segmentation_crc["source_calibration_sample_count"] == "40"
+    assert segmentation_crc["auditable_calibration_sample_count"] == "39"
+    assert segmentation_crc["all_ignore_calibration_sample_count"] == "1"
+    assert segmentation_crc["all_ignore_calibration_sample_ids"] == "calibration-000"
     segmentation_preflight = next(
         row
         for row in segmentation_summary

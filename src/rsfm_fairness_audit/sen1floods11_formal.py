@@ -264,6 +264,7 @@ def _load_units(
     targets: list[np.ndarray] = []
     valid_masks: list[np.ndarray] = []
     seen_chip_ids: set[str] = set()
+    aggregate_valid_pixel_count = 0
     for index_row in _read_index(export_dir):
         artifact_path = _resolve_probability_artifact(export_dir, index_row["probability_path"])
         if not artifact_path.exists():
@@ -282,9 +283,15 @@ def _load_units(
             raise Sen1FormalizationError(
                 f"Target/probability dimensions differ for {artifact_path}: {target.shape} vs {probability.shape[1:]}."
             )
+        observed_target_values = set(np.unique(target).tolist())
+        if not observed_target_values.issubset({-1, 0, 1}):
+            raise Sen1FormalizationError(
+                f"Target contains values outside the frozen Sen1Floods11 label contract "
+                f"{{-1,0,1}} for {artifact_path}: {sorted(observed_target_values)}."
+            )
         valid = np.isin(target, [0, 1])
-        if not np.any(valid):
-            raise Sen1FormalizationError(f"No valid hand-labeled pixels for {artifact_path}.")
+        valid_pixel_count = int(np.sum(valid))
+        aggregate_valid_pixel_count += valid_pixel_count
 
         source = _source_path(index_row.get("filename"), data_root)
         fallback = str(index_row["sample_id"])
@@ -315,11 +322,20 @@ def _load_units(
                 "longitude": longitude,
                 "country": source_meta.get("country", source_meta.get("ISO_CC", "")),
                 "source_filename": str(source) if source is not None else str(index_row.get("filename", "")),
+                "valid_pixel_count": valid_pixel_count,
+                "label_support_status": (
+                    "identified" if valid_pixel_count > 0 else "all_ignore"
+                ),
             }
         )
         probabilities.append(probability[1])
         targets.append(target)
         valid_masks.append(valid)
+    if aggregate_valid_pixel_count <= 0:
+        raise Sen1FormalizationError(
+            "Sen1Floods11 probability export contains no valid hand-labeled pixels "
+            "across the complete split."
+        )
     return rows, probabilities, targets, valid_masks
 
 
@@ -350,6 +366,62 @@ def _chip_risks(probabilities: Sequence[np.ndarray], targets: Sequence[np.ndarra
         union = tp + fp + fn
         output.append(1.0 - (tp / union if union else 1.0))
     return output
+
+
+def _identified_units(
+    rows: Sequence[Mapping[str, Any]],
+    probabilities: Sequence[np.ndarray],
+    targets: Sequence[np.ndarray],
+    valid_masks: Sequence[np.ndarray],
+    *,
+    context: str,
+) -> tuple[
+    list[dict[str, Any]],
+    list[np.ndarray],
+    list[np.ndarray],
+    list[np.ndarray],
+    dict[str, Any],
+]:
+    """Select units with an identifiable pixel risk without losing split lineage."""
+
+    if not (
+        len(rows) == len(probabilities) == len(targets) == len(valid_masks)
+    ):
+        raise Sen1FormalizationError(
+            f"Sen1 unit arrays are misaligned during {context}."
+        )
+    keep = [
+        index
+        for index, valid in enumerate(valid_masks)
+        if int(np.sum(np.asarray(valid, dtype=bool))) > 0
+    ]
+    if not keep:
+        raise Sen1FormalizationError(
+            f"Sen1Floods11 {context} contains no units with identifiable pixel risk."
+        )
+    keep_set = set(keep)
+    excluded_ids = [
+        str(rows[index]["sample_id"])
+        for index in range(len(rows))
+        if index not in keep_set
+    ]
+    support = {
+        "source_split_sample_count": len(rows),
+        "auditable_sample_count": len(keep),
+        "all_ignore_sample_count": len(excluded_ids),
+        "all_ignore_sample_ids": excluded_ids,
+        "all_ignore_policy": (
+            "preserved_in_source_probability_export_and_split_lineage;"
+            "excluded_from_pixel_risk_estimand"
+        ),
+    }
+    return (
+        [dict(rows[index]) for index in keep],
+        [np.asarray(probabilities[index]) for index in keep],
+        [np.asarray(targets[index]) for index in keep],
+        [np.asarray(valid_masks[index], dtype=bool) for index in keep],
+        support,
+    )
 
 
 def _spatial_panel_signature(rows: Sequence[Mapping[str, Any]], risks: Sequence[float]) -> str:
@@ -390,15 +462,25 @@ def calibrate_common_sen1_spatial_blocks(
         raise Sen1FormalizationError("At least one validation probability export is required.")
     loaded: dict[str, tuple[list[dict[str, Any]], list[float]]] = {}
     input_signatures: dict[str, str] = {}
+    support_by_model: dict[str, dict[str, Any]] = {}
     for model_name, export_dir in sorted(validation_exports.items()):
         rows, probabilities, targets, valid = _load_units(
             export_dir, data_root=data_root, metadata_csv=metadata_csv
         )
+        rows, probabilities, targets, valid, support = _identified_units(
+            rows,
+            probabilities,
+            targets,
+            valid,
+            context=f"validation spatial calibration for model={model_name}",
+        )
         risks = _chip_risks(probabilities, targets, valid)
         loaded[str(model_name)] = (rows, risks)
         input_signatures[str(model_name)] = _spatial_panel_signature(rows, risks)
+        support_by_model[str(model_name)] = support
     signature_payload = {
         "validation_inputs": input_signatures,
+        "validation_label_support": support_by_model,
         "candidate_cell_km": [float(value) for value in candidate_cell_km],
         "confidence_level": confidence_level,
         "n_simulations": n_simulations,
@@ -486,6 +568,7 @@ def calibrate_common_sen1_spatial_blocks(
         "minimum_moderate_tail_power": minimum_moderate_tail_power,
         "calibration_signature": calibration_signature,
         "validation_input_signatures": input_signatures,
+        "validation_label_support": support_by_model,
     }
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -565,8 +648,15 @@ def finalize_sen1_probability_export(
 ) -> FormalOutputBundle:
     """Formalize any Sen1 model through one shared GeoBWER contract."""
 
-    rows, probabilities, targets, valid = _load_units(
+    source_rows, source_probabilities, source_targets, source_valid = _load_units(
         export_dir, data_root=data_root, metadata_csv=metadata_csv
+    )
+    rows, probabilities, targets, valid, label_support = _identified_units(
+        source_rows,
+        source_probabilities,
+        source_targets,
+        source_valid,
+        context=f"{split} formalization",
     )
     calibration_path = Path(block_calibration_path)
     calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
@@ -619,7 +709,8 @@ def finalize_sen1_probability_export(
     }
     reference_hash = hashlib.sha256()
     for row, target, valid_mask in sorted(
-        zip(rows, targets, valid), key=lambda value: str(value[0]["sample_id"])
+        zip(source_rows, source_targets, source_valid),
+        key=lambda value: str(value[0]["sample_id"]),
     ):
         target_array = np.asarray(target)
         valid_array = np.asarray(valid_mask, dtype=np.uint8)
@@ -633,10 +724,12 @@ def finalize_sen1_probability_export(
                 "dataset", "Sen1Floods11-v1.1-HandLabeled"
             ),
             "split": split,
-            "sample_count": len(rows),
-            "sample_ids": [row["sample_id"] for row in rows],
+            "sample_count": len(source_rows),
+            "sample_ids": [row["sample_id"] for row in source_rows],
+            "formal_audit_sample_ids": [row["sample_id"] for row in rows],
             "reference_targets_sha256": reference_hash.hexdigest(),
             "spatial_block_cell_km": cell_km,
+            **label_support,
             "metadata_sha256": (
                 file_sha256(Path(metadata_csv))
                 if metadata_csv is not None and Path(metadata_csv).is_file()

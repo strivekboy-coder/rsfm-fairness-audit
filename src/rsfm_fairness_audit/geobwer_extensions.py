@@ -828,6 +828,12 @@ def run_segmentation_uncertainty_suite(
     if len(set(str(value) for value in calibration_sample_ids)) != len(calibration_sample_ids):
         raise ExtensionAuditError("calibration_sample_ids must be unique.")
     _assert_calibration_test_disjoint([str(value) for value in calibration_sample_ids], test_rows)
+    if calibration_sample_rows is not None and len(calibration_sample_rows) != len(
+        calibration_probabilities
+    ):
+        raise ExtensionAuditError(
+            "calibration_sample_rows must align with calibration probability maps."
+        )
     probabilities: list[np.ndarray] = []
     targets: list[np.ndarray] = []
     valid_masks: list[np.ndarray] = []
@@ -847,6 +853,27 @@ def run_segmentation_uncertainty_suite(
         if calibration_valid_masks is None
         else np.stack(calibration_valid_masks).astype(bool)
     )
+    source_calibration_sample_count = len(calibration_probs)
+    valid_counts = calibration_valid.reshape(len(calibration_valid), -1).sum(axis=1)
+    keep = np.flatnonzero(valid_counts > 0)
+    if keep.size == 0:
+        raise ExtensionAuditError(
+            "Segmentation calibration contains no units with identifiable valid pixels."
+        )
+    excluded_calibration_sample_ids = [
+        str(calibration_sample_ids[index])
+        for index in np.flatnonzero(valid_counts == 0)
+    ]
+    calibration_probs = calibration_probs[keep]
+    calibration_y = calibration_y[keep]
+    calibration_valid = calibration_valid[keep]
+    calibration_sample_ids = [
+        str(calibration_sample_ids[index]) for index in keep
+    ]
+    if calibration_sample_rows is not None:
+        calibration_sample_rows = [
+            calibration_sample_rows[index] for index in keep
+        ]
     test_probs = np.stack(probabilities)
     test_y = np.stack(targets)
     test_valid = np.stack(valid_masks)
@@ -873,6 +900,11 @@ def run_segmentation_uncertainty_suite(
             "alpha": crc_alpha,
             "threshold_source": "validation_only",
             "calibration_sha256": calibration_sha256,
+            "source_calibration_sample_count": source_calibration_sample_count,
+            "auditable_calibration_sample_count": len(calibration_probs),
+            "all_ignore_calibration_sample_count": len(
+                excluded_calibration_sample_ids
+            ),
         },
     )
     cluster = base.spatial_block_column if base.inference_method == "spatial_maxt" else base.cluster_column
@@ -895,17 +927,23 @@ def run_segmentation_uncertainty_suite(
             "test_mean_risk": float(np.mean([row["risk"] for row in rows])),
             "mean_prediction_set_fraction": float(np.mean([row["prediction_set_fraction"] for row in rows])),
             "probability_threshold": crc_model.probability_threshold,
+            "source_calibration_sample_count": source_calibration_sample_count,
+            "auditable_calibration_sample_count": len(calibration_probs),
+            "all_ignore_calibration_sample_count": len(
+                excluded_calibration_sample_ids
+            ),
+            "all_ignore_calibration_sample_ids": ";".join(
+                excluded_calibration_sample_ids
+            ),
+            "all_ignore_policy": (
+                "preserved_in_source_probability_export_and_split_lineage;"
+                "excluded_from_pixel_risk_estimand"
+            ),
             "protocol_hash": extension_protocol.signature,
             **crc_target_diagnostics,
         }
     ]
     if spatial_localization_config is not None:
-        if calibration_sample_rows is not None and len(calibration_sample_rows) != len(
-            calibration_probabilities
-        ):
-            raise ExtensionAuditError(
-                "calibration_sample_rows must align with calibration probability maps."
-            )
         spatial_preflight = spatial_localization_preflight(
             (
                 _coordinates_from_rows(calibration_sample_rows)
