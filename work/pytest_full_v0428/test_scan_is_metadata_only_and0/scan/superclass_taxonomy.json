@@ -1,0 +1,113 @@
+{
+  "schema": "geobwer.fmow.superclass_taxonomy.v1",
+  "taxonomy_id": "fmow_macro_functional_superclasses_v1",
+  "title": "fMoW macro-functional superclass taxonomy",
+  "status": "project_defined_preregistered_design_artifact",
+  "expected_class_count": 62,
+  "construction_principle": "Classes are grouped by the primary functional domain of the depicted facility or land use. The mapping is defined without model predictions, losses, GeoBWER values, or support counts.",
+  "interpretation": "Superclasses are an audit-resolution device and do not replace the original 62-class prediction task.",
+  "superclasses": {
+    "mobility_logistics": {
+      "rationale": "Aviation, ground transport, and maritime logistics infrastructure.",
+      "classes": [
+        "airport",
+        "airport_hangar",
+        "airport_terminal",
+        "ground_transportation_station",
+        "helipad",
+        "interchange",
+        "parking_lot_or_garage",
+        "port",
+        "railway_bridge",
+        "road_bridge",
+        "runway",
+        "shipyard",
+        "space_facility",
+        "toll_booth",
+        "tunnel_opening"
+      ]
+    },
+    "civic_security_services": {
+      "rationale": "Public-service, institutional, emergency, justice, border, and defense facilities.",
+      "classes": [
+        "border_checkpoint",
+        "educational_institution",
+        "fire_station",
+        "hospital",
+        "military_facility",
+        "police_station",
+        "prison"
+      ]
+    },
+    "settlement_commerce": {
+      "rationale": "Residential settlement and commercial or office land uses.",
+      "classes": [
+        "car_dealership",
+        "gas_station",
+        "impoverished_settlement",
+        "multi-unit_residential",
+        "office_building",
+        "shopping_mall",
+        "single-unit_residential"
+      ]
+    },
+    "industry_energy_storage": {
+      "rationale": "Industrial production, energy generation or distribution, emissions, and bulk storage.",
+      "classes": [
+        "electric_substation",
+        "factory_or_powerplant",
+        "nuclear_powerplant",
+        "oil_or_gas_facility",
+        "smokestack",
+        "solar_farm",
+        "storage_tank",
+        "wind_farm"
+      ]
+    },
+    "food_production": {
+      "rationale": "Agricultural and aquacultural production.",
+      "classes": [
+        "aquaculture",
+        "barn",
+        "crop_field"
+      ]
+    },
+    "water_environment_hazard": {
+      "rationale": "Water bodies, hydraulic infrastructure, environmental services, and flood-related scenes.",
+      "classes": [
+        "dam",
+        "flooded_road",
+        "lake_or_pond",
+        "waste_disposal",
+        "water_treatment_facility"
+      ]
+    },
+    "recreation_culture_landmarks": {
+      "rationale": "Recreation, cultural or religious places, memorial landscapes, and landmark structures.",
+      "classes": [
+        "amusement_park",
+        "archaeological_site",
+        "burial_site",
+        "fountain",
+        "golf_course",
+        "lighthouse",
+        "park",
+        "place_of_worship",
+        "race_track",
+        "recreational_facility",
+        "stadium",
+        "swimming_pool",
+        "tower",
+        "zoo"
+      ]
+    },
+    "construction_extraction_damage": {
+      "rationale": "Construction, mineral extraction, and damaged or demolished built environments.",
+      "classes": [
+        "construction_site",
+        "debris_or_rubble",
+        "surface_mine"
+      ]
+    }
+  }
+}

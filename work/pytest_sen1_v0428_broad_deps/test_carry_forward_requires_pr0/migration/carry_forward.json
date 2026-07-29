@@ -1,0 +1,1079 @@
+{
+  "schema": "geobwer.sen1floods11.amp_carry_forward.v1",
+  "status": "validated",
+  "source_version": "0.4.27",
+  "source_commit": "2ef26b2e1d1951910666f19b910b597834bb3d16",
+  "target_version": "0.4.28",
+  "source_root": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_sen1_v0428_broad_deps\\test_carry_forward_requires_pr0\\legacy",
+  "source_run_log": {
+    "path": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_sen1_v0428_broad_deps\\test_carry_forward_requires_pr0\\v0427.log",
+    "sha256": "b8471c5878972e780d765bffa5c98a4e29499e9bdd52f774c04b5ffc072a4d16",
+    "source_commit": "2ef26b2e1d1951910666f19b910b597834bb3d16",
+    "source_version": "0.4.27"
+  },
+  "source_overflow_hard_fail_proof": {
+    "source_path": "src/rsfm_fairness_audit/sen1_supervised_campaign.py",
+    "source_blob_sha256": "53f90c5d8c29f00b88932b8bfc0f86738e9d54209c47ebb7396ececaa9ac2e48",
+    "proof": "A completed v0.4.27 run could not have observed a detected AMP gradient overflow because that exact source raised before checkpoint/probability completion.",
+    "finite_path_operations": [
+      "scale(loss).backward",
+      "unscale_(optimizer)",
+      "scaler.step(optimizer)",
+      "scaler.update",
+      "finite_parameter_check"
+    ]
+  },
+  "no_overflow_numerical_semantics": {
+    "status": "preserved",
+    "claim": "v0.4.28 changes only the detected non-finite-gradient branch; finite-gradient batches retain the v0.4.27 backward, unscale, step, update, and parameter-check sequence.",
+    "regression_test": "test_amp_finite_path_matches_v0427_reference_update"
+  },
+  "entries": [
+    {
+      "mode": "S1",
+      "seed": 42,
+      "run_dir": "D:\\Codex\\rsfm-fairness-audit\\work\\pytest_sen1_v0428_broad_deps\\test_carry_forward_requires_pr0\\legacy\\s1\\seed_42",
+      "normalization_sha256": "normalization-42",
+      "input_quality_contract_sha256": "quality-42",
+      "best_validation_iou": 0.5,
+      "test_iou": 0.4,
+      "bolivia_holdout_iou": 0.3,
+      "artifact_binding": {
+        "artifact_count": 205,
+        "total_size_bytes": 12725,
+        "collection_sha256": "137bb273b2e6b50a5aea49081cdf3ed28d00da9a4d87c73298a218ddb2b6b171",
+        "artifacts": [
+          {
+            "path": "run_manifest.json",
+            "sha256": "05ba1910842674286a89e494d1bcad98ec0816525dce5a4bfe365ccd8130206e",
+            "size_bytes": 1040
+          },
+          {
+            "path": "best_resnet34_unet.pt",
+            "sha256": "3484aa3eac711dc5475b79f3a0cf2cc0b5dd1296e84fc7a4b14afc2b0be4b05d",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/bolivia_holdout/index_parts/part-000000.jsonl",
+            "sha256": "b1c5d25cf6c779049e5b1893b42b78684e41842e806bd8d98a956b7c7543a12b",
+            "size_bytes": 720
+          },
+          {
+            "path": "probabilities/bolivia_holdout/input_quality_binding.json",
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "size_bytes": 2
+          },
+          {
+            "path": "probabilities/bolivia_holdout/samples/sample-000.npz",
+            "sha256": "98d8252a37278c114a613cfb90477ec3a84b334a15a2f889430b60f723a6bed0",
+            "size_bytes": 17
+          },
+          {
+            "path": "probabilities/bolivia_holdout/samples/sample-001.npz",
+            "sha256": "859a577041dbbcfe88d781f19039fe839b73984934c21021dc0562ebf36c2bb4",
+            "size_bytes": 17
+          },
+          {
+            "path": "probabilities/bolivia_holdout/samples/sample-002.npz",
+            "sha256": "461f5082e047bd786450e8137d13bc24f5b6106bc9423ae7ba5f1eac0bd23f09",
+            "size_bytes": 17
+          },
+          {
+            "path": "probabilities/bolivia_holdout/samples/sample-003.npz",
+            "sha256": "3139c73065a32a7810ed6daaea12b2c53143883a256d24f222c1edbad9cd97dc",
+            "size_bytes": 17
+          },
+          {
+            "path": "probabilities/bolivia_holdout/samples/sample-004.npz",
+            "sha256": "c2bf9d0b2bde82e90a0344939ca9cf554c1ca25a71bfb67b28124c8a8c47d5fd",
+            "size_bytes": 17
+          },
+          {
+            "path": "probabilities/bolivia_holdout/samples/sample-005.npz",
+            "sha256": "5567e3e94b6b49ad1c7c133ed5179962f977537a47869f046c4a383c84fed21d",
+            "size_bytes": 17
+          },
+          {
+            "path": "probabilities/bolivia_holdout/samples/sample-006.npz",
+            "sha256": "e75deef4b3a2ce641069e81de4eabe349c26decd4e046cf146fa9124d6ed76a4",
+            "size_bytes": 17
+          },
+          {
+            "path": "probabilities/bolivia_holdout/samples/sample-007.npz",
+            "sha256": "1451cfcb9c652fd45dc1c5d1eb30e51cebd63e7cc1c2d11094af21bca96f25fd",
+            "size_bytes": 17
+          },
+          {
+            "path": "probabilities/bolivia_holdout/samples/sample-008.npz",
+            "sha256": "b633ba4606774609a86f07bd34ad2109b0d2ce816315f8822375f07fb3760168",
+            "size_bytes": 17
+          },
+          {
+            "path": "probabilities/bolivia_holdout/samples/sample-009.npz",
+            "sha256": "7dc24452cf111bcf2bc086ff80fd4521432f46a228d660a46df5b0d872388d4d",
+            "size_bytes": 17
+          },
+          {
+            "path": "probabilities/bolivia_holdout/samples/sample-010.npz",
+            "sha256": "2c03ad4f97906d381e8c13f55207c5ea77dd47d89f82bccfcfe1df84723d3d04",
+            "size_bytes": 18
+          },
+          {
+            "path": "probabilities/bolivia_holdout/samples/sample-011.npz",
+            "sha256": "9c99719e54d9ed17727245c8e4eaefbe86074f9bbae85e1c819f022c7fbd9cbc",
+            "size_bytes": 18
+          },
+          {
+            "path": "probabilities/bolivia_holdout/samples/sample-012.npz",
+            "sha256": "8ad1a7991001be536a1e32d1df203ffa6ae8f8d5bde7381166a1758cc76a241b",
+            "size_bytes": 18
+          },
+          {
+            "path": "probabilities/bolivia_holdout/samples/sample-013.npz",
+            "sha256": "cfc26a60f1d08ff12be1fe4ab50804a529ce786ab356379b1451a037ce87ac5a",
+            "size_bytes": 18
+          },
+          {
+            "path": "probabilities/bolivia_holdout/samples/sample-014.npz",
+            "sha256": "cd015268305b6a0f59ce5df2329d9ef3bb21ba8c60b5035246ba1d63f984df90",
+            "size_bytes": 18
+          },
+          {
+            "path": "probabilities/bolivia_holdout/support_contract.json",
+            "sha256": "1346a9aaad74239b2f9735982fbac77d2ed3e95365481057b0b2efcfab34d688",
+            "size_bytes": 109
+          },
+          {
+            "path": "probabilities/test/index_parts/part-000000.jsonl",
+            "sha256": "470a15dceea52e86c79bb5079fd8190cf20109af7c97e3d161585ea6bb14b946",
+            "size_bytes": 4320
+          },
+          {
+            "path": "probabilities/test/input_quality_binding.json",
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "size_bytes": 2
+          },
+          {
+            "path": "probabilities/test/samples/sample-000.npz",
+            "sha256": "3f5851617f36fea315c859432f5568ff32b893f53373d7a10de45a59228d3bc9",
+            "size_bytes": 6
+          },
+          {
+            "path": "probabilities/test/samples/sample-001.npz",
+            "sha256": "ed1e1dcf971990c1b89676ae785436106f7548b1ae41d174ca9d3bfb9661a477",
+            "size_bytes": 6
+          },
+          {
+            "path": "probabilities/test/samples/sample-002.npz",
+            "sha256": "e063cdf36f817a24e97839b0799c023644dd1c31c668bda6481869027035a655",
+            "size_bytes": 6
+          },
+          {
+            "path": "probabilities/test/samples/sample-003.npz",
+            "sha256": "2a8c9f051e91be1d0f801980a9e87f8495582668d966b633bfde5d8a93d0e049",
+            "size_bytes": 6
+          },
+          {
+            "path": "probabilities/test/samples/sample-004.npz",
+            "sha256": "a9ebf3ad7308478fec2f0240cab4605bcd5876b3361d275d5f4cedf5770fdb12",
+            "size_bytes": 6
+          },
+          {
+            "path": "probabilities/test/samples/sample-005.npz",
+            "sha256": "5f71b27f826ff16d1d955451ad0e2fdfc00390c9c5678da32d3ffa26ed2064c8",
+            "size_bytes": 6
+          },
+          {
+            "path": "probabilities/test/samples/sample-006.npz",
+            "sha256": "e0b714fb3f30724489657a375fd4913a874da4f6a01810ccb6b88743142a4d73",
+            "size_bytes": 6
+          },
+          {
+            "path": "probabilities/test/samples/sample-007.npz",
+            "sha256": "9c71311c5fc4e8453f5dd0d4dd41773325ea5ab5e188a7341cacdb44a7c3df4a",
+            "size_bytes": 6
+          },
+          {
+            "path": "probabilities/test/samples/sample-008.npz",
+            "sha256": "d96164f03222019b42723ed685bb20eed3a5014f78bb4fc1e0b7be71705a251a",
+            "size_bytes": 6
+          },
+          {
+            "path": "probabilities/test/samples/sample-009.npz",
+            "sha256": "770990271fb786bacd994e80c59ebd09c80092256cb8620ec7fc8096b7d72595",
+            "size_bytes": 6
+          },
+          {
+            "path": "probabilities/test/samples/sample-010.npz",
+            "sha256": "f2b614d017e8ce763436178f2127018ece0886f9a1a1c85e7e649efcb061217f",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-011.npz",
+            "sha256": "aba8c8f7638d612014e04aafbf84c8b3952aed3864669ffdefeb5c22d6e339ec",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-012.npz",
+            "sha256": "dd024ed1472c827cecdd1e4491a4ea1ecae86b22c84e5720f80f13426a8c0a98",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-013.npz",
+            "sha256": "5de299b8beb678665914339d2814b42298c2c7e1268724ab56518d5e03d600b2",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-014.npz",
+            "sha256": "8e23e79decdb7b2265f178871a4af452bc9d6ff8222bb5b523d2244db62862c5",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-015.npz",
+            "sha256": "829039d35f37dbaca97d70b80966c52f4ff18a3501eefe4beb6661a785065548",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-016.npz",
+            "sha256": "7edd35efe309eca1147b20ecdcd5d1a5ffc58da05f7e240da771cb8557b97b23",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-017.npz",
+            "sha256": "83e35b3c3c964814ff82340f1c732f7f4f65dcc93058c48e4bcb3f883e8a2c48",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-018.npz",
+            "sha256": "603db798e6426868b003a7efce3d3cfafa35d321021bebeb61f40a1e9aecdee3",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-019.npz",
+            "sha256": "3eda906ec4a3ad0966a13ddee1b84930da9a9485de47b5ee39a827978e128f15",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-020.npz",
+            "sha256": "9491b47bd33c66c754dc806eaa0a360b1ea2556c8274a206dfdb56fb4e1cf955",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-021.npz",
+            "sha256": "9668186bf56f801feba22b7e8cd257d2b4ea0581411b9ee326c95c8b302a60da",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-022.npz",
+            "sha256": "331f11f334dcce99a02b521531ebcf5373a94f4b06d3b03c26428a0f778b5273",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-023.npz",
+            "sha256": "5ceba02a194dc9b3535cd47da0fa67972c5019a4d58464f24ee17c7981cb5bf2",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-024.npz",
+            "sha256": "b6f903ec96e5595bde39581dc23155bb0bc96e965ba66cda9143b32081fdd38b",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-025.npz",
+            "sha256": "758a911dbcf4690740bb6d25eadd50a14aef95cd05aa2410d9c1175a55fa030e",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-026.npz",
+            "sha256": "74a07b7f782e60025fa839ca7470f9f1c6bfeef12fdacfbd12ce693f1a5acca9",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-027.npz",
+            "sha256": "b789e7624091cdb5043b5328732918e02adbb6238e60353f07e8d60cc0694940",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-028.npz",
+            "sha256": "119f7ac1108c77bcb32547404dda024a8c23a58070b2490961904089406b8b48",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-029.npz",
+            "sha256": "2be2a810c1fe67b5d78c24a7f51adda832f842c269e571c997ae5c60f204ea8b",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-030.npz",
+            "sha256": "fc00278f211cf15e61cb4832de1d126cd806a9a0589f0c49284988b649a06eb3",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-031.npz",
+            "sha256": "b65fdb749f3500564949e250695f516b486ea65b129d04d82512178998cc64ae",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-032.npz",
+            "sha256": "5c29e75c6cc81baa85e4713e4135ebf68837e3ac8c5036c8a2c019270792369e",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-033.npz",
+            "sha256": "8238742cd0edeaaacfde21d67276981939d4fe671f33e966f76aa2195c5ceb83",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-034.npz",
+            "sha256": "296c06627567a215b56e50818edb945af1c66daf446fa6c18690de6df3f9926e",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-035.npz",
+            "sha256": "bf7ffd3451adf8f5914898d48b154b2bc0b848580b9229be7f7e19c454542a3a",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-036.npz",
+            "sha256": "1adf3f3dd261ab994380711b73bc3bb93835046ff97b830d8d5e7480c74fc9ea",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-037.npz",
+            "sha256": "dbd8d51e8e9195b3b70fcb238104ca5571ba24aef1c03ecacda55da4b2d6925e",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-038.npz",
+            "sha256": "2a19af8fca177fe25a55246f06ad5175799dfdccf8326b72a846dee15affc444",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-039.npz",
+            "sha256": "9027090e8ed87016eb23041bcff8266f0a2cd139036c94490f2dd008cd29b635",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-040.npz",
+            "sha256": "173d0b0be8cfeec01b9cf43811a386c8ead07419afc96eab7f936044fb631b0f",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-041.npz",
+            "sha256": "270888464db1195b1267bcf6157e7112268394de33d9acd2964db8778d2ca315",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-042.npz",
+            "sha256": "932f8a5044a5ce0bcc2debb0dd7495d6f91bc4e17957c1724093a0c478290424",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-043.npz",
+            "sha256": "56cd941004065bdef850cbac38556ef014f530b6c7d5887211aa389e85365b7d",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-044.npz",
+            "sha256": "51445fa014cc3374bcea36bba5b86a7a8bea81d4b99c9512b42db61c2843e9ee",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-045.npz",
+            "sha256": "bc045edb18f6bf0093d68caaee8828af300479fef4bde0ed6130016dec7887be",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-046.npz",
+            "sha256": "73d6046985f3650ea6758898dba752d4b325f78f244166db3233ae729f2686b1",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-047.npz",
+            "sha256": "21b3fe546cd05959f50a9a3db82d009b19bb34e3aec7dad825e52e5b0b1ce972",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-048.npz",
+            "sha256": "76ddc9bf46a5491afb3b34b34a737b26a16b670f00d78e1453d79d1f22c135ba",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-049.npz",
+            "sha256": "64712c6ebb3a727ec6f4065a38008dd16e1ed5ce1b904cd191a8187e57dd3a02",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-050.npz",
+            "sha256": "d82a3852a8e5f0970643a34340f060e81964853cbdbebd3ec22c71e5e0ea21d5",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-051.npz",
+            "sha256": "d289738dba785f26bfb1d8e362655a2defef2e487fdedec76abf19281ae58719",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-052.npz",
+            "sha256": "eff847f9119a458c4684091cdb6c1c19162f0d6553d1831aabd057abf249bf9e",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-053.npz",
+            "sha256": "ad11b410662c3f2177a38b463a19086f5437be77a60d9a0816c6ac0f6b1a641e",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-054.npz",
+            "sha256": "6a6fc27a48eb715a354a63bdf8641da9ae97ff095b8a9c5fca5b038d47bd8fdf",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-055.npz",
+            "sha256": "8efbdb1c5fa7cc118c6fa9e05061e606f8119eebc47c37e08e0d332cd4b65e0b",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-056.npz",
+            "sha256": "5930d98e149fa3052f6148fba9ab31af9e4d780117f91902b67b4b16a3299539",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-057.npz",
+            "sha256": "042a9c0967855c09a9a0ce38231d7500c388a078778e6d134343e4ca03ea23ce",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-058.npz",
+            "sha256": "d7589a41a0e0f19cf32ee2d44caf557587b41e72480b829cc2e4e8bb0b1a3834",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-059.npz",
+            "sha256": "0f2a4b160cc2de5433e3c20a4a40232875907468eb6b33c74eea0d7be68cce36",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-060.npz",
+            "sha256": "bcd9246af3fb56dfa93c0b5dd8052d05e34ff1f137d2ef9c4b708ef5b4c542f0",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-061.npz",
+            "sha256": "ec604f09097d794471ee42c428b1e5a756e8d95043d53321f5f2441e74256a9f",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-062.npz",
+            "sha256": "e82975bcd32264b9f7d5e78e2f62ce173258143ba9d91696140cd778566322e0",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-063.npz",
+            "sha256": "667355399ff1283ba1360327153e84d0334e7b8789b44544c9e5b3c5c65f8aa1",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-064.npz",
+            "sha256": "1449d4ca96b28e06afecd02a00402be4d0472b489cef58c786c111d15971cac3",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-065.npz",
+            "sha256": "ba1ba25bbbba4ab864cc5cd5ba8d4e1d9fccca7fd78c58449737f3021e4cbba7",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-066.npz",
+            "sha256": "7eb0f7cd2c798766d7def176ea21a5f74055105f042f635a39dcf30f47aad105",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-067.npz",
+            "sha256": "f4fd67a8cc2bdeb1c7301495cffe7a71eb701bd527c962ac370ea940c30d6d36",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-068.npz",
+            "sha256": "670abe39c0462799ba1640712e03b05c11f194624901da9c0c47264fc12e9550",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-069.npz",
+            "sha256": "4b8ba10d21ee85c19116303cc71ec2ddea42ff6b6c551f524ddead01eb77d035",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-070.npz",
+            "sha256": "3cdf89b0349fc5abf1fa6d7a9a9dcf91480e556d4f1c19638eda9287daa31e90",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-071.npz",
+            "sha256": "8417de6793de902883d2824e5ce93b18ee3d0e7e6f8a8177332ca4aa77f88abf",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-072.npz",
+            "sha256": "4be7976ece84088c0f01f8483f45dcb7f7957985fcf4b54fb722397cc0322917",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-073.npz",
+            "sha256": "dda0b5239ecef53559ef333381456ea7270cbd181d4c30e7988d3a94966916c4",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-074.npz",
+            "sha256": "c9d1c17f5541857b4560ed57436c979ca9a4088e2cc7e90a8f8e00b703dacd54",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-075.npz",
+            "sha256": "ea474684c8b60992c2b3e9a20a6ca26658d4a406859104d5d8b6107659ca9d92",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-076.npz",
+            "sha256": "2f58e6cd410bb77798aeb1b00fbf1f01870b5ef7062af4397c0ed951174e770d",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-077.npz",
+            "sha256": "5b9495c65f1d2a0815f49fa46c941a1df21055e910132d09c4ed8b681f5d7a50",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-078.npz",
+            "sha256": "3c1e555b6ed7479010c5bfbdb83f045772ff99c3ed9c668ed9abd62379048d30",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-079.npz",
+            "sha256": "97abb4b4b922f1ca8ca9fb8d66ed2ec7b3e43e9dab7f1da4fb827e5034562e5e",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-080.npz",
+            "sha256": "ec1cebbff3c657842e036ff28966df9242764bbf3e94fd9478df4e52ae205faa",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-081.npz",
+            "sha256": "5b0c809fa562500e7e2d984a2c7895ce2034ce6315952aabe40dfb58d425d89c",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-082.npz",
+            "sha256": "daf36aa876b33b05375d5dc2be8aa814afc9233611b775317ddb18b80dbb522b",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-083.npz",
+            "sha256": "c5fdad6068d31659d149b23577b7947ef72734cec07173b2066dd2e24c18c36a",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-084.npz",
+            "sha256": "d49fa0440685014edcf0bef3bf4723f5a5e384b79b15fb0bee1bd52d3002428a",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-085.npz",
+            "sha256": "85b98bf0c8c6ed2ef877c1b17f8d66947e02dd66589e3792045bf8edcee4d10f",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-086.npz",
+            "sha256": "9ca26595702c105f59a53bf3519a2cb4a49547a50bcf6bcf802989603717742c",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-087.npz",
+            "sha256": "a54906552eb6a90e2afceebfa663a5d6ba6ab6c992490623a29d1eb09b9e6362",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-088.npz",
+            "sha256": "5e3774605b1ce569a700ebd23c0bf06f5511dd267c0a6cf5a8edc23f0328205d",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/samples/sample-089.npz",
+            "sha256": "76b5860e2d86626076fee08b9c99fa6605688a57c764da5b703feca4cfd216cb",
+            "size_bytes": 7
+          },
+          {
+            "path": "probabilities/test/support_contract.json",
+            "sha256": "69a7723de24de891937bec7248a7a59355a22607aaab91b29862db14edf2647c",
+            "size_bytes": 109
+          },
+          {
+            "path": "probabilities/validation/index_parts/part-000000.jsonl",
+            "sha256": "15c33a11a59080c20e77f599dd9eef725282c27742d35fbbbd02ca0cb269d38e",
+            "size_bytes": 4272
+          },
+          {
+            "path": "probabilities/validation/input_quality_binding.json",
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "size_bytes": 2
+          },
+          {
+            "path": "probabilities/validation/samples/sample-000.npz",
+            "sha256": "1e1fbcb3c592b9aa29acde602a58b830e8e8cbc28dd803709f1f28ec5552a494",
+            "size_bytes": 12
+          },
+          {
+            "path": "probabilities/validation/samples/sample-001.npz",
+            "sha256": "e49f329f17856fe1a324326d901a2a8b55ef4dbc01009fc5602869c9e295f287",
+            "size_bytes": 12
+          },
+          {
+            "path": "probabilities/validation/samples/sample-002.npz",
+            "sha256": "e1838b72ec76c34d56f41c0b720ddeff8c67d27094bba9a756c7ed679346c046",
+            "size_bytes": 12
+          },
+          {
+            "path": "probabilities/validation/samples/sample-003.npz",
+            "sha256": "897b38776c36e55b7127f28e9783cc95427252f0d142bd52ce97939331fda803",
+            "size_bytes": 12
+          },
+          {
+            "path": "probabilities/validation/samples/sample-004.npz",
+            "sha256": "5ca45783a89ea28c36b095133227ed4c008f0d69bdd88d8e9b43597dc1e338ca",
+            "size_bytes": 12
+          },
+          {
+            "path": "probabilities/validation/samples/sample-005.npz",
+            "sha256": "979be43ac891dda82790ca967a3c430988d5667d0893562a4c45059055222701",
+            "size_bytes": 12
+          },
+          {
+            "path": "probabilities/validation/samples/sample-006.npz",
+            "sha256": "9f40407e003eefdc3e688a18f6bb514552d355048460d0ea5ef705559e65eab1",
+            "size_bytes": 12
+          },
+          {
+            "path": "probabilities/validation/samples/sample-007.npz",
+            "sha256": "eb60405fb397843e7cd1ab120ebe0fd83aab752b562513203ce8d72e9562abe5",
+            "size_bytes": 12
+          },
+          {
+            "path": "probabilities/validation/samples/sample-008.npz",
+            "sha256": "75dd40d590b3b10c1acf0c695f332524b9bff75c119456b745fac2cb6b6c71d9",
+            "size_bytes": 12
+          },
+          {
+            "path": "probabilities/validation/samples/sample-009.npz",
+            "sha256": "11652af98467f38694795c3330609a91ac378a087deac05eb389c3f67bfbd866",
+            "size_bytes": 12
+          },
+          {
+            "path": "probabilities/validation/samples/sample-010.npz",
+            "sha256": "c9fb3f7ed9d25826f50fac638cdb57201d56c47ada62f05197c07802ce24c741",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-011.npz",
+            "sha256": "d85bb37d6b3ba33c56b3b18ac38c550a8cf3df5b9cbed9a28d503f08dbd203ef",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-012.npz",
+            "sha256": "045183a9cdddb6d7427178f1dae3559a5b8de8af8c390b55bb182a66b7249987",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-013.npz",
+            "sha256": "808faf52e747c61b66d550b3fe5ab8e237413a5274cfbda8c7feb275da41e161",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-014.npz",
+            "sha256": "54558d5ebcc16cb1e28e024ae2c9e941ea801467d2ec321abf6e40baf444545b",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-015.npz",
+            "sha256": "dc5572118bd1511d7a1b7526ba23862842a6d7a5944e8a6315aff0f1291148e6",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-016.npz",
+            "sha256": "26f08456eb4ce5c741fc3891646a7a2a66014bb60503170ea0c45adf737ec440",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-017.npz",
+            "sha256": "4d7aba012ca54929521980651a3868553ad386ccff579e342e254111c7043626",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-018.npz",
+            "sha256": "c6c36f83f2b84d02d6d487a16b2aefadcd2148b4d3c729594fe55035024ca8cb",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-019.npz",
+            "sha256": "10b427de702cd98e66f480707cb775f0127fa29cad07a3c655411512389c3e7d",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-020.npz",
+            "sha256": "7a24bc2adaca9bca9dbc8e59685929e3ad5304197680fcc7185512955976a556",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-021.npz",
+            "sha256": "def47e0061a6f0113c673d0183969207c075fddba080a60200d7f19d70eaff38",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-022.npz",
+            "sha256": "9255039c8b8cd35e0b122c174767f45ffc1bb5a6155c501536ed71afd61256eb",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-023.npz",
+            "sha256": "50661166b336b5fe7e9ec068a6262a1890e752860f64d751661b44307c6c3baa",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-024.npz",
+            "sha256": "9a5c22ba92451fed441421e42938dd0d6a175bcb9e571f04e52e9af2820a6eb5",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-025.npz",
+            "sha256": "277a5edfdfb21eea1c903fc14caa5361cf69a037f428e3c2002701f5aa25af15",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-026.npz",
+            "sha256": "007335dcb0b5576108ad6f1d2cfd89bd37cc040b989cecb3ccebca6e96226ca8",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-027.npz",
+            "sha256": "0161ec2b618415fe85aa252b888e1ecfdd7249f7441f2c3de64a56f7a7e5d5f3",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-028.npz",
+            "sha256": "f724056d3b6d40fc47a7df7da6f87113365b62038630665f6a29a3a4e2d6d434",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-029.npz",
+            "sha256": "41cb0cbc1f20af11be4ded2a23490310638c3e5ab560d94661c97e0a5a205b0e",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-030.npz",
+            "sha256": "fb9129139ff5d01b9c5977b517f638f8413e42ff601b4e9729a448de302d7b7c",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-031.npz",
+            "sha256": "7dc5e7f75518257a5c16a9bef379b4e2cfb46816e36f7c20a0ac3495fba2e0e5",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-032.npz",
+            "sha256": "6a20772b20d2e4560710e41114f4d4bc090f35a7b37ac5f8c26646b5c15c7508",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-033.npz",
+            "sha256": "440f77d8e58105cf807a22398cd4013f12532a180203abc91fdcae7f60d0a5d4",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-034.npz",
+            "sha256": "dc719c0db55877fb91a1e6b4c2386f7e1357ba1668e2b8c21883f110320fbe8c",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-035.npz",
+            "sha256": "d7285c94f0cefa64a41de840858ca988966e2d05b6dd83cf5ce2b285d61cfe55",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-036.npz",
+            "sha256": "f02b58e5afe70da4fc1a819aa812f13cebdbb3923358c8ed95f83202b0318f46",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-037.npz",
+            "sha256": "9b26a20093922a2b8a75a09011f947d91fe894f8ef163056a8780f913b1d4104",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-038.npz",
+            "sha256": "91d5c4414d135697caf82d73db54d1107fb0c5d8b863c9049850cf047e861770",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-039.npz",
+            "sha256": "538c1ec87a233f56809a639529778ad9d94d96894b0b18e23d3962334dafa1d6",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-040.npz",
+            "sha256": "2e08e083cc55c2d477e59c833d2db970aec6d4172f1ecd1d83868fa4c7a5bcf4",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-041.npz",
+            "sha256": "4590feea8a3a65d947b0780f288d5a4fea00e6ed859073c056ecdf4b90bff7a9",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-042.npz",
+            "sha256": "ee925ad7b650c07459e124b663ac76164ce7234b51abe1e5f90a1d17456aa2ae",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-043.npz",
+            "sha256": "dd35b878f75a0dd69a89615de9a01d85daa4905ad767b3b50e67d139bfe4ea2f",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-044.npz",
+            "sha256": "fa6ff6151a114ca32dfd27d68e9445ceb3a8c4a5de6f61dbf8d87f7aa993acf8",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-045.npz",
+            "sha256": "d744a0b79543e7cc2f7766f97e5507b7c664e02efe50c269fa10acf3c8100682",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-046.npz",
+            "sha256": "16ae587746f48f57c36d0ce1b4720739a38fddaf9c9c1a1a55d0ea986912daae",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-047.npz",
+            "sha256": "75d96256d6c1f6d4a9b0ad48e537fb76e47b0abc3f627c4ad890f2e73dd2ba15",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-048.npz",
+            "sha256": "7d8b247a884c3a475d91d574b7864e6f8a22c5feb00841045fd8c7fbf528ad50",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-049.npz",
+            "sha256": "ccef8f9d77acfb863f524914eb83a6504d2a15706cc9cd123359176a03b2e1b1",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-050.npz",
+            "sha256": "0c5ea57e631cd8fe8a21e922f77b083a58930c1c67dc60b69d4974f2d66af161",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-051.npz",
+            "sha256": "67067794e243663647e59e3a4839a6c384a2b0a9524b9ff6bb67479251fc663c",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-052.npz",
+            "sha256": "6d0089b4e4251cecdc67a8575f29f6386f4feafe4a28c1fc2f7b0c36b3610b4c",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-053.npz",
+            "sha256": "73d8cdac7ae54b1ac99dd1f12e467aa29376265f66bceeb66dc94ebd5c18cd2f",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-054.npz",
+            "sha256": "409467fb99717d11ac670c6eaf16ab8a14bca101af35e6a500b963e885678673",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-055.npz",
+            "sha256": "c7e77a10215bfc14ba917df2fc54f44caf0deb998772547f3e91e371e5e74cf1",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-056.npz",
+            "sha256": "8f6dce41f633c336a3cfb680e6dcee859e2b9f0e57dc5cb453785e2ef005dca5",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-057.npz",
+            "sha256": "489b44872fee02201e4ee8238a50da34bab02a19dd42a98bd6ea86ffe6c06f11",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-058.npz",
+            "sha256": "8cea8751f61ed88f59cac35fe746c180bafd6bcc2feef69053a73026280c790a",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-059.npz",
+            "sha256": "4ab8d4ab1db6ec849590cdc686cf6cecac0a9b5cee42da5994201e63a630bc4b",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-060.npz",
+            "sha256": "123d9ce514f7655cb66c0d47e40f586a4316116ad8f5bf9238cd1ab442be7c0b",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-061.npz",
+            "sha256": "999c62fcfbd890a0be7b9e618067741e4d6d8ba8975a6de28ed009ad7e951c3c",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-062.npz",
+            "sha256": "4cbfc66931c5ec61b67a8d9e7ab8e294bb9698ca81dfcabd0167c7dc2fd27268",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-063.npz",
+            "sha256": "3f7a2f516d3807518c32ef1687d25ed0b4dd5c6964ab6c65dc2c8ead865ec1ec",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-064.npz",
+            "sha256": "e4e8a5cd04c3364089a5abf6409d74da0635762720f0986f27cf7f5ee98dfb6c",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-065.npz",
+            "sha256": "79ae1c58d358f59ba1482a63e026ec4ed6ebdf020650e6e2fde90684f6f31059",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-066.npz",
+            "sha256": "bce2b2aedc8c3f557a09e020a24a2bfb5ec1eacf7a125de0708344c53b81321f",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-067.npz",
+            "sha256": "ab46bb1d4da53db35210854f2c67d571f6a569d53dcfc79a12cbc201e28360cc",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-068.npz",
+            "sha256": "ede872cf63b72bffa2f2cbf3a7934ebfe35de175d14bdb82e8a0d7cb3a5ec063",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-069.npz",
+            "sha256": "05b6f984d5f0cbf570457753ad8cbcb8044d80a67c71ec895f2b0909b66676b9",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-070.npz",
+            "sha256": "e3bd19ce23719eda4fcba00393bc3eb201fa4c4a54957b9b29ede94673184623",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-071.npz",
+            "sha256": "b330a5a08627bf71baa04a75646ca5c3ebeba8aa2b51942acf873c6177c1a961",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-072.npz",
+            "sha256": "1aab44c35371dff4ed9455c1867036f45d8e0b3854fd6b9340c939730847b379",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-073.npz",
+            "sha256": "910b27771eca1aadae5e225745655a881d856fe2175842ebd296ec007a8d987d",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-074.npz",
+            "sha256": "de0652a718ba989848607879fdfcc90724ce5ff1c9df5d72366aa7ea2473fa6e",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-075.npz",
+            "sha256": "03951bf4808a85094216d80ece455394ed3aeab142197ab973bac57d21a5dec6",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-076.npz",
+            "sha256": "8c7c752db0c6cf4d7aef2ab6ebc494e180973c63f631959c86c678d70c6baf82",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-077.npz",
+            "sha256": "ac4c41260d6618043682da77e121be5b896a46f47225bea49289f705cbcc1395",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-078.npz",
+            "sha256": "95212201f8d9a134862cab1f316c0856121622ee40c08f137f29796be9f80ed0",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-079.npz",
+            "sha256": "e05b32618bbb29f2427196bb29957071d190bab5aaa46f39ae3843564fc25b6a",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-080.npz",
+            "sha256": "ea2e193301b5e9bc45f29b2c939a7fc0d1828b2bfcd70b53f262163454c20abd",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-081.npz",
+            "sha256": "35e9aff98283077e5a0bff8bea1f2f22d60b888c53894c8ded1b85b0451d19f8",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-082.npz",
+            "sha256": "ab13a97858fb15cebbb73599e35bd2f19a86a262aa68642e42a994705f4d07eb",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-083.npz",
+            "sha256": "79e4dd245592e07c61a91a1b3a773823c24833f323c98e1a6e31b73002a4644c",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-084.npz",
+            "sha256": "baf15e3624986cecd8259409aa80d8b07867fed9fc7e70dd98b2935df6ff54b9",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-085.npz",
+            "sha256": "bee69387796d22b1e680f8f69ac5fce0fbc11d2c6aef60f4403f795b1b13a6a1",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-086.npz",
+            "sha256": "c46f1e03a7566424ee3ece15c302fc589d29fc16bdf5d23094823d02f0a5ae35",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-087.npz",
+            "sha256": "944798afd1b2802b0b3a14d6b46dc584e9e7598eb155da7f873a9ebf88c22b72",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/samples/sample-088.npz",
+            "sha256": "1c9447e7bdc5527a8aced0f2e5bc5df6d8c29761fb6363f1c4b57a6e42286691",
+            "size_bytes": 13
+          },
+          {
+            "path": "probabilities/validation/support_contract.json",
+            "sha256": "d905128f04c684598e61317e95ac6c5230b3a8d288409a260b92c3fd308ea82f",
+            "size_bytes": 109
+          }
+        ]
+      },
+      "overflow_observation": {
+        "observed_amp_overflow_count": 0,
+        "proof_basis": "formal run completed under v0.4.27 hard-fail gradient contract"
+      }
+    }
+  ]
+}

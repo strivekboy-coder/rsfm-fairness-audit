@@ -1,0 +1,6 @@
+{
+  "schema": "geobwer.sen1floods11.probability_export.v1",
+  "writer": "framework_neutral",
+  "sample_count": 2,
+  "index_part": "index_parts\\part-000000.jsonl"
+}

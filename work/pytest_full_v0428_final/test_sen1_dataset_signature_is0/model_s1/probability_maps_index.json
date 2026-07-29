@@ -1,0 +1,12 @@
+[
+  {
+    "sample_id": "Somalia_001",
+    "probability_map_path": "probability_maps\\0000000_Somalia_001.npz",
+    "sha256": "940f389982140da5fbf854156be543e2424c3bc579f3509c15417fda18b91c80"
+  },
+  {
+    "sample_id": "USA_002",
+    "probability_map_path": "probability_maps\\0000001_USA_002.npz",
+    "sha256": "bcbf7d4044f807bdbdc7b73e7785ec6e9358c6d031291f0a70be4861c5c95881"
+  }
+]

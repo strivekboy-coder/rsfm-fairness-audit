@@ -1,0 +1,124 @@
+{
+  "schema": "geobwer.fmow.geography_contract.v1",
+  "formal_compatible": true,
+  "errors": [],
+  "metadata": {
+    "filename": "metadata_sample_assignment.csv",
+    "sha256": "f381002313ce7935888564f1a57db046d8c8ec91edc28421065c59f2a6279e0a",
+    "row_count": 723,
+    "split_counts": {
+      "calibration": 240,
+      "test": 243,
+      "train": 240
+    }
+  },
+  "mapping_artifact": {
+    "filename": "sample_assignment_audit.csv",
+    "sha256": "a23148d92e04b961931a1aa076a5f34780f17f952c69aa861b64d1398da2a5ff",
+    "source": {
+      "name": "Natural Earth sample remap audit",
+      "version": "2026-07-25",
+      "url": "https://www.naturalearthdata.com/"
+    },
+    "mapping_artifact_type": "sample_assignment_audit",
+    "audit_row_count": 720,
+    "expected_audit_row_count": 720,
+    "unique_sample_count": 720,
+    "matched_sample_count": 720,
+    "conflict_count": 0,
+    "conflicts": [],
+    "original_country_distribution": {
+      "CA-": 360,
+      "ambiguous_country": 360
+    },
+    "mapped_country_distribution": {
+      "DEU": 360,
+      "USA": 360
+    },
+    "mapping_source_distribution": {
+      "natural_earth_nearest_boundary:admin": 10,
+      "natural_earth_polygon": 710
+    },
+    "nearest_boundary_rows": 10,
+    "nearest_boundary_max_distance_km": 2.4919390970832245,
+    "target_scope_rule": "sample_assignment_audit sample_ids define the remapped target population; metadata rows outside this set are not required.",
+    "metadata_target_marker_field": null,
+    "metadata_target_sample_count": 720,
+    "metadata_target_missing_from_audit_count": 0,
+    "metadata_target_missing_from_audit": [],
+    "metadata_rows_outside_audit_count": 3,
+    "metadata_rows_outside_audit_are_required": false,
+    "rows_dropped": 0
+  },
+  "mapping_artifact_type": "sample_assignment_audit",
+  "country_code_policy": {
+    "filename": "geography_code_policy_v1.json",
+    "sha256": "83f371b5432204853f3f1827d32fe1e0e84cedd0acee89c1bb33e2db2bf7292a",
+    "policy_id": "fmow_country_code_policy_v1",
+    "preserve_raw_country_values": true,
+    "authoritative_references": [
+      {
+        "name": "ISO 3166 Country Codes",
+        "url": "https://www.iso.org/iso-3166-country-codes.html"
+      },
+      {
+        "name": "United Nations M49 Standard",
+        "url": "https://unstats.un.org/unsd/methodology/m49/"
+      }
+    ]
+  },
+  "resolved_region_rule": "first_nonempty(region,un_region,continent)",
+  "assignment_hashes": {
+    "calibration": "6f5e9a50e257c405d9d0e9c6cdb7901e0f75a2ef7175a83092b079597a0a1272",
+    "test": "5ffc493f83e98b25057f9176fa1bb430b4476a300ee9357a46dab4e1d233adc4",
+    "train": "4d6e8134658abf72dfbb4ba83d687d190324c7f74dcc1d5090627431ec1e7750"
+  },
+  "country_inventory": [
+    {
+      "value": "DEU",
+      "count": 360,
+      "by_split": {
+        "calibration": 120,
+        "train": 120,
+        "test": 120
+      },
+      "classification": "uppercase_alpha3_syntax",
+      "policy": {}
+    },
+    {
+      "value": "FRA",
+      "count": 3,
+      "by_split": {
+        "test": 3
+      },
+      "classification": "uppercase_alpha3_syntax",
+      "policy": {}
+    },
+    {
+      "value": "USA",
+      "count": 360,
+      "by_split": {
+        "train": 120,
+        "test": 120,
+        "calibration": 120
+      },
+      "classification": "uppercase_alpha3_syntax",
+      "policy": {}
+    }
+  ],
+  "geography_provenance_counts": {
+    "continent_provenance": {
+      "<not_recorded>": 723
+    },
+    "un_region_provenance": {
+      "<not_recorded>": 723
+    },
+    "region_provenance": {
+      "<not_recorded>": 723
+    }
+  },
+  "unresolved_country_row_count": 0,
+  "rows_dropped": 0,
+  "metadata_modified": false,
+  "contract_hash": "5343bf3ecd1002ea7ce8dda235bed810706f8e5cdad21c3b421307898bb98c27"
+}
