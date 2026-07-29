@@ -29,6 +29,7 @@ class Sen1SupervisedCampaignError(RuntimeError):
 SENSOR_MODES = ("S1", "S2", "S1+S2")
 MODE_CHANNELS = {"S1": 2, "S2": 13, "S1+S2": 15}
 FORMAL_MASK_VALUES = {-1, 0, 1}
+IMPUTATION_POLICY = "official_train_band_mean_normalized_zero"
 
 
 @dataclass(frozen=True)
@@ -149,6 +150,142 @@ def _prefix_lineage(prefixes: Sequence[str]) -> dict[str, Any]:
     }
 
 
+def _input_quality_record(
+    image: np.ndarray,
+    *,
+    prefix: str,
+    mode: str,
+) -> dict[str, Any]:
+    """Describe non-finite inputs without changing the source raster."""
+
+    value = np.asarray(image, dtype=np.float32)
+    if value.ndim != 3 or value.shape[0] != MODE_CHANNELS[mode]:
+        raise Sen1SupervisedCampaignError(
+            f"Invalid input shape while auditing non-finite values: "
+            f"prefix={prefix}, mode={mode}, shape={value.shape}."
+        )
+    flat = value.reshape(value.shape[0], -1)
+    finite = np.isfinite(flat)
+    jointly_finite_pixel_count = int(np.all(finite, axis=0).sum())
+    if jointly_finite_pixel_count <= 0:
+        raise Sen1SupervisedCampaignError(
+            "Input sample has no jointly-finite pixel: "
+            f"prefix={prefix}, mode={mode}, "
+            f"nan_count={int(np.isnan(flat).sum())}, "
+            f"posinf_count={int(np.isposinf(flat).sum())}, "
+            f"neginf_count={int(np.isneginf(flat).sum())}."
+        )
+    channels: list[dict[str, int]] = []
+    for channel_index in range(value.shape[0]):
+        channel = flat[channel_index]
+        nan_count = int(np.isnan(channel).sum())
+        posinf_count = int(np.isposinf(channel).sum())
+        neginf_count = int(np.isneginf(channel).sum())
+        channels.append(
+            {
+                "channel_index": channel_index,
+                "nan_count": nan_count,
+                "posinf_count": posinf_count,
+                "neginf_count": neginf_count,
+                "nonfinite_count": nan_count + posinf_count + neginf_count,
+                "value_count": int(channel.size),
+            }
+        )
+    imputed_value_count = int(sum(item["nonfinite_count"] for item in channels))
+    return {
+        "prefix": str(prefix),
+        "sensor_mode": mode,
+        "channel_counts": channels,
+        "jointly_finite_pixel_count": jointly_finite_pixel_count,
+        "pixel_count": int(flat.shape[1]),
+        "imputed_value_count": imputed_value_count,
+        "imputed_fraction": float(imputed_value_count / value.size),
+    }
+
+
+def _input_quality_summary(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    mode: str,
+) -> dict[str, Any]:
+    channel_totals = [
+        {
+            "channel_index": channel_index,
+            "nan_count": 0,
+            "posinf_count": 0,
+            "neginf_count": 0,
+            "nonfinite_count": 0,
+            "value_count": 0,
+        }
+        for channel_index in range(MODE_CHANNELS[mode])
+    ]
+    aggregate_imputed_value_count = 0
+    samples_with_imputation = 0
+    maximum_imputed_fraction = 0.0
+    for record in records:
+        imputed = int(record["imputed_value_count"])
+        aggregate_imputed_value_count += imputed
+        samples_with_imputation += int(imputed > 0)
+        maximum_imputed_fraction = max(
+            maximum_imputed_fraction,
+            float(record["imputed_fraction"]),
+        )
+        for channel in record["channel_counts"]:
+            target = channel_totals[int(channel["channel_index"])]
+            for key in (
+                "nan_count",
+                "posinf_count",
+                "neginf_count",
+                "nonfinite_count",
+                "value_count",
+            ):
+                target[key] += int(channel[key])
+    return {
+        "sample_count": len(records),
+        "samples_with_imputation": samples_with_imputation,
+        "aggregate_imputed_value_count": aggregate_imputed_value_count,
+        "maximum_imputed_fraction": maximum_imputed_fraction,
+        "channel_totals": channel_totals,
+    }
+
+
+def _normalize_input(
+    image: np.ndarray,
+    *,
+    mean: np.ndarray,
+    std: np.ndarray,
+    prefix: str,
+    mode: str,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Apply frozen train-band normalization and deterministic NoData imputation."""
+
+    raw = np.asarray(image, dtype=np.float32)
+    quality = _input_quality_record(raw, prefix=prefix, mode=mode)
+    normalized_mean = np.asarray(mean, dtype=np.float32).reshape(
+        MODE_CHANNELS[mode], 1, 1
+    )
+    normalized_std = np.maximum(
+        np.asarray(std, dtype=np.float32).reshape(MODE_CHANNELS[mode], 1, 1),
+        1e-6,
+    )
+    # Replacing each non-finite band value with that band's official-train
+    # mean is exactly equivalent to a normalized value of zero.
+    imputed = np.where(np.isfinite(raw), raw, normalized_mean)
+    normalized = (imputed - normalized_mean) / normalized_std
+    if not np.all(np.isfinite(normalized)):
+        flat = raw.reshape(raw.shape[0], -1)
+        raise Sen1SupervisedCampaignError(
+            "Input remains non-finite after official-train mean imputation: "
+            f"prefix={prefix}, mode={mode}, "
+            f"nan_count={int(np.isnan(flat).sum())}, "
+            f"posinf_count={int(np.isposinf(flat).sum())}, "
+            f"neginf_count={int(np.isneginf(flat).sum())}, "
+            f"normalization_mean={normalized_mean[:, 0, 0].tolist()}, "
+            f"normalization_std={normalized_std[:, 0, 0].tolist()}."
+        )
+    return np.asarray(normalized, dtype=np.float32), quality
+
+
 def _diagnostic_prefix_subset(
     prefixes: Sequence[str],
     maximum: int,
@@ -203,12 +340,14 @@ def compute_train_normalization(
     square = np.zeros(MODE_CHANNELS[mode], dtype=np.float64)
     minima = np.full(MODE_CHANNELS[mode], np.inf, dtype=np.float64)
     maxima = np.full(MODE_CHANNELS[mode], -np.inf, dtype=np.float64)
+    input_quality_records: list[dict[str, Any]] = []
     for index, prefix in enumerate(prefixes, start=1):
         image = _mode_array(config, prefix, mode).astype(np.float64)
+        input_quality_records.append(
+            _input_quality_record(image, prefix=prefix, mode=mode)
+        )
         flat = image.reshape(image.shape[0], -1)
         finite = np.all(np.isfinite(flat), axis=0)
-        if not np.any(finite):
-            raise Sen1SupervisedCampaignError(f"No jointly finite pixels for {prefix}.")
         selected = flat[:, finite]
         total += selected.sum(axis=1)
         square += np.square(selected).sum(axis=1)
@@ -223,10 +362,11 @@ def compute_train_normalization(
     mean = total / count
     variance = np.maximum(square / count - np.square(mean), 1e-12)
     return {
-        "schema": "geobwer.sen1floods11.train_normalization.v2",
+        "schema": "geobwer.sen1floods11.train_normalization.v3",
         "sensor_mode": mode,
         "selection_split": "official_train",
         "test_rows_used": False,
+        "imputation_policy": IMPUTATION_POLICY,
         "normalization_sample_count": len(prefixes),
         "sample_count": len(prefixes),
         "sample_prefix_sha256": _prefix_sha256(prefixes),
@@ -236,6 +376,11 @@ def compute_train_normalization(
         "std": np.sqrt(variance).tolist(),
         "min": minima.tolist(),
         "max": maxima.tolist(),
+        "input_quality_summary": _input_quality_summary(
+            input_quality_records,
+            mode=mode,
+        ),
+        "input_quality_records": input_quality_records,
     }
 
 
@@ -270,16 +415,14 @@ class _Dataset:
     def __getitem__(self, index: int) -> tuple[Any, Any, str]:
         torch = _require_torch()
         prefix = self.prefixes[index]
-        image = (_mode_array(self.config, prefix, self.mode) - self.mean) / self.std
-        if not np.all(np.isfinite(image)):
-            raw = _mode_array(self.config, prefix, self.mode)
-            raise Sen1SupervisedCampaignError(
-                "Normalized input contains NaN/Inf: "
-                f"prefix={prefix}, mode={self.mode}, "
-                f"raw_range=[{float(np.nanmin(raw))},{float(np.nanmax(raw))}], "
-                f"normalization_mean={self.mean[:, 0, 0].tolist()}, "
-                f"normalization_std={self.std[:, 0, 0].tolist()}."
-            )
+        raw = _mode_array(self.config, prefix, self.mode)
+        image, _quality = _normalize_input(
+            raw,
+            mean=self.mean,
+            std=self.std,
+            prefix=prefix,
+            mode=self.mode,
+        )
         mask = _mask(self.config, prefix)
         if self.augment:
             rng = random.Random(
@@ -299,6 +442,61 @@ class _Dataset:
             torch.from_numpy(np.asarray(mask, dtype=np.int64)),
             prefix,
         )
+
+
+def _build_input_quality_contract(
+    config: Sen1SupervisedConfig,
+    split_prefixes: Mapping[str, Sequence[str]],
+    mode: str,
+    normalization: Mapping[str, Any],
+    *,
+    normalization_sha256: str,
+) -> dict[str, Any]:
+    """Preflight every executed input under the same policy used by loaders."""
+
+    split_contracts: dict[str, Any] = {}
+    all_records: list[dict[str, Any]] = []
+    for split, prefixes in split_prefixes.items():
+        records: list[dict[str, Any]] = []
+        for index, prefix in enumerate(prefixes, start=1):
+            raw = _mode_array(config, str(prefix), mode)
+            _normalized, record = _normalize_input(
+                raw,
+                mean=np.asarray(normalization["mean"], dtype=np.float32),
+                std=np.asarray(normalization["std"], dtype=np.float32),
+                prefix=str(prefix),
+                mode=mode,
+            )
+            record = {**record, "split": str(split)}
+            records.append(record)
+            all_records.append(record)
+            if index % 50 == 0:
+                print(
+                    f"[sen1:baseline:input-quality] mode={mode} split={split} "
+                    f"files={index}/{len(prefixes)}",
+                    flush=True,
+                )
+        split_contracts[str(split)] = {
+            "prefix_sha256": _prefix_sha256(prefixes),
+            "summary": _input_quality_summary(records, mode=mode),
+            "records": records,
+        }
+    return {
+        "schema": "geobwer.sen1floods11.input_quality.v1",
+        "sensor_mode": mode,
+        "imputation_policy": IMPUTATION_POLICY,
+        "normalization_selection_split": "official_train",
+        "normalization_test_rows_used": False,
+        "normalization_sha256": str(normalization_sha256),
+        "normalization_sample_count": int(
+            normalization["normalization_sample_count"]
+        ),
+        "normalization_sample_prefix_sha256": str(
+            normalization["sample_prefix_sha256"]
+        ),
+        "summary": _input_quality_summary(all_records, mode=mode),
+        "splits": split_contracts,
+    }
 
 
 def _loader(dataset: _Dataset, config: Sen1SupervisedConfig, *, shuffle: bool) -> Any:
@@ -574,6 +772,10 @@ def _train_seed(
     seed: int,
     split_prefixes: Mapping[str, Sequence[str]],
     normalization: Mapping[str, Any],
+    normalization_sha256: str,
+    input_quality_contract: Mapping[str, Any],
+    input_quality_contract_path: Path,
+    input_quality_contract_sha256: str,
     output_dir: Path,
 ) -> dict[str, Any]:
     torch = _require_torch()
@@ -782,6 +984,12 @@ def _train_seed(
             "inner_fit_prefixes": inner_fit_prefixes,
             "inner_selection_prefixes": inner_selection_prefixes,
             "normalization": dict(normalization),
+            "normalization_sha256": str(normalization_sha256),
+            "imputation_policy": IMPUTATION_POLICY,
+            "input_quality_contract": str(input_quality_contract_path),
+            "input_quality_contract_sha256": str(
+                input_quality_contract_sha256
+            ),
             "config": asdict(config),
         },
         checkpoint,
@@ -834,7 +1042,7 @@ def _train_seed(
     manifest.write_text(
         json.dumps(
             {
-                "schema": "geobwer.sen1floods11.supervised_resnet34_unet.v2",
+                "schema": "geobwer.sen1floods11.supervised_resnet34_unet.v3",
                 "formal_evidence": config.diagnostic_max_samples is None,
                 "architecture": "resnet34_unet",
                 "adaptation_protocol": "supervised_from_scratch_decoder_imagenet_encoder_initialization"
@@ -852,6 +1060,13 @@ def _train_seed(
                 "checkpoint": str(checkpoint),
                 "checkpoint_sha256": file_sha256(checkpoint),
                 "normalization": dict(normalization),
+                "normalization_sha256": str(normalization_sha256),
+                "imputation_policy": IMPUTATION_POLICY,
+                "input_quality_contract": {
+                    "path": str(input_quality_contract_path),
+                    "sha256": str(input_quality_contract_sha256),
+                    "summary": dict(input_quality_contract["summary"]),
+                },
                 "probability_exports": {key: str(value) for key, value in exports.items()},
                 "split_support": split_support,
                 "skipped_all_ignore_batch_count": skipped_all_ignore_batch_count,
@@ -882,6 +1097,8 @@ def _reuse_completed_seed(
     seed: int,
     expected_validation: int,
     expected_test: int,
+    expected_normalization_sha256: str,
+    expected_input_quality_contract_sha256: str,
 ) -> dict[str, Any] | None:
     manifest_path = run_dir / "run_manifest.json"
     checkpoint = run_dir / "best_resnet34_unet.pt"
@@ -889,10 +1106,15 @@ def _reuse_completed_seed(
         return None
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     if (
-        payload.get("schema") != "geobwer.sen1floods11.supervised_resnet34_unet.v2"
+        payload.get("schema") != "geobwer.sen1floods11.supervised_resnet34_unet.v3"
         or str(payload.get("sensor_mode")) != mode
         or int(payload.get("seed", -1)) != int(seed)
         or str(payload.get("checkpoint_sha256", "")) != file_sha256(checkpoint)
+        or str(payload.get("normalization_sha256", ""))
+        != str(expected_normalization_sha256)
+        or str(payload.get("imputation_policy", "")) != IMPUTATION_POLICY
+        or str(payload.get("input_quality_contract", {}).get("sha256", ""))
+        != str(expected_input_quality_contract_sha256)
     ):
         raise Sen1SupervisedCampaignError(
             f"Completed seed artifacts conflict with the frozen protocol under {run_dir}."
@@ -993,6 +1215,7 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
     output.mkdir(parents=True, exist_ok=True)
     results: dict[str, Any] = {}
     normalization_contracts: dict[str, dict[str, Any]] = {}
+    input_quality_contracts: dict[str, dict[str, Any]] = {}
     for mode in config.sensor_modes:
         mode = str(mode).upper().replace(" ", "")
         normalization_path = output / "normalization" / f"{mode.lower().replace('+', '_plus_')}.json"
@@ -1002,10 +1225,11 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
             normalization = json.loads(normalization_path.read_text(encoding="utf-8"))
             if (
                 normalization.get("schema")
-                != "geobwer.sen1floods11.train_normalization.v2"
+                != "geobwer.sen1floods11.train_normalization.v3"
                 or normalization.get("sensor_mode") != mode
                 or normalization.get("selection_split") != "official_train"
                 or normalization.get("test_rows_used") is not False
+                or normalization.get("imputation_policy") != IMPUTATION_POLICY
                 or int(normalization.get("normalization_sample_count", -1))
                 != OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS["train"]
                 or normalization.get("sample_prefix_sha256")
@@ -1023,15 +1247,66 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
             normalization_path.write_text(
                 json.dumps(normalization, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+        normalization_sha256 = file_sha256(normalization_path)
         normalization_contracts[mode] = {
             "path": str(normalization_path),
-            "sha256": file_sha256(normalization_path),
+            "sha256": normalization_sha256,
+            "imputation_policy": IMPUTATION_POLICY,
             "normalization_sample_count": int(
                 normalization["normalization_sample_count"]
             ),
             "sample_prefix_sha256": str(
                 normalization["sample_prefix_sha256"]
             ),
+        }
+        quality_path = (
+            output
+            / "input_quality"
+            / f"{mode.lower().replace('+', '_plus_')}.json"
+        )
+        quality_path.parent.mkdir(parents=True, exist_ok=True)
+        if quality_path.exists():
+            quality_contract = json.loads(
+                quality_path.read_text(encoding="utf-8")
+            )
+            split_hashes_match = all(
+                quality_contract.get("splits", {})
+                .get(split, {})
+                .get("prefix_sha256")
+                == _prefix_sha256(split_prefixes)
+                for split, split_prefixes in prefixes.items()
+            )
+            if (
+                quality_contract.get("schema")
+                != "geobwer.sen1floods11.input_quality.v1"
+                or quality_contract.get("sensor_mode") != mode
+                or quality_contract.get("imputation_policy")
+                != IMPUTATION_POLICY
+                or quality_contract.get("normalization_sha256")
+                != normalization_sha256
+                or not split_hashes_match
+            ):
+                raise Sen1SupervisedCampaignError(
+                    f"Invalid cached input-quality contract: {quality_path}"
+                )
+        else:
+            quality_contract = _build_input_quality_contract(
+                config,
+                prefixes,
+                mode,
+                normalization,
+                normalization_sha256=normalization_sha256,
+            )
+            quality_path.write_text(
+                json.dumps(quality_contract, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        quality_sha256 = file_sha256(quality_path)
+        input_quality_contracts[mode] = {
+            "path": str(quality_path),
+            "sha256": quality_sha256,
+            "imputation_policy": IMPUTATION_POLICY,
+            "summary": dict(quality_contract["summary"]),
         }
         for seed in config.seeds:
             name = f"resnet34_unet_{mode.lower().replace('+', '_plus_')}_seed_{int(seed)}"
@@ -1046,12 +1321,18 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
                 seed=int(seed),
                 expected_validation=len(prefixes["validation"]),
                 expected_test=len(prefixes["test"]),
+                expected_normalization_sha256=normalization_sha256,
+                expected_input_quality_contract_sha256=quality_sha256,
             ) or _train_seed(
                 config,
                 mode=mode,
                 seed=int(seed),
                 split_prefixes=prefixes,
                 normalization=normalization,
+                normalization_sha256=normalization_sha256,
+                input_quality_contract=quality_contract,
+                input_quality_contract_path=quality_path,
+                input_quality_contract_sha256=quality_sha256,
                 output_dir=run_dir,
             )
             persist_output(
@@ -1069,7 +1350,7 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
     campaign_manifest.write_text(
         json.dumps(
             {
-                "schema": "geobwer.sen1floods11.supervised_panel.v3",
+                "schema": "geobwer.sen1floods11.supervised_panel.v4",
                 "formal_evidence": config.diagnostic_max_samples is None,
                 "design": "resnet34_unet_x_sensor_mode_x_seed",
                 "sensor_modes": list(config.sensor_modes),
@@ -1085,6 +1366,7 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
                     for key, value in prefixes.items()
                 },
                 "normalization_contracts": normalization_contracts,
+                "input_quality_contracts": input_quality_contracts,
                 "runs": {
                     name: {
                         key: str(value) if isinstance(value, Path) else value
@@ -1104,11 +1386,14 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
 
 
 __all__ = [
+    "IMPUTATION_POLICY",
     "MODE_CHANNELS",
     "SENSOR_MODES",
     "Sen1SupervisedCampaignError",
     "Sen1SupervisedConfig",
     "compute_train_normalization",
+    "_build_input_quality_contract",
     "_diagnostic_prefix_subset",
+    "_normalize_input",
     "run_sen1_supervised_campaign",
 ]

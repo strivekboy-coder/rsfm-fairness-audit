@@ -37,8 +37,8 @@ python -u scripts/colab/run_sen1floods11_gpu_smoke_colab.py \
   --prithvi-prepared-data-root /content/data/sen1_prithvi_tl \
   --prithvi-prepared-metadata-csv /content/data/sen1_prithvi_tl/metadata.csv \
   --prithvi-model-config /content/rsfm-fairness-audit/configs/models/prithvi_tl_sen1floods11.yaml \
-  --output-dir /content/sen1_gpu_smoke_v0422 \
-  --persistent-output-dir /content/drive/MyDrive/rsfm_fairness_audit/outputs/geobwer_final_v3/00_smoke_evidence/sen1_gpu_smoke_v0422 \
+  --output-dir /content/sen1_gpu_smoke_v0423 \
+  --persistent-output-dir /content/drive/MyDrive/rsfm_fairness_audit/outputs/geobwer_final_v3/00_smoke_evidence/sen1_gpu_smoke_v0423 \
   --seed 42 \
   --diagnostic-max-samples 12 \
   --batch-size 2 \
@@ -47,7 +47,7 @@ python -u scripts/colab/run_sen1floods11_gpu_smoke_colab.py \
 
 路径若与当前 runtime 不同，只修改资产路径，不修改 seed、模型或科学参数。
 失败时保留原目录作为诊断证据，修复后使用新的版本化 smoke 目录，不在原目录上覆盖。
-v0.4.22 固定每个 TerraMind smoke 阶段运行 2 个 batch；这是为了避免
+v0.4.23 固定每个 TerraMind smoke 阶段运行 2 个 batch；这是为了避免
 Lightning 将 `1` 解析为 `1.0`（即 100% batches），不改变任何正式训练参数。
 TerraMind validation/test prediction 通过仓库内的 CLI 包装器启动；包装器在
 CLI 实例化完成、`trainer.predict()` 开始前，精确移除 TerraTorch 1.2.10
@@ -60,7 +60,10 @@ CLI 实例化完成、`trainer.predict()` 开始前，精确移除 TerraTorch 1.
 监督ResNet34-U-Net同样保留全ignore芯片：全ignore训练batch不执行
 backward或optimizer step，有效batch的input、logits、loss、梯度和更新后参数
 均执行finite硬检查。即使smoke只训练诊断子集，归一化也始终仅由完整252个
-official-train样本计算并记录完整prefix列表及哈希。
+official-train样本计算并记录完整prefix列表及哈希。监督基线在S1、S2和
+S1+S2中使用相同NoData合同：NaN和正负无穷按对应通道official-train均值
+插补，归一化后严格为零；逐样本、逐通道计数及汇总插补比例写入独立输入质量
+合同，validation/test不参与均值、标准差或插补值估计。
 
 ## 正式启动
 
