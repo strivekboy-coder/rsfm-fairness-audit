@@ -43,7 +43,17 @@ def _sen1_source_fixture(tmp_path, split_members, *, unused=()):
     }
     for root in roots.values():
         root.mkdir(parents=True)
-    members = list(dict.fromkeys([*split_members["train"], *split_members["validation"], *split_members["test"], *unused]))
+    members = list(
+        dict.fromkeys(
+            [
+                *split_members["train"],
+                *split_members["validation"],
+                *split_members["test"],
+                *split_members["bolivia_holdout"],
+                *unused,
+            ]
+        )
+    )
     for prefix in members:
         (roots["s1_root"] / f"{prefix}_S1Hand.tif").touch()
         (roots["s2_root"] / f"{prefix}_S2Hand.tif").touch()
@@ -64,6 +74,7 @@ def _sen1_source_fixture(tmp_path, split_members, *, unused=()):
         "train_split": split_paths["train"],
         "val_split": split_paths["validation"],
         "test_split": split_paths["test"],
+        "bolivia_split": split_paths["bolivia_holdout"],
     }
 
 
@@ -106,33 +117,93 @@ def test_fit_scheduler_uses_lightning_cli_plateau_wrapper():
     }
 
 
-def test_official_split_adapter_preserves_252_89_90_membership(tmp_path):
-    members = [f"Event{index % 11:02d}_{index:03d}" for index in range(431)]
-    splits = {
-        "train": members[:252],
-        "validation": members[252:341],
-        "test": members[341:431],
+def _official_four_splits():
+    train = [f"Event{index % 10:02d}_train_{index:03d}" for index in range(252)]
+    validation = [
+        f"Event{index % 10:02d}_validation_{index:03d}" for index in range(89)
+    ]
+    test = [f"Event{index % 10:02d}_test_{index:03d}" for index in range(90)]
+    bolivia = [f"Bolivia_holdout_{index:03d}" for index in range(15)]
+    return {
+        "train": train,
+        "validation": validation,
+        "test": test,
+        "bolivia_holdout": bolivia,
     }
-    source = _sen1_source_fixture(
-        tmp_path,
-        splits,
-        unused=[f"Unused_{index:02d}" for index in range(15)],
-    )
+
+
+def test_official_split_adapter_preserves_252_89_90_plus_15_membership(tmp_path):
+    splits = _official_four_splits()
+    source = _sen1_source_fixture(tmp_path, splits)
     report = prepare_terramind_sen1_splits(source, tmp_path / "terratorch_splits")
 
-    assert OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS == {"train": 252, "validation": 89, "test": 90}
+    assert OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS == {
+        "train": 252,
+        "validation": 89,
+        "test": 90,
+        "bolivia_holdout": 15,
+    }
     assert report["counts"] == {"s1": 446, "s2": 446, "label": 446}
     assert report["split_counts"] == OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS
-    assert report["selected_unique_samples"] == 431
-    assert report["unused_complete_samples"] == 15
+    assert report["selected_unique_samples"] == 446
+    assert report["unused_complete_samples"] == 0
+    assert report["combined_evaluation_sample_count"] == 105
+    assert report["combined_evaluation_event_count"] == 11
+    assert report["bolivia_holdout_events"] == ["Bolivia"]
     for split, expected_members in splits.items():
         generated = Path(report["terratorch_split_paths"][split])
         assert generated.read_text(encoding="utf-8").splitlines() == expected_members
         assert read_sen1floods11_split_prefixes(generated) == expected_members
 
 
+def test_official_split_adapter_rejects_non_bolivia_holdout_event(tmp_path):
+    splits = _official_four_splits()
+    splits["bolivia_holdout"][0] = "Event00_wrong_holdout_000"
+    source = _sen1_source_fixture(tmp_path, splits)
+    with pytest.raises(
+        TerraMindSen1ConfigError,
+        match=r"exactly event=\{'Bolivia'\}",
+    ):
+        prepare_terramind_sen1_splits(source, tmp_path / "wrong_event")
+
+
+def test_official_split_adapter_rejects_bolivia_overlap(tmp_path):
+    splits = _official_four_splits()
+    splits["bolivia_holdout"][0] = splits["train"][0]
+    source = _sen1_source_fixture(tmp_path, splits)
+    with pytest.raises(TerraMindSen1ConfigError, match="overlap"):
+        prepare_terramind_sen1_splits(source, tmp_path / "overlap")
+
+
+def test_official_split_adapter_rejects_incomplete_446_partition(tmp_path):
+    splits = _official_four_splits()
+    source = _sen1_source_fixture(
+        tmp_path,
+        splits,
+        unused=("Bolivia_unregistered_extra",),
+    )
+    with pytest.raises(TerraMindSen1ConfigError, match="must partition"):
+        prepare_terramind_sen1_splits(source, tmp_path / "incomplete")
+
+
+def test_official_standard_test_must_cover_all_ten_non_bolivia_events(tmp_path):
+    splits = _official_four_splits()
+    splits["test"] = [f"Event00_test_{index:03d}" for index in range(90)]
+    source = _sen1_source_fixture(tmp_path, splits)
+    with pytest.raises(
+        TerraMindSen1ConfigError,
+        match="Standard test must cover every one of the 10 non-Bolivia events",
+    ):
+        prepare_terramind_sen1_splits(source, tmp_path / "missing_test_event")
+
+
 def test_split_preflight_requires_matching_s1_s2_and_label_members(tmp_path):
-    splits = {"train": ["A"], "validation": ["B"], "test": ["C"]}
+    splits = {
+        "train": ["A"],
+        "validation": ["B"],
+        "test": ["C"],
+        "bolivia_holdout": ["Bolivia_D"],
+    }
     source = _sen1_source_fixture(tmp_path, splits)
     Path(source["s2_root"], "B_S2Hand.tif").unlink()
     Path(source["s2_root"], "Different_S2Hand.tif").touch()
@@ -140,19 +211,34 @@ def test_split_preflight_requires_matching_s1_s2_and_label_members(tmp_path):
         prepare_terramind_sen1_splits(
             source,
             tmp_path / "terratorch_splits",
-            expected_split_counts={"train": 1, "validation": 1, "test": 1},
+            expected_split_counts={
+                "train": 1,
+                "validation": 1,
+                "test": 1,
+                "bolivia_holdout": 1,
+            },
         )
 
 
 def test_split_preflight_rejects_mismatched_label_pair_and_overlap(tmp_path):
-    splits = {"train": ["A"], "validation": ["B"], "test": ["C"]}
+    splits = {
+        "train": ["A"],
+        "validation": ["B"],
+        "test": ["C"],
+        "bolivia_holdout": ["Bolivia_D"],
+    }
     source = _sen1_source_fixture(tmp_path, splits)
     Path(source["train_split"]).write_text("A_S1Hand.tif,B_LabelHand.tif\n", encoding="utf-8")
     with pytest.raises(TerraMindSen1ConfigError, match="do not identify the same sample"):
         prepare_terramind_sen1_splits(
             source,
             tmp_path / "bad_pair",
-            expected_split_counts={"train": 1, "validation": 1, "test": 1},
+            expected_split_counts={
+                "train": 1,
+                "validation": 1,
+                "test": 1,
+                "bolivia_holdout": 1,
+            },
         )
 
     Path(source["train_split"]).write_text("A_S1Hand.tif,A_LabelHand.tif\n", encoding="utf-8")
@@ -161,24 +247,20 @@ def test_split_preflight_rejects_mismatched_label_pair_and_overlap(tmp_path):
         prepare_terramind_sen1_splits(
             source,
             tmp_path / "overlap",
-            expected_split_counts={"train": 1, "validation": 1, "test": 1},
+            expected_split_counts={
+                "train": 1,
+                "validation": 1,
+                "test": 1,
+                "bolivia_holdout": 1,
+            },
         )
 
 
 def test_final_runner_dry_run_rewires_all_modes_to_prefix_splits(tmp_path):
     import yaml
 
-    members = [f"Event{index % 11:02d}_{index:03d}" for index in range(431)]
-    splits = {
-        "train": members[:252],
-        "validation": members[252:341],
-        "test": members[341:431],
-    }
-    source = _sen1_source_fixture(
-        tmp_path,
-        splits,
-        unused=[f"Unused_{index:02d}" for index in range(15)],
-    )
+    splits = _official_four_splits()
+    source = _sen1_source_fixture(tmp_path, splits)
     output_dir = tmp_path / "runner_output"
     project_root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
@@ -197,6 +279,8 @@ def test_final_runner_dry_run_rewires_all_modes_to_prefix_splits(tmp_path):
             str(source["val_split"]),
             "--test-split",
             str(source["test_split"]),
+            "--bolivia-split",
+            str(source["bolivia_split"]),
             "--output-dir",
             str(output_dir),
             "--checkpoint",
@@ -253,9 +337,28 @@ def test_final_runner_dry_run_rewires_all_modes_to_prefix_splits(tmp_path):
                 prediction_config["data"]["init_args"]["val_split"]
                 == expected_paths["val_split"]
             )
+            bolivia_prediction_config = yaml.safe_load(
+                (
+                    output_dir
+                    / slug
+                    / f"seed_{seed}"
+                    / "configs"
+                    / "predict_bolivia_holdout.yaml"
+                ).read_text(encoding="utf-8")
+            )
+            assert (
+                bolivia_prediction_config["data"]["init_args"]["test_split"]
+                == (
+                    output_dir
+                    / "terratorch_splits"
+                    / "bolivia_holdout_prefixes.txt"
+                ).as_posix()
+            )
     preflight = (output_dir / "source_preflight.json").read_text(encoding="utf-8")
     assert '"split_counts"' in preflight
-    assert '"unused_complete_samples": 15' in preflight
+    assert '"unused_complete_samples": 0' in preflight
+    assert '"combined_evaluation_sample_count": 105' in preflight
+    assert '"combined_evaluation_event_count": 11' in preflight
 
 
 @pytest.mark.skipif(
@@ -324,10 +427,15 @@ def test_real_terratorch_dataset_builds_for_all_sensor_modes(tmp_path):
     from terratorch.datamodules import GenericMultiModalDataModule
 
     validate_terratorch_runtime()
-    splits = {"train": ["A", "B"], "validation": ["C"], "test": ["D"]}
+    splits = {
+        "train": ["A", "B"],
+        "validation": ["C"],
+        "test": ["D"],
+        "bolivia_holdout": ["Bolivia_E"],
+    }
     source = _sen1_source_fixture(tmp_path, splits)
     transform = from_origin(0, 16, 1, 1)
-    for prefix in ("A", "B", "C", "D"):
+    for prefix in ("A", "B", "C", "D", "Bolivia_E"):
         for root_key, suffix, count in (
             ("s1_root", "_S1Hand.tif", 2),
             ("s2_root", "_S2Hand.tif", 13),
@@ -357,7 +465,12 @@ def test_real_terratorch_dataset_builds_for_all_sensor_modes(tmp_path):
     report = prepare_terramind_sen1_splits(
         source,
         tmp_path / "terratorch_splits",
-        expected_split_counts={"train": 2, "validation": 1, "test": 1},
+        expected_split_counts={
+            "train": 2,
+            "validation": 1,
+            "test": 1,
+            "bolivia_holdout": 1,
+        },
     )
     generated = report["terratorch_split_paths"]
     for mode, expected_modalities in (

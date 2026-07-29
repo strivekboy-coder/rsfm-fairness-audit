@@ -12,6 +12,11 @@ from rsfm_fairness_audit.adapters.sen1floods11 import Sen1Floods11DatasetAdapter
 from rsfm_fairness_audit.cli import build_parser
 from rsfm_fairness_audit.io import read_csv_rows
 from rsfm_fairness_audit.pipeline import run_real_pipeline
+from rsfm_fairness_audit.prithvi_sen1_campaign import (
+    PrithviSen1CampaignError,
+    match_prepared_rows_to_bolivia_holdout,
+    match_prepared_rows_to_official_splits,
+)
 from rsfm_fairness_audit.segmentation import run_segmentation_smoke
 
 
@@ -289,6 +294,140 @@ def test_prepare_sen1floods11_max_samples_zero_uses_all_local_pairs(monkeypatch)
     )
     rows = read_csv_rows(metadata_path)
     assert len(rows) == 2
+
+
+def test_prepare_local_prithvi_supplement_filters_bolivia_before_conversion(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    for name in ("Bolivia_001", "Bolivia_002", "Ghana_001"):
+        (source / f"{name}_S2Hand.tif").write_text("mock", encoding="utf-8")
+        (source / f"{name}_LabelHand.tif").write_text("mock", encoding="utf-8")
+
+    def fake_read_tif(path: Path) -> np.ndarray:
+        if "LabelHand" in path.name:
+            return np.zeros((1, 5, 7), dtype=np.float32)
+        return np.ones((13, 5, 7), dtype=np.float32)
+
+    monkeypatch.setattr(prep, "_read_tif", fake_read_tif)
+    metadata_path = prep.prepare_sen1floods11_subset(
+        output_dir=tmp_path / "bolivia_supplement",
+        source_root=source,
+        max_samples=0,
+        target_size=16,
+        event_filter=["Bolivia"],
+        band_profile="prithvi_tl_sen1floods11",
+    )
+    rows = read_csv_rows(metadata_path)
+    assert len(rows) == 2
+    assert {row["event"] for row in rows} == {"Bolivia"}
+    assert {row["sample_id"] for row in rows} == {
+        "Bolivia_001",
+        "Bolivia_002",
+    }
+
+
+def test_prithvi_bolivia_supplement_is_exact_separate_15_chip_asset(
+    tmp_path,
+) -> None:
+    prefixes = [f"Bolivia_holdout_{index:03d}" for index in range(15)]
+    split = tmp_path / "bolivia.csv"
+    split.write_text(
+        "".join(
+            f"{prefix}_S1Hand.tif,{prefix}_LabelHand.tif\n"
+            for prefix in prefixes
+        ),
+        encoding="utf-8",
+    )
+    rows = [{"sample_id": prefix} for prefix in reversed(prefixes)]
+    indices = match_prepared_rows_to_bolivia_holdout(
+        rows,
+        bolivia_split=split,
+    )
+    assert [rows[index]["sample_id"] for index in indices] == prefixes
+
+    with pytest.raises(
+        PrithviSen1CampaignError,
+        match="separate exact 15-chip asset",
+    ):
+        match_prepared_rows_to_bolivia_holdout(
+            [*rows, {"sample_id": "Bolivia_extra"}],
+            bolivia_split=split,
+        )
+
+
+def test_prithvi_core_asset_is_exact_official_252_89_90_partition(
+    tmp_path,
+) -> None:
+    split_members = {
+        "train": [
+            f"Event{index % 10:02d}_train_{index:03d}"
+            for index in range(252)
+        ],
+        "validation": [
+            f"Event{index % 10:02d}_validation_{index:03d}"
+            for index in range(89)
+        ],
+        "test": [
+            f"Event{index % 10:02d}_test_{index:03d}"
+            for index in range(90)
+        ],
+    }
+    paths = {}
+    for split, prefixes in split_members.items():
+        path = tmp_path / f"{split}.txt"
+        path.write_text(
+            "".join(f"{prefix}\n" for prefix in prefixes),
+            encoding="utf-8",
+        )
+        paths[split] = path
+    all_prefixes = [
+        prefix for prefixes in split_members.values() for prefix in prefixes
+    ]
+    rows = [{"sample_id": prefix} for prefix in reversed(all_prefixes)]
+    matched = match_prepared_rows_to_official_splits(
+        rows,
+        train_split=paths["train"],
+        validation_split=paths["validation"],
+        test_split=paths["test"],
+    )
+    assert {split: len(indices) for split, indices in matched.items()} == {
+        "train": 252,
+        "validation": 89,
+        "test": 90,
+    }
+    assert len(set().union(*(set(value) for value in matched.values()))) == 431
+
+    with pytest.raises(
+        PrithviSen1CampaignError,
+        match="exactly the 431",
+    ):
+        match_prepared_rows_to_official_splits(
+            [*rows, {"sample_id": "Event00_extra"}],
+            train_split=paths["train"],
+            validation_split=paths["validation"],
+            test_split=paths["test"],
+        )
+
+
+def test_prithvi_bolivia_split_rejects_non_bolivia_event(tmp_path) -> None:
+    prefixes = [f"Bolivia_holdout_{index:03d}" for index in range(15)]
+    prefixes[0] = "Ghana_wrong_holdout"
+    split = tmp_path / "wrong_bolivia.csv"
+    split.write_text(
+        "".join(f"{prefix}\n" for prefix in prefixes),
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        PrithviSen1CampaignError,
+        match="exactly 15 Bolivia samples",
+    ):
+        match_prepared_rows_to_bolivia_holdout(
+            [{"sample_id": prefix} for prefix in prefixes],
+            bolivia_split=split,
+        )
 
 
 def test_sen1floods11_gcs_label_candidates_prefer_official_labelhand() -> None:

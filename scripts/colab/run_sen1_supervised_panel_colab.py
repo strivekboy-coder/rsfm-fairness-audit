@@ -37,6 +37,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--train-split", type=Path, required=True)
     parser.add_argument("--val-split", type=Path, required=True)
     parser.add_argument("--test-split", type=Path, required=True)
+    parser.add_argument(
+        "--bolivia-split",
+        "--heldout-event-split",
+        dest="bolivia_split",
+        type=Path,
+        required=True,
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--persistent-output-dir", type=Path)
     parser.add_argument("--mode", action="append", choices=SENSOR_MODES)
@@ -71,6 +78,7 @@ def main() -> None:
             train_split=args.train_split,
             validation_split=args.val_split,
             test_split=args.test_split,
+            bolivia_split=args.bolivia_split,
             output_dir=args.output_dir,
             persistent_output_dir=args.persistent_output_dir,
             sensor_modes=tuple(args.mode or SENSOR_MODES),

@@ -40,6 +40,7 @@ class Sen1SupervisedConfig:
     train_split: Path
     validation_split: Path
     test_split: Path
+    bolivia_split: Path
     output_dir: Path
     persistent_output_dir: Path | None = None
     sensor_modes: tuple[str, ...] = SENSOR_MODES
@@ -997,7 +998,7 @@ def _train_seed(
     exports: dict[str, Path] = {}
     split_metrics: dict[str, float] = {}
     split_support: dict[str, dict[str, Any]] = {}
-    for split in ("validation", "test"):
+    for split in ("validation", "test", "bolivia_holdout"):
         dataset = _Dataset(
             config, split_prefixes[split], mode, normalization, augment=False, seed=seed
         )
@@ -1042,7 +1043,7 @@ def _train_seed(
     manifest.write_text(
         json.dumps(
             {
-                "schema": "geobwer.sen1floods11.supervised_resnet34_unet.v3",
+                "schema": "geobwer.sen1floods11.supervised_resnet34_unet.v4",
                 "formal_evidence": config.diagnostic_max_samples is None,
                 "architecture": "resnet34_unet",
                 "adaptation_protocol": "supervised_from_scratch_decoder_imagenet_encoder_initialization"
@@ -1056,6 +1057,7 @@ def _train_seed(
                 "best_inner_selection_iou": best_iou,
                 "model_selection": "official_train_inner_event_disjoint",
                 "outer_validation_used_for_model_selection": False,
+                "bolivia_holdout_used_for_training_or_selection": False,
                 "split_metrics": split_metrics,
                 "checkpoint": str(checkpoint),
                 "checkpoint_sha256": file_sha256(checkpoint),
@@ -1085,8 +1087,10 @@ def _train_seed(
         "manifest": manifest,
         "validation_export": exports["validation"],
         "test_export": exports["test"],
+        "bolivia_holdout_export": exports["bolivia_holdout"],
         "validation_iou": best_iou,
         "test_iou": split_metrics["test"],
+        "bolivia_holdout_iou": split_metrics["bolivia_holdout"],
     }
 
 
@@ -1097,6 +1101,7 @@ def _reuse_completed_seed(
     seed: int,
     expected_validation: int,
     expected_test: int,
+    expected_bolivia_holdout: int,
     expected_normalization_sha256: str,
     expected_input_quality_contract_sha256: str,
 ) -> dict[str, Any] | None:
@@ -1106,7 +1111,7 @@ def _reuse_completed_seed(
         return None
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     if (
-        payload.get("schema") != "geobwer.sen1floods11.supervised_resnet34_unet.v3"
+        payload.get("schema") != "geobwer.sen1floods11.supervised_resnet34_unet.v4"
         or str(payload.get("sensor_mode")) != mode
         or int(payload.get("seed", -1)) != int(seed)
         or str(payload.get("checkpoint_sha256", "")) != file_sha256(checkpoint)
@@ -1122,8 +1127,13 @@ def _reuse_completed_seed(
     exports = {
         "validation": run_dir / "probabilities" / "validation",
         "test": run_dir / "probabilities" / "test",
+        "bolivia_holdout": run_dir / "probabilities" / "bolivia_holdout",
     }
-    for split, expected in (("validation", expected_validation), ("test", expected_test)):
+    for split, expected in (
+        ("validation", expected_validation),
+        ("test", expected_test),
+        ("bolivia_holdout", expected_bolivia_holdout),
+    ):
         index = exports[split] / "index_parts" / "part-000000.jsonl"
         support_path = exports[split] / "support_contract.json"
         if not index.is_file() or not support_path.is_file():
@@ -1159,8 +1169,12 @@ def _reuse_completed_seed(
         "manifest": manifest_path,
         "validation_export": exports["validation"],
         "test_export": exports["test"],
+        "bolivia_holdout_export": exports["bolivia_holdout"],
         "validation_iou": float(payload["best_validation_iou"]),
         "test_iou": float(payload["split_metrics"]["test"]),
+        "bolivia_holdout_iou": float(
+            payload["split_metrics"]["bolivia_holdout"]
+        ),
     }
 
 
@@ -1181,6 +1195,7 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
             "train_split": config.train_split,
             "val_split": config.validation_split,
             "test_split": config.test_split,
+            "bolivia_split": config.bolivia_split,
         },
         config.output_dir / "official_split_adapter",
     )
@@ -1188,6 +1203,9 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
         "train": read_sen1floods11_split_prefixes(config.train_split),
         "validation": read_sen1floods11_split_prefixes(config.validation_split),
         "test": read_sen1floods11_split_prefixes(config.test_split),
+        "bolivia_holdout": read_sen1floods11_split_prefixes(
+            config.bolivia_split
+        ),
     }
     official_counts = {
         key: len(value) for key, value in official_prefixes.items()
@@ -1321,6 +1339,7 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
                 seed=int(seed),
                 expected_validation=len(prefixes["validation"]),
                 expected_test=len(prefixes["test"]),
+                expected_bolivia_holdout=len(prefixes["bolivia_holdout"]),
                 expected_normalization_sha256=normalization_sha256,
                 expected_input_quality_contract_sha256=quality_sha256,
             ) or _train_seed(
@@ -1353,6 +1372,13 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
                 "schema": "geobwer.sen1floods11.supervised_panel.v4",
                 "formal_evidence": config.diagnostic_max_samples is None,
                 "design": "resnet34_unet_x_sensor_mode_x_seed",
+                "split_protocol": "official_252_89_90_plus_15_bolivia_holdout",
+                "evaluation_sample_count": (
+                    len(prefixes["test"]) + len(prefixes["bolivia_holdout"])
+                ),
+                "standard_test_count": len(prefixes["test"]),
+                "bolivia_holdout_count": len(prefixes["bolivia_holdout"]),
+                "no_training_or_calibration_leakage": True,
                 "sensor_modes": list(config.sensor_modes),
                 "seeds": list(config.seeds),
                 "config": asdict(config),

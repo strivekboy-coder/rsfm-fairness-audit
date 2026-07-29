@@ -13,7 +13,17 @@ class TerraMindSen1ConfigError(ValueError):
     """Raised when a TerraMind Sen1Floods11 campaign config is incomplete."""
 
 
-OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS = {"train": 252, "validation": 89, "test": 90}
+OFFICIAL_SEN1FLOODS11_CORE_SPLIT_COUNTS = {
+    "train": 252,
+    "validation": 89,
+    "test": 90,
+}
+OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS = {
+    **OFFICIAL_SEN1FLOODS11_CORE_SPLIT_COUNTS,
+    "bolivia_holdout": 15,
+}
+OFFICIAL_SEN1FLOODS11_SAMPLE_COUNT = 446
+OFFICIAL_SEN1FLOODS11_EVENT_COUNT = 11
 SEN1FLOODS11_SUFFIXES = {
     "s1": "_S1Hand.tif",
     "s2": "_S2Hand.tif",
@@ -59,8 +69,10 @@ def build_terramind_sen1floods11_config(
     diagnostic_batch_limit: int | None = None,
 ) -> dict[str, Any]:
     mode = _mode(sensor_mode)
-    if prediction_split not in {None, "validation", "test"}:
-        raise TerraMindSen1ConfigError("prediction_split must be validation, test, or omitted for fit.")
+    if prediction_split not in {None, "validation", "test", "bolivia_holdout"}:
+        raise TerraMindSen1ConfigError(
+            "prediction_split must be validation, test, bolivia_holdout, or omitted for fit."
+        )
     if prediction_split and probability_output_dir is None:
         raise TerraMindSen1ConfigError("Prediction configs require probability_output_dir.")
     if int(checkpoint_mirror_every_n_epochs) <= 0:
@@ -97,7 +109,7 @@ def build_terramind_sen1floods11_config(
     rgb_indices = {rgb_modality: [3, 2, 1] if rgb_modality == "S2L1C" else [0]}
     if prediction_split == "validation":
         datamodule = "rsfm_fairness_audit.terratorch_exports.LabeledValidationAsPredictDataModule"
-    elif prediction_split == "test":
+    elif prediction_split in {"test", "bolivia_holdout"}:
         datamodule = "rsfm_fairness_audit.terratorch_exports.LabeledTestAsPredictDataModule"
     else:
         datamodule = "terratorch.datamodules.GenericMultiModalDataModule"
@@ -283,7 +295,15 @@ def _modality_prefixes(root: Path, suffix: str) -> set[str]:
 
 
 def _validate_source_inventory(values: Mapping[str, str | Path]) -> tuple[dict[str, Path], dict[str, set[str]]]:
-    required = ("s1_root", "s2_root", "label_root", "train_split", "val_split", "test_split")
+    required = (
+        "s1_root",
+        "s2_root",
+        "label_root",
+        "train_split",
+        "val_split",
+        "test_split",
+        "bolivia_split",
+    )
     missing = [name for name in required if name not in values or not Path(values[name]).exists()]
     if missing:
         raise TerraMindSen1ConfigError(f"Missing TerraMind Sen1Floods11 source paths: {missing}")
@@ -291,7 +311,7 @@ def _validate_source_inventory(values: Mapping[str, str | Path]) -> tuple[dict[s
     for root_name in ("s1_root", "s2_root", "label_root"):
         if not paths[root_name].is_dir():
             raise TerraMindSen1ConfigError(f"{root_name} must be a directory: {paths[root_name]}")
-    for split_name in ("train_split", "val_split", "test_split"):
+    for split_name in ("train_split", "val_split", "test_split", "bolivia_split"):
         if not paths[split_name].is_file():
             raise TerraMindSen1ConfigError(f"{split_name} must be a file: {paths[split_name]}")
     prefixes = {
@@ -399,6 +419,7 @@ def prepare_terramind_sen1_splits(
         "train": paths["train_split"],
         "validation": paths["val_split"],
         "test": paths["test_split"],
+        "bolivia_holdout": paths["bolivia_split"],
     }
     split_members = {
         split: read_sen1floods11_split_prefixes(path) for split, path in source_split_paths.items()
@@ -429,6 +450,59 @@ def prepare_terramind_sen1_splits(
         raise TerraMindSen1ConfigError(
             f"Split members do not resolve simultaneously to S1, S2, and Label files: {unresolved}"
         )
+    selected = set().union(*(set(members) for members in split_members.values()))
+    formal_four_split_contract = (
+        expected_split_counts is not None
+        and {
+            name: int(expected_split_counts[name]) for name in source_split_paths
+        }
+        == OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS
+    )
+    if formal_four_split_contract and selected != complete_prefixes:
+        raise TerraMindSen1ConfigError(
+            "The four official Sen1Floods11 sets must partition the complete "
+            f"{OFFICIAL_SEN1FLOODS11_SAMPLE_COUNT}-chip hand-labeled inventory: "
+            f"selected={len(selected)}, inventory={len(complete_prefixes)}, "
+            f"missing={sorted(complete_prefixes - selected)[:10]}, "
+            f"extra={sorted(selected - complete_prefixes)[:10]}."
+        )
+    if formal_four_split_contract and len(selected) != OFFICIAL_SEN1FLOODS11_SAMPLE_COUNT:
+        raise TerraMindSen1ConfigError(
+            "The complete Sen1Floods11 hand-labeled partition must contain exactly "
+            f"{OFFICIAL_SEN1FLOODS11_SAMPLE_COUNT} samples, observed={len(selected)}."
+        )
+    event = lambda prefix: str(prefix).split("_", 1)[0]
+    complete_events = {event(prefix) for prefix in complete_prefixes}
+    bolivia_events = {event(prefix) for prefix in split_members["bolivia_holdout"]}
+    if formal_four_split_contract and bolivia_events != {"Bolivia"}:
+        raise TerraMindSen1ConfigError(
+            "The independent Bolivia holdout must contain exactly event={'Bolivia'}, "
+            f"observed={sorted(bolivia_events)}."
+        )
+    core_bolivia = {
+        split: sorted(prefix for prefix in members if event(prefix) == "Bolivia")[:10]
+        for split, members in split_members.items()
+        if split != "bolivia_holdout"
+    }
+    core_bolivia = {split: values for split, values in core_bolivia.items() if values}
+    if formal_four_split_contract and core_bolivia:
+        raise TerraMindSen1ConfigError(
+            f"Bolivia leaked into train/validation/standard test: {core_bolivia}."
+        )
+    if formal_four_split_contract and len(complete_events) != OFFICIAL_SEN1FLOODS11_EVENT_COUNT:
+        raise TerraMindSen1ConfigError(
+            "The complete hand-labeled inventory must represent exactly "
+            f"{OFFICIAL_SEN1FLOODS11_EVENT_COUNT} events, observed={sorted(complete_events)}."
+        )
+    standard_test_events = {event(prefix) for prefix in split_members["test"]}
+    expected_non_bolivia_events = complete_events - {"Bolivia"}
+    if formal_four_split_contract and standard_test_events != expected_non_bolivia_events:
+        raise TerraMindSen1ConfigError(
+            "Standard test must cover every one of the 10 non-Bolivia events before "
+            "the combined evaluation can claim the fixed 11-event universe: "
+            f"expected={sorted(expected_non_bolivia_events)}, "
+            f"observed={sorted(standard_test_events)}."
+        )
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
     generated_paths: dict[str, Path] = {}
@@ -438,14 +512,24 @@ def prepare_terramind_sen1_splits(
         temporary.write_text("".join(f"{prefix}\n" for prefix in members), encoding="utf-8")
         temporary.replace(generated)
         generated_paths[split] = generated
-    selected = set().union(*(set(members) for members in split_members.values()))
     return {
         "status": "ready",
-        "schema": "geobwer.sen1floods11.terratorch_split_adapter.v1",
+        "schema": "geobwer.sen1floods11.terratorch_split_adapter.v2",
         "counts": {name: len(prefixes) for name, prefixes in modality_prefixes.items()},
         "split_counts": {name: len(members) for name, members in split_members.items()},
         "selected_unique_samples": len(selected),
         "unused_complete_samples": len(complete_prefixes - selected),
+        "complete_event_count": len(complete_events),
+        "complete_events": sorted(complete_events),
+        "standard_test_events": sorted(standard_test_events),
+        "bolivia_holdout_events": sorted(bolivia_events),
+        "combined_evaluation_sample_count": (
+            len(split_members["test"]) + len(split_members["bolivia_holdout"])
+        ),
+        "combined_evaluation_event_count": len(
+            standard_test_events | bolivia_events
+        ),
+        "no_training_or_calibration_leakage": True,
         "source_split_paths": {name: str(path) for name, path in source_split_paths.items()},
         "source_split_sha256": {name: _file_sha256(path) for name, path in source_split_paths.items()},
         "terratorch_split_paths": {name: str(path) for name, path in generated_paths.items()},
@@ -469,6 +553,9 @@ def validate_terramind_sen1_source_layout(values: Mapping[str, str | Path]) -> d
 
 __all__ = [
     "TerraMindSen1ConfigError",
+    "OFFICIAL_SEN1FLOODS11_CORE_SPLIT_COUNTS",
+    "OFFICIAL_SEN1FLOODS11_EVENT_COUNT",
+    "OFFICIAL_SEN1FLOODS11_SAMPLE_COUNT",
     "OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS",
     "build_terramind_sen1floods11_config",
     "prepare_terramind_sen1_splits",

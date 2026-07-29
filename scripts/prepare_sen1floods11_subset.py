@@ -399,6 +399,17 @@ def prepare_sen1floods11_subset(
     )
     if source_root is not None:
         local_pairs = _local_pairs(source_root)
+        if event_filter:
+            filters = {value.casefold() for value in event_filter}
+            local_pairs = [
+                pair
+                for pair in local_pairs
+                if _event_from_sample(_sample_id(pair[0])).casefold() in filters
+            ]
+            _log(
+                f"[stage] Local event filters {sorted(filters)} retained "
+                f"{len(local_pairs)} pairs"
+            )
         pairs = local_pairs if max_samples == 0 else local_pairs[:max_samples]
     else:
         manifest_rows = _build_gcs_pair_manifest(gcs_root, cache_dir)

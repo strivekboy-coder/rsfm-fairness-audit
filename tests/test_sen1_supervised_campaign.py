@@ -36,6 +36,7 @@ def _config(tmp_path: Path, **overrides) -> Sen1SupervisedConfig:
         "train_split": tmp_path / "train.txt",
         "validation_split": tmp_path / "validation.txt",
         "test_split": tmp_path / "test.txt",
+        "bolivia_split": tmp_path / "bolivia.txt",
         "output_dir": tmp_path / "output",
         "sensor_modes": ("S1",),
         "seeds": (42,),
@@ -449,6 +450,7 @@ def test_diagnostic_normalization_uses_all_252_official_train_prefixes_for_all_m
     train = [f"TrainEvent{i % 4}_{i:03d}" for i in range(252)]
     validation = [f"ValidationEvent{i % 3}_{i:03d}" for i in range(89)]
     test = [f"TestEvent{i % 3}_{i:03d}" for i in range(90)]
+    bolivia = [f"Bolivia_{i:03d}" for i in range(15)]
     config = _config(
         tmp_path,
         sensor_modes=("S1", "S2", "S1+S2"),
@@ -458,13 +460,21 @@ def test_diagnostic_normalization_uses_all_252_official_train_prefixes_for_all_m
         config.train_split: train,
         config.validation_split: validation,
         config.test_split: test,
+        config.bolivia_split: bolivia,
     }
     monkeypatch.setattr(campaign, "hydrate_output", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(campaign, "persist_output", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         campaign,
         "prepare_terramind_sen1_splits",
-        lambda *_args, **_kwargs: {"split_counts": {"train": 252, "validation": 89, "test": 90}},
+        lambda *_args, **_kwargs: {
+            "split_counts": {
+                "train": 252,
+                "validation": 89,
+                "test": 90,
+                "bolivia_holdout": 15,
+            }
+        },
     )
     monkeypatch.setattr(
         campaign,
@@ -502,7 +512,7 @@ def test_diagnostic_normalization_uses_all_252_official_train_prefixes_for_all_m
             "input_quality_records": [],
         }
 
-    reuse_calls: list[tuple[str, int, int]] = []
+    reuse_calls: list[tuple[str, int, int, int]] = []
 
     def fake_quality(
         _config,
@@ -541,19 +551,29 @@ def test_diagnostic_normalization_uses_all_252_official_train_prefixes_for_all_m
         seed,
         expected_validation,
         expected_test,
+        expected_bolivia_holdout,
         expected_normalization_sha256,
         expected_input_quality_contract_sha256,
     ):
         assert expected_normalization_sha256
         assert expected_input_quality_contract_sha256
-        reuse_calls.append((mode, expected_validation, expected_test))
+        reuse_calls.append(
+            (
+                mode,
+                expected_validation,
+                expected_test,
+                expected_bolivia_holdout,
+            )
+        )
         return {
             "checkpoint": Path("checkpoint.pt"),
             "manifest": Path("run_manifest.json"),
             "validation_export": Path("validation"),
             "test_export": Path("test"),
+            "bolivia_holdout_export": Path("bolivia_holdout"),
             "validation_iou": 0.0,
             "test_iou": 0.0,
+            "bolivia_holdout_iou": 0.0,
         }
 
     monkeypatch.setattr(campaign, "compute_train_normalization", fake_normalization)
@@ -570,9 +590,9 @@ def test_diagnostic_normalization_uses_all_252_official_train_prefixes_for_all_m
     assert all(prefixes == train for _mode, prefixes in normalization_calls)
     assert all(len(prefixes) == 252 for _mode, prefixes in normalization_calls)
     assert reuse_calls == [
-        ("S1", 12, 12),
-        ("S2", 12, 12),
-        ("S1+S2", 12, 12),
+        ("S1", 12, 12, 12),
+        ("S2", 12, 12, 12),
+        ("S1+S2", 12, 12, 12),
     ]
 
     manifest = json.loads(
@@ -588,6 +608,15 @@ def test_diagnostic_normalization_uses_all_252_official_train_prefixes_for_all_m
     assert manifest["execution_split_lineage"]["train"]["sample_count"] == 12
     assert manifest["execution_split_lineage"]["validation"]["sample_count"] == 12
     assert manifest["execution_split_lineage"]["test"]["sample_count"] == 12
+    assert (
+        manifest["execution_split_lineage"]["bolivia_holdout"]["sample_count"]
+        == 12
+    )
+    assert (
+        manifest["official_split_lineage"]["bolivia_holdout"]["sample_count"]
+        == 15
+    )
+    assert manifest["no_training_or_calibration_leakage"] is True
     assert all(
         contract["normalization_sample_count"] == 252
         for contract in manifest["normalization_contracts"].values()

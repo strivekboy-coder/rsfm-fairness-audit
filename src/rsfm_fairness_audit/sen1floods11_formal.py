@@ -4,6 +4,7 @@ from dataclasses import asdict, replace
 import hashlib
 import json
 from pathlib import Path
+import shutil
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -322,6 +323,9 @@ def _load_units(
                 "longitude": longitude,
                 "country": source_meta.get("country", source_meta.get("ISO_CC", "")),
                 "source_filename": str(source) if source is not None else str(index_row.get("filename", "")),
+                "evaluation_split_role": str(
+                    index_row.get("evaluation_split_role", "")
+                ),
                 "valid_pixel_count": valid_pixel_count,
                 "label_support_status": (
                     "identified" if valid_pixel_count > 0 else "all_ignore"
@@ -339,6 +343,200 @@ def _load_units(
     return rows, probabilities, targets, valid_masks
 
 
+def combine_sen1_evaluation_exports(
+    standard_test_export: str | Path,
+    bolivia_holdout_export: str | Path,
+    output_dir: str | Path,
+) -> Path:
+    """Create one portable 105-chip export without mutating either source."""
+
+    sources = {
+        "standard_test": Path(standard_test_export),
+        "bolivia_holdout": Path(bolivia_holdout_export),
+    }
+    expected_counts = {"standard_test": 90, "bolivia_holdout": 15}
+    output = Path(output_dir)
+    manifest_path = output / "combined_export_manifest.json"
+    index_path = output / "index_parts" / "part-000000.jsonl"
+    source_rows: dict[str, list[dict[str, Any]]] = {}
+    source_provenance: dict[str, Any] = {}
+    for role, source in sources.items():
+        rows = _read_index(source)
+        if len(rows) != expected_counts[role]:
+            raise Sen1FormalizationError(
+                f"{role} export must contain {expected_counts[role]} rows, "
+                f"observed={len(rows)} at {source}."
+            )
+        source_indexes = sorted((source / "index_parts").glob("*.jsonl"))
+        artifact_hashes: dict[str, str] = {}
+        for row in rows:
+            artifact = _resolve_probability_artifact(
+                source, row["probability_path"]
+            )
+            if not artifact.is_file():
+                raise Sen1FormalizationError(
+                    f"Missing source probability artifact: {artifact}."
+                )
+            artifact_hashes[str(row["sample_id"])] = file_sha256(artifact)
+        signature_payload = {
+            "row_count": len(rows),
+            "index_sha256": {
+                path.name: file_sha256(path) for path in source_indexes
+            },
+            "probability_artifact_sha256": artifact_hashes,
+        }
+        source_rows[role] = rows
+        source_provenance[role] = {
+            "path": str(source),
+            **signature_payload,
+            "source_signature_sha256": hashlib.sha256(
+                json.dumps(
+                    signature_payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+        }
+    if output.exists() and any(output.iterdir()):
+        if not (manifest_path.is_file() and index_path.is_file()):
+            raise Sen1FormalizationError(
+                f"Partial combined Sen1 evaluation export exists: {output}."
+            )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if (
+            manifest.get("schema")
+            != "geobwer.sen1floods11.combined_evaluation_export.v1"
+            or manifest.get("evaluation_sample_count") != 105
+            or manifest.get("standard_test_count") != 90
+            or manifest.get("bolivia_holdout_count") != 15
+            or {
+                role: manifest.get("source_exports", {})
+                .get(role, {})
+                .get("source_signature_sha256")
+                for role in sources
+            }
+            != {
+                role: source_provenance[role]["source_signature_sha256"]
+                for role in sources
+            }
+        ):
+            raise Sen1FormalizationError(
+                f"Existing combined Sen1 export contract is incompatible: {output}."
+            )
+        rows = _read_index(output)
+        artifacts_match = True
+        for row in rows:
+            role = str(row.get("evaluation_split_role", ""))
+            expected_sha = (
+                source_provenance.get(role, {})
+                .get("probability_artifact_sha256", {})
+                .get(str(row.get("sample_id", "")))
+            )
+            artifact = _resolve_probability_artifact(
+                output, row["probability_path"]
+            )
+            if (
+                not expected_sha
+                or not artifact.is_file()
+                or file_sha256(artifact) != expected_sha
+            ):
+                artifacts_match = False
+                break
+        if (
+            len(rows) != 105
+            or file_sha256(index_path) != manifest.get("index_sha256")
+            or not artifacts_match
+        ):
+            raise Sen1FormalizationError(
+                f"Existing combined Sen1 export is incomplete: {output}."
+            )
+        return output
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "samples").mkdir(parents=True, exist_ok=True)
+    combined_rows: list[dict[str, Any]] = []
+    chips_by_role: dict[str, set[str]] = {}
+    events_by_role: dict[str, set[str]] = {}
+    for role, source in sources.items():
+        rows = source_rows[role]
+        chips: set[str] = set()
+        events: set[str] = set()
+        for row in rows:
+            chip_id = _canonical_chip_id(
+                _filename_candidate(row.get("filename")),
+                str(row["sample_id"]),
+            )
+            if chip_id in chips:
+                raise Sen1FormalizationError(
+                    f"Duplicate physical chip in {role} export: {chip_id}."
+                )
+            chips.add(chip_id)
+            events.add(chip_id.split("_", 1)[0])
+            source_artifact = _resolve_probability_artifact(
+                source, row["probability_path"]
+            )
+            destination_name = f"{role}__{source_artifact.name}"
+            destination = output / "samples" / destination_name
+            shutil.copy2(source_artifact, destination)
+            combined = dict(row)
+            combined["probability_path"] = f"samples/{destination_name}"
+            combined["evaluation_split_role"] = role
+            combined_rows.append(combined)
+        chips_by_role[role] = chips
+        events_by_role[role] = events
+    overlap = chips_by_role["standard_test"] & chips_by_role["bolivia_holdout"]
+    if overlap:
+        raise Sen1FormalizationError(
+            f"Standard test and Bolivia holdout exports overlap: {sorted(overlap)[:10]}."
+        )
+    if events_by_role["bolivia_holdout"] != {"Bolivia"}:
+        raise Sen1FormalizationError(
+            "Bolivia holdout probability export must contain only event Bolivia, "
+            f"observed={sorted(events_by_role['bolivia_holdout'])}."
+        )
+    if "Bolivia" in events_by_role["standard_test"] or len(
+        events_by_role["standard_test"]
+    ) != 10:
+        raise Sen1FormalizationError(
+            "Standard test probability export must cover exactly 10 non-Bolivia "
+            f"events, observed={sorted(events_by_role['standard_test'])}."
+        )
+    combined_events = (
+        events_by_role["standard_test"] | events_by_role["bolivia_holdout"]
+    )
+    if len(combined_events) != 11:
+        raise Sen1FormalizationError(
+            f"Combined evaluation must cover 11 events, observed={sorted(combined_events)}."
+        )
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text(
+        "".join(
+            json.dumps(row, ensure_ascii=False) + "\n" for row in combined_rows
+        ),
+        encoding="utf-8",
+    )
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema": "geobwer.sen1floods11.combined_evaluation_export.v1",
+                "evaluation_sample_count": 105,
+                "standard_test_count": 90,
+                "bolivia_holdout_count": 15,
+                "standard_test_events": sorted(events_by_role["standard_test"]),
+                "bolivia_holdout_events": ["Bolivia"],
+                "combined_event_count": 11,
+                "sample_overlap": 0,
+                "no_training_or_calibration_leakage": True,
+                "source_exports": source_provenance,
+                "index_sha256": file_sha256(index_path),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return output
+
+
 def load_sen1_probability_units(
     export_dir: str | Path,
     *,
@@ -353,6 +551,88 @@ def load_sen1_probability_units(
     """
 
     return _load_units(export_dir, data_root=data_root, metadata_csv=metadata_csv)
+
+
+def write_sen1_evaluation_split_report(
+    output_path: str | Path,
+    *,
+    standard_test_bundle: FormalOutputBundle,
+    bolivia_holdout_bundle: FormalOutputBundle,
+    combined_held_out_bundle: FormalOutputBundle,
+) -> Path:
+    """Summarize all evaluation views without inventing a one-event gap."""
+
+    bundles = {
+        "standard_test": standard_test_bundle,
+        "bolivia_holdout": bolivia_holdout_bundle,
+        "combined_held_out": combined_held_out_bundle,
+    }
+    summaries: dict[str, Any] = {}
+    for role, bundle in bundles.items():
+        manifest = json.loads(bundle.manifest.read_text(encoding="utf-8"))
+        lineage = dict(manifest.get("dataset_lineage", {}))
+        rows = read_csv_rows(bundle.audit_table)
+        risks = np.asarray([float(row["risk"]) for row in rows], dtype=float)
+        if risks.size == 0 or not np.all(np.isfinite(risks)):
+            raise Sen1FormalizationError(
+                f"Cannot summarize an empty or non-finite Sen1 audit table: "
+                f"{bundle.audit_table}."
+            )
+        events = sorted({str(row["event_id"]) for row in rows})
+        summaries[role] = {
+            "source_sample_count": int(
+                lineage.get("source_split_sample_count", len(rows))
+            ),
+            "auditable_sample_count": len(rows),
+            "all_ignore_sample_count": int(
+                lineage.get("all_ignore_sample_count", 0)
+            ),
+            "event_count": len(events),
+            "events": events,
+            "mean_chip_risk": float(np.mean(risks)),
+            "mean_chip_iou": float(1.0 - np.mean(risks)),
+            "formal_audit_table": str(bundle.audit_table),
+            "formal_manifest": str(bundle.manifest),
+            "formal_manifest_sha256": file_sha256(bundle.manifest),
+        }
+    if (
+        summaries["standard_test"]["source_sample_count"] != 90
+        or summaries["bolivia_holdout"]["source_sample_count"] != 15
+        or summaries["combined_held_out"]["source_sample_count"] != 105
+        or summaries["standard_test"]["event_count"] != 10
+        or summaries["bolivia_holdout"]["events"] != ["Bolivia"]
+        or summaries["combined_held_out"]["event_count"] != 11
+    ):
+        raise Sen1FormalizationError(
+            "Evaluation split report violates the frozen 90/15/105 and "
+            f"10/1/11 contract: {summaries}."
+        )
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(
+            {
+                "schema": "geobwer.sen1floods11.evaluation_split_report.v1",
+                "split_protocol": "official_252_89_90_plus_15_bolivia_holdout",
+                "no_training_or_calibration_leakage": True,
+                "views": summaries,
+                "interpretation": {
+                    "standard_test": "10-event standard benchmark evaluation",
+                    "bolivia_holdout": (
+                        "single unseen-event external performance holdout; "
+                        "event-disparity GeoBWER is not identified from one event"
+                    ),
+                    "combined_held_out": (
+                        "primary fixed 11-event deployment-universe GeoBWER audit"
+                    ),
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return output
 
 
 def _chip_risks(probabilities: Sequence[np.ndarray], targets: Sequence[np.ndarray], valid_masks: Sequence[np.ndarray]) -> list[float]:
@@ -591,6 +871,7 @@ def finalize_sen1floods11_segmentation(
     sensor_mode: str,
     terratorch_version: str,
     model_selection_lineage: Mapping[str, Any] | None = None,
+    evaluation_split_role: str | None = None,
 ) -> FormalOutputBundle:
     checkpoint = Path(checkpoint_path)
     if not checkpoint.exists():
@@ -629,7 +910,12 @@ def finalize_sen1floods11_segmentation(
             "dataset": "Sen1Floods11-v1.1-HandLabeled",
             "split": split,
             "sensor_mode": sensor_mode,
+            "split_protocol": "official_252_89_90_plus_15_bolivia_holdout",
+            "no_training_or_calibration_leakage": (
+                evaluation_split_role is not None
+            ),
         },
+        evaluation_split_role=evaluation_split_role,
     )
 
 
@@ -645,12 +931,80 @@ def finalize_sen1_probability_export(
     data_root: str | Path | None = None,
     metadata_csv: str | Path | None = None,
     split: str = "test",
+    evaluation_split_role: str | None = None,
 ) -> FormalOutputBundle:
     """Formalize any Sen1 model through one shared GeoBWER contract."""
 
     source_rows, source_probabilities, source_targets, source_valid = _load_units(
         export_dir, data_root=data_root, metadata_csv=metadata_csv
     )
+    if evaluation_split_role is not None:
+        if evaluation_split_role not in {
+            "standard_test",
+            "bolivia_holdout",
+            "combined_held_out",
+        }:
+            raise Sen1FormalizationError(
+                f"Unsupported Sen1 evaluation_split_role={evaluation_split_role!r}."
+            )
+        for row in source_rows:
+            observed = str(row.get("evaluation_split_role", ""))
+            if observed and evaluation_split_role != "combined_held_out" and observed != evaluation_split_role:
+                raise Sen1FormalizationError(
+                    "Probability export evaluation role conflicts with finalization: "
+                    f"expected={evaluation_split_role}, observed={observed}."
+                )
+            if not observed:
+                row["evaluation_split_role"] = evaluation_split_role
+    roles = [str(row.get("evaluation_split_role", "")) for row in source_rows]
+    role_counts = {role: roles.count(role) for role in sorted(set(roles)) if role}
+    event_sets = {
+        role: {
+            str(row["event_id"])
+            for row in source_rows
+            if str(row.get("evaluation_split_role", "")) == role
+        }
+        for role in role_counts
+    }
+    if evaluation_split_role == "standard_test":
+        if len(source_rows) != 90 or role_counts != {"standard_test": 90}:
+            raise Sen1FormalizationError(
+                f"Standard test formalization requires exactly 90 rows, observed={role_counts}."
+            )
+        if "Bolivia" in event_sets["standard_test"] or len(event_sets["standard_test"]) != 10:
+            raise Sen1FormalizationError(
+                "Standard test formalization requires all 10 non-Bolivia events."
+            )
+    elif evaluation_split_role == "bolivia_holdout":
+        if len(source_rows) != 15 or role_counts != {"bolivia_holdout": 15}:
+            raise Sen1FormalizationError(
+                f"Bolivia holdout formalization requires exactly 15 rows, observed={role_counts}."
+            )
+        if event_sets["bolivia_holdout"] != {"Bolivia"}:
+            raise Sen1FormalizationError(
+                "Bolivia holdout formalization contains a non-Bolivia event."
+            )
+    elif evaluation_split_role == "combined_held_out":
+        if role_counts != {"bolivia_holdout": 15, "standard_test": 90}:
+            raise Sen1FormalizationError(
+                "Combined held-out audit requires 90 standard-test and 15 Bolivia rows, "
+                f"observed={role_counts}."
+            )
+        standard_events = event_sets["standard_test"]
+        bolivia_events = event_sets["bolivia_holdout"]
+        if (
+            len(standard_events) != 10
+            or "Bolivia" in standard_events
+            or bolivia_events != {"Bolivia"}
+            or len(standard_events | bolivia_events) != 11
+        ):
+            raise Sen1FormalizationError(
+                "Combined held-out audit does not cover the frozen 11-event universe."
+            )
+        if dict(dataset_lineage).get("no_training_or_calibration_leakage") is not True:
+            raise Sen1FormalizationError(
+                "Combined held-out audit requires a verified no-training-or-calibration-leakage contract."
+            )
     rows, probabilities, targets, valid, label_support = _identified_units(
         source_rows,
         source_probabilities,
@@ -737,6 +1091,24 @@ def finalize_sen1_probability_export(
             ),
         }
     )
+    if evaluation_split_role is not None:
+        resolved_dataset_lineage.update(
+            {
+                "evaluation_split_role": evaluation_split_role,
+                "evaluation_sample_count": len(source_rows),
+                "evaluation_split_role_counts": role_counts,
+                "evaluation_event_sets": {
+                    role: sorted(events) for role, events in event_sets.items()
+                },
+                "standard_test_count": role_counts.get("standard_test", 0),
+                "bolivia_holdout_count": role_counts.get("bolivia_holdout", 0),
+                "no_training_or_calibration_leakage": bool(
+                    dict(dataset_lineage).get(
+                        "no_training_or_calibration_leakage", False
+                    )
+                ),
+            }
+        )
     return write_segmentation_bundle(
         output_dir,
         sample_rows=rows,
@@ -756,8 +1128,10 @@ def finalize_sen1_probability_export(
 __all__ = [
     "Sen1FormalizationError",
     "calibrate_common_sen1_spatial_blocks",
+    "combine_sen1_evaluation_exports",
     "finalize_sen1_probability_export",
     "finalize_sen1floods11_segmentation",
     "load_sen1_probability_units",
+    "write_sen1_evaluation_split_report",
     "write_sen1_probability_export",
 ]

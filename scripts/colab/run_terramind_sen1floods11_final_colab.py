@@ -30,8 +30,10 @@ from rsfm_fairness_audit.persistent_cache import hydrate_output, persist_output 
 from rsfm_fairness_audit.probe_selection import group_disjoint_inner_split  # noqa: E402
 from rsfm_fairness_audit.sen1floods11_formal import (  # noqa: E402
     calibrate_common_sen1_spatial_blocks,
+    combine_sen1_evaluation_exports,
     finalize_sen1floods11_segmentation,
     load_sen1_probability_units,
+    write_sen1_evaluation_split_report,
 )
 from rsfm_fairness_audit.terramind_sen1_config import (  # noqa: E402
     prepare_terramind_sen1_splits,
@@ -71,6 +73,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--train-split", type=Path, required=True)
     parser.add_argument("--val-split", type=Path, required=True)
     parser.add_argument("--test-split", type=Path, required=True)
+    parser.add_argument(
+        "--bolivia-split",
+        "--heldout-event-split",
+        dest="bolivia_split",
+        type=Path,
+        required=True,
+        help="Independent official 15-chip Bolivia holdout; never used for fitting or calibration.",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument(
         "--checkpoint",
@@ -418,6 +428,7 @@ def main() -> None:
             "train_split": args.train_split,
             "val_split": args.val_split,
             "test_split": args.test_split,
+            "bolivia_split": args.bolivia_split,
         },
         args.output_dir / "terratorch_splits",
     )
@@ -484,6 +495,7 @@ def main() -> None:
     checkpoints: dict[str, Path | None] = {}
     validation_exports: dict[str, Path] = dict(external_validation_exports)
     test_exports: dict[str, Path] = {}
+    bolivia_exports: dict[str, Path] = {}
     for mode in modes:
         slug = mode.lower().replace("+", "_plus_")
         for seed in seeds:
@@ -492,6 +504,7 @@ def main() -> None:
             config_dir = run_dir / "configs"
             validation_output = run_dir / "probabilities" / "validation"
             test_output = run_dir / "probabilities" / "test"
+            bolivia_output = run_dir / "probabilities" / "bolivia_holdout"
             prediction_common = {
                 "sensor_mode": mode,
                 "s1_root": args.s1_root,
@@ -613,6 +626,15 @@ def main() -> None:
                 prediction_split="test",
                 probability_output_dir=test_output,
             )
+            bolivia_config = write_terramind_sen1floods11_config(
+                config_dir / "predict_bolivia_holdout.yaml",
+                **{
+                    **prediction_common,
+                    "test_split": terratorch_splits["bolivia_holdout"],
+                },
+                prediction_split="bolivia_holdout",
+                probability_output_dir=bolivia_output,
+            )
             checkpoint = _fit_if_needed(
                 fit_config,
                 run_dir,
@@ -651,8 +673,10 @@ def main() -> None:
             checkpoints[run_name] = checkpoint
             validation_exports[run_name] = validation_output
             test_exports[run_name] = test_output
+            bolivia_exports[run_name] = bolivia_output
             # Materialize test config before the validation-only scale is chosen.
             assert test_config.exists()
+            assert bolivia_config.exists()
     if args.smoke_only:
         diagnostic_manifest = args.output_dir / "diagnostic_panel_manifest.json"
         diagnostic_manifest.write_text(
@@ -707,6 +731,7 @@ def main() -> None:
             run_name = f"terramind_v1_base_{slug}_seed_{seed}"
             run_dir = args.output_dir / slug / f"seed_{seed}"
             test_config = run_dir / "configs" / "predict_test.yaml"
+            bolivia_config = run_dir / "configs" / "predict_bolivia_holdout.yaml"
             _predict_if_needed(
                 test_config,
                 checkpoints[run_name],
@@ -727,9 +752,34 @@ def main() -> None:
                 ),
                 label=f"{run_name}-test-predictions",
             )
-            bundle = finalize_sen1floods11_segmentation(
+            _predict_if_needed(
+                bolivia_config,
+                checkpoints[run_name],
+                bolivia_exports[run_name],
+                expected=_split_count(terratorch_splits["bolivia_holdout"]),
+                dry_run=False,
+            )
+            persist_output(
+                bolivia_exports[run_name],
+                (
+                    args.persistent_output_dir
+                    / slug
+                    / f"seed_{seed}"
+                    / "probabilities"
+                    / "bolivia_holdout"
+                    if args.persistent_output_dir
+                    else None
+                ),
+                label=f"{run_name}-bolivia-holdout-predictions",
+            )
+            combined_export = combine_sen1_evaluation_exports(
                 test_exports[run_name],
-                run_dir / "formal_outputs",
+                bolivia_exports[run_name],
+                run_dir / "probabilities" / "combined_held_out",
+            )
+            standard_bundle = finalize_sen1floods11_segmentation(
+                test_exports[run_name],
+                run_dir / "formal_outputs" / "standard_test",
                 model_name=run_name,
                 checkpoint_path=checkpoints[run_name],
                 pretraining_checkpoint_path=args.checkpoint,
@@ -737,7 +787,7 @@ def main() -> None:
                 protocol_path=args.protocol,
                 block_calibration_path=calibration_path,
                 metadata_csv=args.metadata_csv,
-                split="test",
+                split="standard_test",
                 sensor_mode=mode,
                 terratorch_version=terratorch_version,
                 model_selection_lineage={
@@ -749,6 +799,61 @@ def main() -> None:
                     "outer_validation_used_for_model_selection": False,
                     "seed": seed,
                 },
+                evaluation_split_role="standard_test",
+            )
+            bolivia_bundle = finalize_sen1floods11_segmentation(
+                bolivia_exports[run_name],
+                run_dir / "formal_outputs" / "bolivia_holdout",
+                model_name=run_name,
+                checkpoint_path=checkpoints[run_name],
+                pretraining_checkpoint_path=args.checkpoint,
+                pretraining_checkpoint_sha256=backbone_checkpoint_sha256,
+                protocol_path=args.protocol,
+                block_calibration_path=calibration_path,
+                metadata_csv=args.metadata_csv,
+                split="bolivia_holdout",
+                sensor_mode=mode,
+                terratorch_version=terratorch_version,
+                model_selection_lineage={
+                    "model_selection": "official_train_inner_event_disjoint",
+                    "outer_validation_used_for_model_selection": False,
+                    "bolivia_holdout_used_for_model_selection": False,
+                    "seed": seed,
+                },
+                evaluation_split_role="bolivia_holdout",
+            )
+            bundle = finalize_sen1floods11_segmentation(
+                combined_export,
+                run_dir / "formal_outputs" / "combined_held_out",
+                model_name=run_name,
+                checkpoint_path=checkpoints[run_name],
+                pretraining_checkpoint_path=args.checkpoint,
+                pretraining_checkpoint_sha256=backbone_checkpoint_sha256,
+                protocol_path=args.protocol,
+                block_calibration_path=calibration_path,
+                metadata_csv=args.metadata_csv,
+                split="combined_held_out",
+                sensor_mode=mode,
+                terratorch_version=terratorch_version,
+                model_selection_lineage={
+                    "model_selection": "official_train_inner_event_disjoint",
+                    "outer_validation_used_for_model_selection": False,
+                    "bolivia_holdout_used_for_model_selection": False,
+                    "seed": seed,
+                    "standard_test_formal_manifest": str(
+                        standard_bundle.manifest
+                    ),
+                    "bolivia_holdout_formal_manifest": str(
+                        bolivia_bundle.manifest
+                    ),
+                },
+                evaluation_split_role="combined_held_out",
+            )
+            write_sen1_evaluation_split_report(
+                run_dir / "formal_outputs" / "evaluation_split_report.json",
+                standard_test_bundle=standard_bundle,
+                bolivia_holdout_bundle=bolivia_bundle,
+                combined_held_out_bundle=bundle,
             )
             (
                 calibration_rows,

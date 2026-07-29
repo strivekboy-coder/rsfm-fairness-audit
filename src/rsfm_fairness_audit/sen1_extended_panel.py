@@ -11,8 +11,10 @@ from rsfm_fairness_audit.geobwer_extensions import run_segmentation_uncertainty_
 from rsfm_fairness_audit.geobwer_panel import run_geobwer_model_panel
 from rsfm_fairness_audit.persistent_cache import hydrate_output, persist_output
 from rsfm_fairness_audit.sen1floods11_formal import (
+    combine_sen1_evaluation_exports,
     finalize_sen1_probability_export,
     load_sen1_probability_units,
+    write_sen1_evaluation_split_report,
 )
 from rsfm_fairness_audit.spatial_conformal import SpatialConformalConfig
 
@@ -52,7 +54,8 @@ def _finalize_one(
     *,
     model_name: str,
     validation_export: Path,
-    test_export: Path,
+    standard_test_export: Path,
+    bolivia_holdout_export: Path,
     output_dir: Path,
     protocol_path: Path,
     block_calibration_path: Path,
@@ -63,19 +66,71 @@ def _finalize_one(
     n_bootstrap: int,
     seed: int,
 ) -> tuple[Path, BWERProtocol]:
-    for path in (validation_export, test_export):
+    for path in (
+        validation_export,
+        standard_test_export,
+        bolivia_holdout_export,
+    ):
         if not path.is_dir():
             raise Sen1ExtendedPanelError(f"Probability export is missing: {path}")
-    bundle = finalize_sen1_probability_export(
-        test_export,
-        output_dir / "formal_outputs",
+    combined_export = combine_sen1_evaluation_exports(
+        standard_test_export,
+        bolivia_holdout_export,
+        output_dir / "probabilities" / "combined_held_out",
+    )
+    lineage = {
+        **dict(dataset_lineage),
+        "split_protocol": "official_252_89_90_plus_15_bolivia_holdout",
+        "no_training_or_calibration_leakage": True,
+    }
+    standard_bundle = finalize_sen1_probability_export(
+        standard_test_export,
+        output_dir / "formal_outputs" / "standard_test",
         model_name=model_name,
         protocol_path=protocol_path,
         block_calibration_path=block_calibration_path,
         model_lineage=model_lineage,
-        dataset_lineage=dataset_lineage,
+        dataset_lineage={**lineage, "split": "standard_test"},
         metadata_csv=metadata_csv,
-        split="test",
+        split="standard_test",
+        evaluation_split_role="standard_test",
+    )
+    bolivia_bundle = finalize_sen1_probability_export(
+        bolivia_holdout_export,
+        output_dir / "formal_outputs" / "bolivia_holdout",
+        model_name=model_name,
+        protocol_path=protocol_path,
+        block_calibration_path=block_calibration_path,
+        model_lineage=model_lineage,
+        dataset_lineage={**lineage, "split": "bolivia_holdout"},
+        metadata_csv=metadata_csv,
+        split="bolivia_holdout",
+        evaluation_split_role="bolivia_holdout",
+    )
+    bundle = finalize_sen1_probability_export(
+        combined_export,
+        output_dir / "formal_outputs" / "combined_held_out",
+        model_name=model_name,
+        protocol_path=protocol_path,
+        block_calibration_path=block_calibration_path,
+        model_lineage={
+            **dict(model_lineage),
+            "standard_test_formal_manifest": str(standard_bundle.manifest),
+            "bolivia_holdout_formal_manifest": str(bolivia_bundle.manifest),
+        },
+        dataset_lineage={
+            **lineage,
+            "split": "combined_held_out",
+        },
+        metadata_csv=metadata_csv,
+        split="combined_held_out",
+        evaluation_split_role="combined_held_out",
+    )
+    write_sen1_evaluation_split_report(
+        output_dir / "formal_outputs" / "evaluation_split_report.json",
+        standard_test_bundle=standard_bundle,
+        bolivia_holdout_bundle=bolivia_bundle,
+        combined_held_out_bundle=bundle,
     )
     rows, probabilities, targets, valid = load_sen1_probability_units(
         validation_export, metadata_csv=metadata_csv
@@ -110,7 +165,13 @@ def _terramind_tables(
         slug = _mode_slug(mode)
         for seed in seeds:
             run_name = f"terramind_v1_base_{slug}_seed_{seed}"
-            formal = root / slug / f"seed_{seed}" / "formal_outputs"
+            formal = (
+                root
+                / slug
+                / f"seed_{seed}"
+                / "formal_outputs"
+                / "combined_held_out"
+            )
             manifest = _json(formal / "formal_output_manifest.json")
             observed_name = str(manifest.get("model_lineage", {}).get("model", ""))
             if observed_name != run_name:
@@ -157,7 +218,10 @@ def run_sen1_extended_panel(config: Sen1ExtendedPanelConfig) -> dict[str, Path]:
             table, current_protocol = _finalize_one(
                 model_name=model_name,
                 validation_export=run_root / "probabilities" / "validation",
-                test_export=run_root / "probabilities" / "test",
+                standard_test_export=run_root / "probabilities" / "test",
+                bolivia_holdout_export=(
+                    run_root / "probabilities" / "bolivia_holdout"
+                ),
                 output_dir=config.output_dir / model_name,
                 protocol_path=config.protocol_path,
                 block_calibration_path=calibration_path,
@@ -176,13 +240,16 @@ def run_sen1_extended_panel(config: Sen1ExtendedPanelConfig) -> dict[str, Path]:
                     "seed": seed,
                     "checkpoint": str(checkpoint),
                     "checkpoint_sha256": file_sha256(checkpoint),
-                    "selection_data": "official_validation",
+                    "selection_data": "official_train_inner_event_disjoint",
+                    "outer_validation_used_for_model_selection": False,
+                    "bolivia_holdout_used_for_model_selection": False,
                     "full_probability_export": True,
                 },
                 dataset_lineage={
                     "dataset": "Sen1Floods11-v1.1-HandLabeled",
-                    "split_protocol": "official_252_89_90_membership",
-                    "split": "test",
+                    "split_protocol": "official_252_89_90_plus_15_bolivia_holdout",
+                    "split": "combined_held_out",
+                    "no_training_or_calibration_leakage": True,
                 },
                 crc_alpha=config.crc_alpha,
                 n_bootstrap=config.audit_bootstrap,
@@ -200,7 +267,10 @@ def run_sen1_extended_panel(config: Sen1ExtendedPanelConfig) -> dict[str, Path]:
     prithvi_table, current_protocol = _finalize_one(
         model_name=prithvi_name,
         validation_export=config.prithvi_root / "probabilities" / "validation",
-        test_export=config.prithvi_root / "probabilities" / "test",
+        standard_test_export=config.prithvi_root / "probabilities" / "test",
+        bolivia_holdout_export=(
+            config.prithvi_root / "probabilities" / "bolivia_holdout"
+        ),
         output_dir=config.output_dir / prithvi_name,
         protocol_path=config.protocol_path,
         block_calibration_path=calibration_path,
@@ -218,8 +288,9 @@ def run_sen1_extended_panel(config: Sen1ExtendedPanelConfig) -> dict[str, Path]:
         },
         dataset_lineage={
             "dataset": "Sen1Floods11-v1.1-HandLabeled",
-            "split_protocol": "official_252_89_90_membership",
-            "split": "test",
+            "split_protocol": "official_252_89_90_plus_15_bolivia_holdout",
+            "split": "combined_held_out",
+            "no_training_or_calibration_leakage": True,
         },
         crc_alpha=config.crc_alpha,
         n_bootstrap=config.audit_bootstrap,

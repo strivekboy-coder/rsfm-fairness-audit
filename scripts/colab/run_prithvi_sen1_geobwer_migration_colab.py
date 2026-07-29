@@ -25,9 +25,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--prepared-data-root", type=Path, required=True)
     parser.add_argument("--prepared-metadata-csv", type=Path)
+    parser.add_argument("--bolivia-prepared-data-root", type=Path, required=True)
+    parser.add_argument("--bolivia-prepared-metadata-csv", type=Path)
     parser.add_argument("--model-config", type=Path, required=True)
+    parser.add_argument("--train-split", type=Path, required=True)
     parser.add_argument("--val-split", type=Path, required=True)
     parser.add_argument("--test-split", type=Path, required=True)
+    parser.add_argument(
+        "--bolivia-split",
+        "--heldout-event-split",
+        dest="bolivia_split",
+        type=Path,
+        required=True,
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--persistent-output-dir", type=Path)
     parser.add_argument("--batch-size", type=int, default=1)
@@ -42,9 +52,13 @@ def main() -> None:
         PrithviSen1CampaignConfig(
             prepared_data_root=args.prepared_data_root,
             prepared_metadata_csv=args.prepared_metadata_csv,
+            bolivia_prepared_data_root=args.bolivia_prepared_data_root,
+            bolivia_prepared_metadata_csv=args.bolivia_prepared_metadata_csv,
             model_config=args.model_config,
+            train_split=args.train_split,
             validation_split=args.val_split,
             test_split=args.test_split,
+            bolivia_split=args.bolivia_split,
             output_dir=args.output_dir,
             persistent_output_dir=args.persistent_output_dir,
             batch_size=args.batch_size,
@@ -59,10 +73,11 @@ def main() -> None:
         if (
             int(manifest.get("validation_count", -1)) != expected
             or int(manifest.get("test_count", -1)) != expected
+            or int(manifest.get("bolivia_holdout_count", -1)) != expected
             or manifest.get("formal_evidence") is not False
         ):
             raise RuntimeError("Prithvi-only diagnostic contract did not preserve the requested bounded split counts.")
-        for split in ("validation", "test"):
+        for split in ("validation", "test", "bolivia_holdout"):
             validation = manifest["split_runtime_validation"][split]
             if validation.get("full_probability_layout") != "[B,2,H,W]":
                 raise RuntimeError(f"Prithvi-only {split} output did not preserve full class probabilities.")

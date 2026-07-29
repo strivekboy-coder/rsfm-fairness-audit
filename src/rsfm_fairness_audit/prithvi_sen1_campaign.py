@@ -23,12 +23,16 @@ class PrithviSen1CampaignError(RuntimeError):
 @dataclass(frozen=True)
 class PrithviSen1CampaignConfig:
     prepared_data_root: Path
+    bolivia_prepared_data_root: Path
     model_config: Path
+    train_split: Path
     validation_split: Path
     test_split: Path
+    bolivia_split: Path
     output_dir: Path
     persistent_output_dir: Path | None = None
     prepared_metadata_csv: Path | None = None
+    bolivia_prepared_metadata_csv: Path | None = None
     batch_size: int = 1
     device: str = "auto"
     diagnostic_max_samples: int | None = None
@@ -67,6 +71,7 @@ def _row_prefix(row: Mapping[str, Any]) -> str:
 def match_prepared_rows_to_official_splits(
     rows: Sequence[Mapping[str, Any]],
     *,
+    train_split: str | Path,
     validation_split: str | Path,
     test_split: str | Path,
 ) -> dict[str, list[int]]:
@@ -79,17 +84,97 @@ def match_prepared_rows_to_official_splits(
             raise PrithviSen1CampaignError(f"Duplicate prepared sample prefix: {prefix}")
         by_prefix[prefix] = index
     output: dict[str, list[int]] = {}
-    for split, path in (("validation", validation_split), ("test", test_split)):
+    split_paths = (
+        ("train", train_split),
+        ("validation", validation_split),
+        ("test", test_split),
+    )
+    expected_counts = {"train": 252, "validation": 89, "test": 90}
+    split_prefixes: dict[str, list[str]] = {}
+    for split, path in split_paths:
         prefixes = read_sen1floods11_split_prefixes(path)
+        split_prefixes[split] = prefixes
+        if len(prefixes) != expected_counts[split]:
+            raise PrithviSen1CampaignError(
+                f"Official Prithvi {split} split must contain "
+                f"{expected_counts[split]} samples, observed={len(prefixes)}."
+            )
         missing = [prefix for prefix in prefixes if prefix not in by_prefix]
         if missing:
             raise PrithviSen1CampaignError(
                 f"Prepared Prithvi data does not contain {split} members: {missing[:10]}"
             )
         output[split] = [by_prefix[prefix] for prefix in prefixes]
-    if set(output["validation"]) & set(output["test"]):
-        raise PrithviSen1CampaignError("Validation and test prepared rows overlap.")
+    split_names = tuple(output)
+    for index, left in enumerate(split_names):
+        for right in split_names[index + 1 :]:
+            overlap = set(output[left]) & set(output[right])
+            if overlap:
+                raise PrithviSen1CampaignError(
+                    f"Prepared Prithvi {left} and {right} rows overlap."
+                )
+    selected = set().union(*(set(indices) for indices in output.values()))
+    if len(rows) != 431 or selected != set(range(len(rows))):
+        raise PrithviSen1CampaignError(
+            "The immutable Prithvi core asset must contain exactly the 431 "
+            "official train/validation/standard-test samples."
+        )
+    event = lambda prefix: str(prefix).split("_", 1)[0]
+    core_events = {
+        event(prefix)
+        for prefixes in split_prefixes.values()
+        for prefix in prefixes
+    }
+    test_events = {event(prefix) for prefix in split_prefixes["test"]}
+    if (
+        "Bolivia" in core_events
+        or len(core_events) != 10
+        or test_events != core_events
+    ):
+        raise PrithviSen1CampaignError(
+            "The Prithvi core must contain 10 non-Bolivia events and standard "
+            f"test must cover all 10: core={sorted(core_events)}, "
+            f"test={sorted(test_events)}."
+        )
     return output
+
+
+def match_prepared_rows_to_bolivia_holdout(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    bolivia_split: str | Path,
+) -> list[int]:
+    by_prefix: dict[str, int] = {}
+    for index, row in enumerate(rows):
+        prefix = _row_prefix(row)
+        if not prefix:
+            raise PrithviSen1CampaignError(
+                f"Bolivia prepared row {index} has no canonical sample prefix."
+            )
+        if prefix in by_prefix:
+            raise PrithviSen1CampaignError(
+                f"Duplicate Bolivia prepared sample prefix: {prefix}"
+            )
+        by_prefix[prefix] = index
+    prefixes = read_sen1floods11_split_prefixes(bolivia_split)
+    if len(prefixes) != 15 or {prefix.split("_", 1)[0] for prefix in prefixes} != {
+        "Bolivia"
+    }:
+        raise PrithviSen1CampaignError(
+            "The independent Prithvi Bolivia split must contain exactly 15 Bolivia samples."
+        )
+    missing = [prefix for prefix in prefixes if prefix not in by_prefix]
+    if missing:
+        raise PrithviSen1CampaignError(
+            f"Prepared Bolivia supplement is missing holdout members: {missing[:10]}"
+        )
+    extra = sorted(set(by_prefix) - set(prefixes))
+    if extra:
+        raise PrithviSen1CampaignError(
+            "Prepared Bolivia supplement must remain a separate exact 15-chip "
+            f"asset; unexpected rows={extra[:10]}."
+        )
+    return [by_prefix[prefix] for prefix in prefixes]
 
 
 def _predict_indices(
@@ -207,14 +292,44 @@ def run_prithvi_sen1_probability_campaign(
         split="all",
     )
     rows = dataset.load_metadata()
+    bolivia_dataset = Sen1Floods11DatasetAdapter(
+        config.bolivia_prepared_data_root,
+        metadata_path=config.bolivia_prepared_metadata_csv,
+        split="all",
+    )
+    bolivia_rows = bolivia_dataset.load_metadata()
     split_indices = match_prepared_rows_to_official_splits(
         rows,
+        train_split=config.train_split,
         validation_split=config.validation_split,
         test_split=config.test_split,
     )
+    bolivia_indices = match_prepared_rows_to_bolivia_holdout(
+        bolivia_rows,
+        bolivia_split=config.bolivia_split,
+    )
+    core_prefixes = {_row_prefix(row) for row in rows}
+    holdout_prefixes = {
+        _row_prefix(bolivia_rows[index]) for index in bolivia_indices
+    }
+    overlap = sorted(core_prefixes & holdout_prefixes)
+    if overlap:
+        raise PrithviSen1CampaignError(
+            f"Core 431 prepared data overlaps the Bolivia supplement: {overlap[:10]}"
+        )
+    if len(core_prefixes | holdout_prefixes) != 446:
+        raise PrithviSen1CampaignError(
+            "Prithvi core plus Bolivia supplement must contain exactly 446 "
+            "distinct hand-labeled samples."
+        )
+    split_indices["bolivia_holdout"] = bolivia_indices
     if config.diagnostic_max_samples:
         split_indices = {
-            key: values[: int(config.diagnostic_max_samples)]
+            key: (
+                values
+                if key == "train"
+                else values[: int(config.diagnostic_max_samples)]
+            )
             for key, values in split_indices.items()
         }
     values = load_yaml(config.model_config)
@@ -247,10 +362,12 @@ def run_prithvi_sen1_probability_campaign(
     exports: dict[str, Path] = {}
     split_runtime_validation: dict[str, dict[str, Any]] = {}
     diagnostic_full_probability_artifacts: dict[str, str] = {}
-    for split in ("validation", "test"):
+    for split in ("validation", "test", "bolivia_holdout"):
+        active_dataset = bolivia_dataset if split == "bolivia_holdout" else dataset
+        active_rows = bolivia_rows if split == "bolivia_holdout" else rows
         probabilities, targets, filenames, metadata, runtime_validation, full_bundle = _predict_indices(
-            dataset,
-            rows,
+            active_dataset,
+            active_rows,
             split_indices[split],
             model,
             batch_size=config.batch_size,
@@ -262,7 +379,10 @@ def run_prithvi_sen1_probability_campaign(
             diagnostic_dir.mkdir(parents=True, exist_ok=True)
             diagnostic_path = diagnostic_dir / f"{split}_full_probabilities.npz"
             sample_ids = np.asarray(
-                [_row_prefix(rows[index]) for index in split_indices[split]],
+                [
+                    _row_prefix(active_rows[index])
+                    for index in split_indices[split]
+                ],
                 dtype=np.str_,
             )
             np.savez_compressed(
@@ -295,15 +415,23 @@ def run_prithvi_sen1_probability_campaign(
     manifest.write_text(
         json.dumps(
             {
-                "schema": "geobwer.sen1floods11.prithvi_tl_probability_migration.v2",
+                "schema": "geobwer.sen1floods11.prithvi_tl_probability_migration.v3",
                 "formal_evidence": config.diagnostic_max_samples is None,
                 "role": "task_specific_external_validity_reference",
                 "model": model.protocol_model_name,
                 "model_family": model.model_family,
                 "adaptation_protocol": model.adaptation_protocol,
-                "split_protocol": "official_252_89_90_membership",
+                "split_protocol": "official_252_89_90_plus_15_bolivia_holdout",
+                "train_count": len(split_indices["train"]),
                 "validation_count": len(split_indices["validation"]),
                 "test_count": len(split_indices["test"]),
+                "bolivia_holdout_count": len(split_indices["bolivia_holdout"]),
+                "combined_evaluation_count": (
+                    len(split_indices["test"])
+                    + len(split_indices["bolivia_holdout"])
+                ),
+                "bolivia_holdout_used_for_training_or_calibration": False,
+                "no_training_or_calibration_leakage": True,
                 "checkpoint_path": str(checkpoint_path),
                 "checkpoint_sha256": (
                     file_sha256(checkpoint_path) if checkpoint_path.is_file() else ""
@@ -326,6 +454,7 @@ def run_prithvi_sen1_probability_campaign(
     return {
         "validation_export": exports["validation"],
         "test_export": exports["test"],
+        "bolivia_holdout_export": exports["bolivia_holdout"],
         "manifest": manifest,
     }
 
@@ -334,5 +463,6 @@ __all__ = [
     "PrithviSen1CampaignConfig",
     "PrithviSen1CampaignError",
     "match_prepared_rows_to_official_splits",
+    "match_prepared_rows_to_bolivia_holdout",
     "run_prithvi_sen1_probability_campaign",
 ]

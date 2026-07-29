@@ -37,9 +37,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--train-split", type=Path, required=True)
     parser.add_argument("--val-split", type=Path, required=True)
     parser.add_argument("--test-split", type=Path, required=True)
+    parser.add_argument(
+        "--bolivia-split",
+        "--heldout-event-split",
+        dest="bolivia_split",
+        type=Path,
+        required=True,
+    )
     parser.add_argument("--terramind-checkpoint", type=Path, required=True)
     parser.add_argument("--prithvi-prepared-data-root", type=Path, required=True)
     parser.add_argument("--prithvi-prepared-metadata-csv", type=Path)
+    parser.add_argument(
+        "--prithvi-bolivia-prepared-data-root",
+        type=Path,
+        required=True,
+    )
+    parser.add_argument("--prithvi-bolivia-prepared-metadata-csv", type=Path)
     parser.add_argument("--prithvi-model-config", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--persistent-output-dir", type=Path)
@@ -202,12 +215,16 @@ def _source_paths(args: argparse.Namespace) -> list[Path]:
         args.train_split,
         args.val_split,
         args.test_split,
+        args.bolivia_split,
         args.terramind_checkpoint,
         args.prithvi_prepared_data_root,
+        args.prithvi_bolivia_prepared_data_root,
         args.prithvi_model_config,
     ]
     if args.prithvi_prepared_metadata_csv is not None:
         paths.append(args.prithvi_prepared_metadata_csv)
+    if args.prithvi_bolivia_prepared_metadata_csv is not None:
+        paths.append(args.prithvi_bolivia_prepared_metadata_csv)
     return paths
 
 
@@ -262,6 +279,7 @@ def main() -> None:
         "--train-split", str(args.train_split),
         "--val-split", str(args.val_split),
         "--test-split", str(args.test_split),
+        "--bolivia-split", str(args.bolivia_split),
         "--checkpoint", str(args.terramind_checkpoint),
         "--output-dir", str(terramind_root),
         "--seed", str(args.seed),
@@ -286,6 +304,7 @@ def main() -> None:
         "--train-split", str(args.train_split),
         "--val-split", str(args.val_split),
         "--test-split", str(args.test_split),
+        "--bolivia-split", str(args.bolivia_split),
         "--output-dir", str(supervised_root),
         "--seeds", str(args.seed),
         "--max-epochs", "1",
@@ -306,9 +325,13 @@ def main() -> None:
         python,
         str(PROJECT_ROOT / "scripts/colab/run_prithvi_sen1_geobwer_migration_colab.py"),
         "--prepared-data-root", str(args.prithvi_prepared_data_root),
+        "--bolivia-prepared-data-root",
+        str(args.prithvi_bolivia_prepared_data_root),
         "--model-config", str(args.prithvi_model_config),
+        "--train-split", str(args.train_split),
         "--val-split", str(args.val_split),
         "--test-split", str(args.test_split),
+        "--bolivia-split", str(args.bolivia_split),
         "--output-dir", str(prithvi_root),
         "--batch-size", "1",
         "--device", "cuda",
@@ -318,6 +341,11 @@ def main() -> None:
         prithvi_command += [
             "--prepared-metadata-csv",
             str(args.prithvi_prepared_metadata_csv),
+        ]
+    if args.prithvi_bolivia_prepared_metadata_csv is not None:
+        prithvi_command += [
+            "--bolivia-prepared-metadata-csv",
+            str(args.prithvi_bolivia_prepared_metadata_csv),
         ]
     if args.persistent_output_dir is not None:
         prithvi_command += [
@@ -355,13 +383,18 @@ def main() -> None:
             run_root / "probabilities/validation",
             run_root / "probabilities/test",
         )
+        checks["supervised"][mode]["bolivia_holdout"] = (
+            validate_probability_export(
+                run_root / "probabilities/bolivia_holdout"
+            )
+        )
 
     prithvi_manifest_path = prithvi_root / "campaign_manifest.json"
     prithvi_manifest = _json(prithvi_manifest_path)
     if prithvi_manifest.get("formal_evidence") is not False:
         raise RuntimeError("Prithvi smoke was not marked non-formal.")
-    if prithvi_manifest.get("schema") != "geobwer.sen1floods11.prithvi_tl_probability_migration.v2":
-        raise RuntimeError("Prithvi smoke did not use the hardened v2 inference contract.")
+    if prithvi_manifest.get("schema") != "geobwer.sen1floods11.prithvi_tl_probability_migration.v3":
+        raise RuntimeError("Prithvi smoke did not use the Bolivia-aware v3 inference contract.")
     prithvi_device = prithvi_manifest.get("device_contract", {})
     if (
         not str(prithvi_device.get("resolved_device", "")).startswith("cuda")
@@ -369,7 +402,7 @@ def main() -> None:
         or not str(prithvi_device.get("model_input_device", "")).startswith("cuda")
     ):
         raise RuntimeError(f"Prithvi smoke did not execute model and inputs on CUDA: {prithvi_device}")
-    for split in ("validation", "test"):
+    for split in ("validation", "test", "bolivia_holdout"):
         runtime_validation = prithvi_manifest.get("split_runtime_validation", {}).get(split, {})
         if (
             runtime_validation.get("full_probability_layout") != "[B,2,H,W]"
@@ -380,6 +413,9 @@ def main() -> None:
     checks["prithvi"]["s2"] = _validate_pair(
         prithvi_root / "probabilities/validation",
         prithvi_root / "probabilities/test",
+    )
+    checks["prithvi"]["s2"]["bolivia_holdout"] = validate_probability_export(
+        prithvi_root / "probabilities/bolivia_holdout"
     )
 
     git_head = subprocess.run(
