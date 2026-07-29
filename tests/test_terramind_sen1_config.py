@@ -84,7 +84,10 @@ def _sen1_source_fixture(tmp_path, split_members, *, unused=()):
 )
 def test_sensor_modes_change_only_the_controlled_modalities(mode, modalities):
     config = _build(mode)
-    assert config["data"]["class_path"] == "terratorch.datamodules.GenericMultiModalDataModule"
+    assert (
+        config["data"]["class_path"]
+        == "rsfm_fairness_audit.terratorch_exports.GeoBWERSen1DataModule"
+    )
     assert config["data"]["init_args"]["modalities"] == modalities
     assert config["data"]["init_args"]["concat_bands"] is False
     assert config["data"]["init_args"]["shared_transforms"] is True
@@ -105,6 +108,7 @@ def test_uses_released_terramind_pretraining_standardisation_and_recipe():
     args = config["data"]["init_args"]
     assert args["means"]["S1GRD"] == [-12.599, -20.293]
     assert args["means"]["S2L1C"][:3] == [2357.089, 2137.385, 2018.788]
+    assert args["no_data_replace"] is None
     assert config["model"]["init_args"]["loss"] == "dice"
     assert config["optimizer"]["init_args"]["lr"] == 2e-5
 

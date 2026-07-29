@@ -112,7 +112,7 @@ def build_terramind_sen1floods11_config(
     elif prediction_split in {"test", "bolivia_holdout"}:
         datamodule = "rsfm_fairness_audit.terratorch_exports.LabeledTestAsPredictDataModule"
     else:
-        datamodule = "terratorch.datamodules.GenericMultiModalDataModule"
+        datamodule = "rsfm_fairness_audit.terratorch_exports.GeoBWERSen1DataModule"
     dataset_bands = {
         modality: list(range(13 if modality == "S2L1C" else 2)) for modality in modalities
     }
@@ -214,7 +214,10 @@ def build_terramind_sen1floods11_config(
                 "image_grep": image_grep,
                 "label_grep": "*_LabelHand.tif",
                 "no_label_replace": -1,
-                "no_data_replace": 0,
+                # Scalar raw-zero replacement would become extreme after
+                # standardisation. The repository datamodule instead replaces
+                # every non-finite value with its frozen per-band mean.
+                "no_data_replace": None,
                 "num_classes": 2,
                 "means": means,
                 "stds": stds,

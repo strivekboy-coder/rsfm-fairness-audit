@@ -177,6 +177,56 @@ def write_probability_batch(
     return rows
 
 
+def mean_impute_and_normalize_tensor(
+    image: Any,
+    *,
+    mean: Sequence[float],
+    std: Sequence[float],
+) -> Any:
+    """Apply frozen-mean imputation to one TerraTorch modality tensor."""
+
+    try:
+        import torch
+    except ImportError as exc:  # pragma: no cover - runtime requires torch
+        raise TerraTorchExportError(
+            "PyTorch is required for TerraMind input normalization."
+        ) from exc
+    if not torch.is_tensor(image) or image.ndim not in {3, 4, 5}:
+        raise TerraTorchExportError(
+            "TerraMind modality input must be a tensor [C,H,W], [B,C,H,W], "
+            f"or [B,C,T,H,W], got {type(image).__name__} "
+            f"{getattr(image, 'shape', None)}."
+        )
+    channel_axis = 0 if image.ndim == 3 else 1
+    if int(image.shape[channel_axis]) != len(mean) or len(mean) != len(std):
+        raise TerraTorchExportError(
+            "Frozen TerraMind statistics do not match the modality channels: "
+            f"shape={tuple(image.shape)}, mean={len(mean)}, std={len(std)}."
+        )
+    shape = [1] * int(image.ndim)
+    shape[channel_axis] = len(mean)
+    mean_tensor = torch.as_tensor(
+        mean,
+        dtype=image.dtype,
+        device=image.device,
+    ).reshape(shape)
+    std_tensor = torch.clamp(
+        torch.as_tensor(
+            std,
+            dtype=image.dtype,
+            device=image.device,
+        ).reshape(shape),
+        min=1e-6,
+    )
+    imputed = torch.where(torch.isfinite(image), image, mean_tensor)
+    output = (imputed - mean_tensor) / std_tensor
+    if not bool(torch.isfinite(output).all().item()):
+        raise TerraTorchExportError(
+            "TerraMind modality remains non-finite after frozen-mean imputation."
+        )
+    return output
+
+
 try:  # Optional Colab-only runtime; pure helpers above remain locally testable.
     import torch
     from lightning.pytorch.callbacks import BasePredictionWriter, Callback
@@ -197,10 +247,95 @@ except ImportError:  # pragma: no cover - exercised when TerraTorch is not insta
     GeoBWERSemanticSegmentationTask = _MissingTerraTorch
     GeoBWERProbabilityWriter = _MissingTerraTorch
     PersistentCheckpointMirror = _MissingTerraTorch
+    GeoBWERSen1DataModule = _MissingTerraTorch
     LabeledTestAsPredictDataModule = _MissingTerraTorch
     LabeledValidationAsPredictDataModule = _MissingTerraTorch
 
 else:  # pragma: no cover - executed in the Colab model runtime
+
+    class _MeanImputingMultimodalNormalize:
+        """Replace non-finite EO values with frozen means before normalization."""
+
+        def __init__(
+            self,
+            means: Mapping[str, Sequence[float]],
+            stds: Mapping[str, Sequence[float]],
+        ) -> None:
+            self.means = {
+                str(key): tuple(float(value) for value in values)
+                for key, values in means.items()
+            }
+            self.stds = {
+                str(key): tuple(float(value) for value in values)
+                for key, values in stds.items()
+            }
+
+        def __call__(self, batch: Any, denormalize: bool = False) -> Any:
+            for modality in self.means:
+                if modality in batch:
+                    image = batch[modality]
+                    container = batch
+                elif (
+                    "image" in batch
+                    and isinstance(batch["image"], Mapping)
+                    and modality in batch["image"]
+                ):
+                    image = batch["image"][modality]
+                    container = batch["image"]
+                else:
+                    continue
+                if denormalize:
+                    channel_axis = 1 if image.ndim >= 4 else 0
+                    shape = [1] * int(image.ndim)
+                    shape[channel_axis] = len(self.means[modality])
+                    mean = torch.as_tensor(
+                        self.means[modality],
+                        dtype=image.dtype,
+                        device=image.device,
+                    ).reshape(shape)
+                    std = torch.as_tensor(
+                        self.stds[modality],
+                        dtype=image.dtype,
+                        device=image.device,
+                    ).reshape(shape)
+                    output = image * std + mean
+                else:
+                    # TerraTorch 1.2.10's dataset-level no_data_replace is a
+                    # scalar raw-value replacement. Keep it disabled and apply
+                    # the frozen per-band mean here so every imputed normalized
+                    # value is exactly zero.
+                    output = mean_impute_and_normalize_tensor(
+                        image,
+                        mean=self.means[modality],
+                        std=self.stds[modality],
+                    )
+                if not bool(torch.isfinite(output).all().item()):
+                    raise TerraTorchExportError(
+                        "TerraMind input remains non-finite after frozen-mean "
+                        f"imputation for modality={modality}."
+                    )
+                container[modality] = output
+            return batch
+
+
+    class GeoBWERSen1DataModule(GenericMultiModalDataModule):
+        """TerraTorch datamodule with the frozen Sen1 mean-imputation contract."""
+
+        def __init__(
+            self,
+            *args: Any,
+            means: Mapping[str, Sequence[float]],
+            stds: Mapping[str, Sequence[float]],
+            **kwargs: Any,
+        ) -> None:
+            if kwargs.get("no_data_replace") is not None:
+                raise TerraTorchExportError(
+                    "GeoBWERSen1DataModule requires no_data_replace=None; "
+                    "scalar raw-value replacement would violate the frozen "
+                    "per-band mean-imputation contract."
+                )
+            super().__init__(*args, means=means, stds=stds, **kwargs)
+            self.aug = _MeanImputingMultimodalNormalize(means, stds)
 
     def _tensor_devices(value: Any) -> set[str]:
         if isinstance(value, Mapping):
@@ -306,7 +441,7 @@ else:  # pragma: no cover - executed in the Colab model runtime
         def on_fit_end(self, trainer: Any, pl_module: Any) -> None:
             self._mirror(trainer)
 
-    class LabeledTestAsPredictDataModule(GenericMultiModalDataModule):
+    class LabeledTestAsPredictDataModule(GeoBWERSen1DataModule):
         """Expose the labeled, frozen test split to Lightning's predict loop.
 
         TerraTorch's generic predict dataset intentionally drops labels.  That
@@ -324,7 +459,7 @@ else:  # pragma: no cover - executed in the Colab model runtime
             super().setup(stage)
 
 
-    class LabeledValidationAsPredictDataModule(GenericMultiModalDataModule):
+    class LabeledValidationAsPredictDataModule(GeoBWERSen1DataModule):
         """Expose the labeled validation split to predict for block calibration."""
 
         def setup(self, stage: str) -> None:

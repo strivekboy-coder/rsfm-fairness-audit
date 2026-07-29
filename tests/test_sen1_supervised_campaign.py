@@ -138,7 +138,7 @@ def test_sample_without_any_jointly_finite_pixel_hard_fails(mode):
     raw = np.full((channels, 2, 3), np.nan, dtype=np.float32)
     with pytest.raises(
         Sen1SupervisedCampaignError,
-        match="no jointly-finite pixel",
+        match="evaluation splits",
     ):
         _normalize_input(
             raw,
@@ -146,7 +146,24 @@ def test_sample_without_any_jointly_finite_pixel_hard_fails(mode):
             std=np.ones(channels, dtype=np.float32),
             prefix=f"{mode}-all-nonfinite",
             mode=mode,
+            split_role="train",
         )
+
+
+@pytest.mark.parametrize("mode", ["S1", "S2", "S1+S2"])
+def test_evaluation_sample_without_finite_required_modality_is_retained(mode):
+    channels = MODE_CHANNELS[mode]
+    raw = np.full((channels, 2, 3), np.nan, dtype=np.float32)
+    normalized, quality = _normalize_input(
+        raw,
+        mean=np.zeros(channels, dtype=np.float32),
+        std=np.ones(channels, dtype=np.float32),
+        prefix="Paraguay_34417",
+        mode=mode,
+        split_role="standard_test",
+    )
+    np.testing.assert_array_equal(normalized, np.zeros_like(normalized))
+    assert quality["fully_missing_modality"] is True
 
 
 def test_imputation_uses_frozen_train_mean_not_evaluation_values():
@@ -488,7 +505,7 @@ def test_diagnostic_normalization_uses_all_252_official_train_prefixes_for_all_m
         normalization_calls.append((mode, prefixes))
         channels = MODE_CHANNELS[mode]
         return {
-            "schema": "geobwer.sen1floods11.train_normalization.v3",
+            "schema": "geobwer.sen1floods11.train_normalization.v4",
             "sensor_mode": mode,
             "selection_split": "official_train",
             "test_rows_used": False,
@@ -523,7 +540,7 @@ def test_diagnostic_normalization_uses_all_252_official_train_prefixes_for_all_m
         normalization_sha256,
     ):
         return {
-            "schema": "geobwer.sen1floods11.input_quality.v1",
+            "schema": "geobwer.sen1floods11.input_quality.v2",
             "sensor_mode": mode,
             "imputation_policy": IMPUTATION_POLICY,
             "normalization_sha256": normalization_sha256,
@@ -621,7 +638,7 @@ def test_diagnostic_normalization_uses_all_252_official_train_prefixes_for_all_m
         contract["normalization_sample_count"] == 252
         for contract in manifest["normalization_contracts"].values()
     )
-    assert manifest["schema"] == "geobwer.sen1floods11.supervised_panel.v4"
+    assert manifest["schema"] == "geobwer.sen1floods11.supervised_panel.v5"
     assert all(
         contract["imputation_policy"] == IMPUTATION_POLICY
         for contract in manifest["input_quality_contracts"].values()

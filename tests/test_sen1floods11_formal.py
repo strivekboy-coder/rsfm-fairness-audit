@@ -260,6 +260,65 @@ def test_formalization_excludes_all_ignore_only_from_risk_estimand():
     assert manifest["dataset_lineage"]["all_ignore_sample_ids"] == ["Ghana_5079"]
 
 
+def test_paraguay_complete_s1_missing_but_valid_label_remains_in_risk_table():
+    export = write_sen1_probability_export(
+        WORK / "paraguay_missing_s1_export",
+        probabilities=[
+            np.asarray([[0.8, 0.9], [0.7, 0.6]], dtype=np.float32),
+        ],
+        targets=[
+            np.asarray([[1, 1], [-1, 1]], dtype=np.int16),
+        ],
+        filenames=["Paraguay_34417_S1Hand.tif"],
+    )
+    metadata = WORK / "paraguay_metadata.csv"
+    write_csv(
+        metadata,
+        [
+            {
+                "sample_id": "Paraguay_34417",
+                "event_id": "Paraguay",
+                "latitude": -23.4,
+                "longitude": -58.4,
+                "country": "Paraguay",
+            }
+        ],
+    )
+    calibration = WORK / "paraguay_block_calibration.json"
+    calibration.write_text(
+        json.dumps(
+            {
+                "schema": "geobwer.sen1floods11.common_spatial_block_calibration.v2",
+                "validity": "valid",
+                "all_models_passed": True,
+                "selection_data": "validation_only",
+                "selected_cell_km": 50.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    bundle = finalize_sen1_probability_export(
+        export,
+        WORK / "paraguay_formal",
+        model_name="s1_fixture",
+        protocol_path="configs/geobwer/sen1floods11.yaml",
+        block_calibration_path=calibration,
+        model_lineage={
+            "imputation_policy": "official_train_band_mean_normalized_zero",
+            "fully_missing_modalities": {"Paraguay_34417": ["S1"]},
+        },
+        dataset_lineage={
+            "dataset": "Sen1Floods11-v1.1-HandLabeled",
+            "split": "standard_test",
+        },
+        metadata_csv=metadata,
+    )
+    audit = read_csv_rows(bundle.audit_table)
+    assert len(audit) == 1
+    assert audit[0]["sample_id"] == "Paraguay_34417"
+    assert np.isfinite(float(audit[0]["risk"]))
+
+
 def _official_evaluation_exports(root: Path) -> tuple[Path, Path, Path]:
     standard_names = [
         f"Event{event:02d}_test_{index:03d}_S2Hand.tif"

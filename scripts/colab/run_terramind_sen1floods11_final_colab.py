@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.metadata
 import json
 from pathlib import Path
 import shutil
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Mapping
 
 import numpy as np
 
@@ -18,6 +19,9 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 
 from rsfm_fairness_audit.formal_outputs import file_sha256  # noqa: E402
 from rsfm_fairness_audit.adapters.terramind import (  # noqa: E402
+    INPUT_PROFILES,
+    S1_MEAN,
+    S1_STD,
     TERRAMIND_OFFICIAL_REVISION,
     TERRAMIND_OFFICIAL_SHA256,
     validate_terratorch_runtime,
@@ -34,6 +38,12 @@ from rsfm_fairness_audit.sen1floods11_formal import (  # noqa: E402
     finalize_sen1floods11_segmentation,
     load_sen1_probability_units,
     write_sen1_evaluation_split_report,
+)
+from rsfm_fairness_audit.sen1_input_quality import (  # noqa: E402
+    FORMAL_COMPLETE_MODALITY_MISSING_EXPECTATION,
+    SEN1_IMPUTATION_POLICY,
+    input_quality_summary,
+    normalize_named_modalities,
 )
 from rsfm_fairness_audit.terramind_sen1_config import (  # noqa: E402
     prepare_terramind_sen1_splits,
@@ -169,6 +179,193 @@ def _split_count(path: Path) -> int:
     if not lines:
         raise RuntimeError(f"Split file is empty: {path}")
     return len(lines)
+
+
+def _split_prefixes(path: Path) -> list[str]:
+    values = [
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    if not values:
+        raise RuntimeError(f"Split file is empty: {path}")
+    return values
+
+
+def _prefix_sha256(prefixes: list[str]) -> str:
+    return hashlib.sha256(
+        ("".join(f"{value}\n" for value in prefixes)).encode("utf-8")
+    ).hexdigest()
+
+
+def _read_raster(path: Path) -> np.ndarray:
+    try:
+        import rasterio
+    except ImportError as exc:
+        raise RuntimeError(
+            "rasterio is required for the Sen1 input-quality preflight."
+        ) from exc
+    with rasterio.open(path) as dataset:
+        return np.asarray(dataset.read(), dtype=np.float32)
+
+
+def _terramind_mode_statistics(
+    mode: str,
+) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
+    profile = INPUT_PROFILES["sen1floods11_l1c"]
+    means: dict[str, list[float]] = {}
+    stds: dict[str, list[float]] = {}
+    if "S2" in mode:
+        means["S2L1C"] = list(profile.s2_mean)
+        stds["S2L1C"] = list(profile.s2_std)
+    if "S1" in mode:
+        means["S1GRD"] = list(S1_MEAN)
+        stds["S1GRD"] = list(S1_STD)
+    return means, stds
+
+
+def _build_terramind_input_quality_contracts(
+    *,
+    s1_root: Path,
+    s2_root: Path,
+    split_paths: dict[str, Path],
+    modes: tuple[str, ...],
+    output_dir: Path,
+) -> dict[str, dict[str, Any]]:
+    """Scan all official inputs once and freeze modality-aware availability."""
+
+    records: dict[str, dict[str, list[dict[str, Any]]]] = {
+        mode: {split: [] for split in split_paths} for mode in modes
+    }
+    prefix_sets = {
+        split: _split_prefixes(path) for split, path in split_paths.items()
+    }
+    for split, prefixes in prefix_sets.items():
+        split_role = "standard_test" if split == "test" else split
+        for index, prefix in enumerate(prefixes, start=1):
+            s1 = _read_raster(s1_root / f"{prefix}_S1Hand.tif")
+            s2 = _read_raster(s2_root / f"{prefix}_S2Hand.tif")
+            for mode in modes:
+                arrays: dict[str, np.ndarray] = {}
+                # Preserve the actual TerraTorch modality order.
+                if "S2" in mode:
+                    arrays["S2L1C"] = s2
+                if "S1" in mode:
+                    arrays["S1GRD"] = s1
+                means, stds = _terramind_mode_statistics(mode)
+                _normalized, quality = normalize_named_modalities(
+                    arrays,
+                    means=means,
+                    stds=stds,
+                    prefix=prefix,
+                    split_role=split_role,
+                )
+                quality["split"] = split
+                records[mode][split].append(quality)
+            if index % 50 == 0:
+                print(
+                    "[terramind:input-quality] "
+                    f"split={split} files={index}/{len(prefixes)}",
+                    flush=True,
+                )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    results: dict[str, dict[str, Any]] = {}
+    for mode in modes:
+        split_contracts = {
+            split: {
+                "prefix_sha256": _prefix_sha256(prefix_sets[split]),
+                "summary": input_quality_summary(
+                    records[mode][split],
+                    mode=mode,
+                ),
+                "records": records[mode][split],
+            }
+            for split in split_paths
+        }
+        observed = {
+            split: dict(
+                split_contracts[split]["summary"][
+                    "fully_missing_modalities_by_sample"
+                ]
+            )
+            for split in split_paths
+        }
+        expected = FORMAL_COMPLETE_MODALITY_MISSING_EXPECTATION[mode]
+        if observed != expected:
+            raise RuntimeError(
+                "Official TerraMind complete-modality-missing contract changed: "
+                f"mode={mode}, expected={expected}, observed={observed}."
+            )
+        means, stds = _terramind_mode_statistics(mode)
+        all_records = [
+            record
+            for split in split_paths
+            for record in records[mode][split]
+        ]
+        payload = {
+            "schema": "geobwer.sen1floods11.terramind_input_quality.v1",
+            "sensor_mode": mode,
+            "imputation_policy": SEN1_IMPUTATION_POLICY,
+            "normalization_source": "frozen_terramind_pretraining_statistics",
+            "means": means,
+            "stds": stds,
+            "source_artifacts_modified": False,
+            "summary": input_quality_summary(all_records, mode=mode),
+            "splits": split_contracts,
+        }
+        path = (
+            output_dir
+            / f"{mode.lower().replace('+', '_plus_')}.json"
+        )
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        results[mode] = {
+            "path": path,
+            "sha256": file_sha256(path),
+            "contract": payload,
+        }
+    return results
+
+
+def _bind_input_quality(
+    export_root: Path,
+    *,
+    split: str,
+    mode: str,
+    contract: Mapping[str, Any],
+    contract_path: Path,
+    contract_sha256: str,
+) -> Path:
+    split_contract = contract["splits"][split]
+    path = export_root / "input_quality_binding.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "geobwer.sen1floods11.input_quality_binding.v1",
+                "split": split,
+                "split_role": (
+                    "standard_test" if split == "test" else split
+                ),
+                "sensor_mode": mode,
+                "imputation_policy": SEN1_IMPUTATION_POLICY,
+                "input_quality_contract": str(contract_path),
+                "input_quality_contract_sha256": contract_sha256,
+                "prefix_sha256": split_contract["prefix_sha256"],
+                "summary": split_contract["summary"],
+                "fully_missing_modality_records": [
+                    record
+                    for record in split_contract["records"]
+                    if record["fully_missing_modality"]
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def _probability_artifact(export_root: Path, value: Any) -> Path:
@@ -375,8 +572,35 @@ def _predict_if_needed(
     *,
     expected: int,
     dry_run: bool,
+    input_quality_contract_sha256: str,
 ) -> None:
+    prediction_protocol = {
+        "schema": "geobwer.sen1floods11.terramind_prediction_protocol.v1",
+        "config_sha256": file_sha256(config),
+        "checkpoint_sha256": (
+            file_sha256(checkpoint)
+            if checkpoint is not None and checkpoint.is_file()
+            else None
+        ),
+        "input_quality_contract_sha256": str(
+            input_quality_contract_sha256
+        ),
+        "imputation_policy": SEN1_IMPUTATION_POLICY,
+        "expected_row_count": int(expected),
+    }
+    completion = output / "prediction_completion_contract.json"
     if _export_complete(output, expected):
+        if not completion.is_file():
+            raise RuntimeError(
+                "A complete legacy TerraMind probability export has no v0.4.27 "
+                f"preprocessing completion contract: {output}. Use a new output "
+                "directory; do not relabel raw-zero predictions as mean-imputed."
+            )
+        previous = json.loads(completion.read_text(encoding="utf-8"))
+        if previous != prediction_protocol:
+            raise RuntimeError(
+                f"TerraMind prediction completion contract drifted: {output}."
+            )
         print(f"[terramind:campaign] reusing complete probability export {output}")
         return
     if dry_run:
@@ -392,6 +616,10 @@ def _predict_if_needed(
             f"Probability export failed completeness check: expected={expected}, path={output}. "
             "Do not proceed to BWER with partial predictions."
         )
+    completion.write_text(
+        json.dumps(prediction_protocol, indent=2),
+        encoding="utf-8",
+    )
 
 
 def main() -> None:
@@ -435,6 +663,26 @@ def main() -> None:
     terratorch_splits = {
         name: Path(path) for name, path in source_report["terratorch_split_paths"].items()
     }
+    modes = tuple(args.mode or MODES)
+    if set(modes) != set(MODES) and not (args.dry_run or args.smoke_only):
+        raise RuntimeError(
+            "The final primary campaign requires S1, S2, and S1+S2 together so block calibration and comparisons "
+            "use a common model set. Use --dry-run to inspect a subset of configs."
+        )
+    input_quality_contracts = (
+        {}
+        if args.dry_run
+        else _build_terramind_input_quality_contracts(
+            s1_root=args.s1_root,
+            s2_root=args.s2_root,
+            split_paths={
+                key: terratorch_splits[key]
+                for key in ("train", "validation", "test", "bolivia_holdout")
+            },
+            modes=modes,
+            output_dir=args.output_dir / "input_quality",
+        )
+    )
     official_train_prefixes = [
         line.strip()
         for line in terratorch_splits["train"].read_text(encoding="utf-8").splitlines()
@@ -480,18 +728,21 @@ def main() -> None:
                     }
                     for seed, paths in inner_splits.items()
                 },
+                "input_quality_contracts": {
+                    mode: {
+                        "path": str(artifacts["path"]),
+                        "sha256": str(artifacts["sha256"]),
+                        "imputation_policy": SEN1_IMPUTATION_POLICY,
+                        "summary": artifacts["contract"]["summary"],
+                    }
+                    for mode, artifacts in input_quality_contracts.items()
+                },
             },
             indent=2,
         ),
         encoding="utf-8",
     )
     persist_output(args.output_dir, args.persistent_output_dir, label="source-preflight")
-    modes = tuple(args.mode or MODES)
-    if set(modes) != set(MODES) and not (args.dry_run or args.smoke_only):
-        raise RuntimeError(
-            "The final primary campaign requires S1, S2, and S1+S2 together so block calibration and comparisons "
-            "use a common model set. Use --dry-run to inspect a subset of configs."
-        )
     checkpoints: dict[str, Path | None] = {}
     validation_exports: dict[str, Path] = dict(external_validation_exports)
     test_exports: dict[str, Path] = {}
@@ -564,6 +815,22 @@ def main() -> None:
                     _terratorch_predict_command()
                     + ["predict", "-c", str(test_config), "--ckpt_path", str(checkpoint)]
                 )
+                validation_quality_binding = _bind_input_quality(
+                    validation_output,
+                    split="validation",
+                    mode=mode,
+                    contract=input_quality_contracts[mode]["contract"],
+                    contract_path=input_quality_contracts[mode]["path"],
+                    contract_sha256=input_quality_contracts[mode]["sha256"],
+                )
+                test_quality_binding = _bind_input_quality(
+                    test_output,
+                    split="test",
+                    mode=mode,
+                    contract=input_quality_contracts[mode]["contract"],
+                    contract_path=input_quality_contracts[mode]["path"],
+                    contract_sha256=input_quality_contracts[mode]["sha256"],
+                )
                 validation_diagnostics = _validate_diagnostic_export(
                     validation_output,
                     maximum_rows=args.batch_size * SMOKE_BATCH_LIMIT,
@@ -597,6 +864,25 @@ def main() -> None:
                             "trained_checkpoint_sha256": file_sha256(checkpoint),
                             "validation_export": validation_diagnostics,
                             "test_export": test_diagnostics,
+                            "input_quality_contract": {
+                                "path": str(
+                                    input_quality_contracts[mode]["path"]
+                                ),
+                                "sha256": str(
+                                    input_quality_contracts[mode]["sha256"]
+                                ),
+                                "imputation_policy": SEN1_IMPUTATION_POLICY,
+                            },
+                            "validation_input_quality_binding": {
+                                "path": str(validation_quality_binding),
+                                "sha256": file_sha256(
+                                    validation_quality_binding
+                                ),
+                            },
+                            "test_input_quality_binding": {
+                                "path": str(test_quality_binding),
+                                "sha256": file_sha256(test_quality_binding),
+                            },
                             "validation_test_sample_overlap": 0,
                             "bounded_batch_count": SMOKE_BATCH_LIMIT,
                         },
@@ -656,7 +942,21 @@ def main() -> None:
                 validation_output,
                 expected=_split_count(terratorch_splits["validation"]),
                 dry_run=args.dry_run,
+                input_quality_contract_sha256=(
+                    input_quality_contracts[mode]["sha256"]
+                    if not args.dry_run
+                    else "dry_run_not_executed"
+                ),
             )
+            if not args.dry_run:
+                _bind_input_quality(
+                    validation_output,
+                    split="validation",
+                    mode=mode,
+                    contract=input_quality_contracts[mode]["contract"],
+                    contract_path=input_quality_contracts[mode]["path"],
+                    contract_sha256=input_quality_contracts[mode]["sha256"],
+                )
             persist_output(
                 validation_output,
                 (
@@ -738,6 +1038,17 @@ def main() -> None:
                 test_exports[run_name],
                 expected=_split_count(terratorch_splits["test"]),
                 dry_run=False,
+                input_quality_contract_sha256=input_quality_contracts[mode][
+                    "sha256"
+                ],
+            )
+            test_quality_binding = _bind_input_quality(
+                test_exports[run_name],
+                split="test",
+                mode=mode,
+                contract=input_quality_contracts[mode]["contract"],
+                contract_path=input_quality_contracts[mode]["path"],
+                contract_sha256=input_quality_contracts[mode]["sha256"],
             )
             persist_output(
                 test_exports[run_name],
@@ -758,6 +1069,17 @@ def main() -> None:
                 bolivia_exports[run_name],
                 expected=_split_count(terratorch_splits["bolivia_holdout"]),
                 dry_run=False,
+                input_quality_contract_sha256=input_quality_contracts[mode][
+                    "sha256"
+                ],
+            )
+            bolivia_quality_binding = _bind_input_quality(
+                bolivia_exports[run_name],
+                split="bolivia_holdout",
+                mode=mode,
+                contract=input_quality_contracts[mode]["contract"],
+                contract_path=input_quality_contracts[mode]["path"],
+                contract_sha256=input_quality_contracts[mode]["sha256"],
             )
             persist_output(
                 bolivia_exports[run_name],
@@ -798,6 +1120,12 @@ def main() -> None:
                     ),
                     "outer_validation_used_for_model_selection": False,
                     "seed": seed,
+                    "input_quality_binding": str(
+                        test_quality_binding
+                    ),
+                    "input_quality_binding_sha256": file_sha256(
+                        test_quality_binding
+                    ),
                 },
                 evaluation_split_role="standard_test",
             )
@@ -819,6 +1147,12 @@ def main() -> None:
                     "outer_validation_used_for_model_selection": False,
                     "bolivia_holdout_used_for_model_selection": False,
                     "seed": seed,
+                    "input_quality_binding": str(
+                        bolivia_quality_binding
+                    ),
+                    "input_quality_binding_sha256": file_sha256(
+                        bolivia_quality_binding
+                    ),
                 },
                 evaluation_split_role="bolivia_holdout",
             )
@@ -840,6 +1174,13 @@ def main() -> None:
                     "outer_validation_used_for_model_selection": False,
                     "bolivia_holdout_used_for_model_selection": False,
                     "seed": seed,
+                    "input_quality_contract": str(
+                        input_quality_contracts[mode]["path"]
+                    ),
+                    "input_quality_contract_sha256": str(
+                        input_quality_contracts[mode]["sha256"]
+                    ),
+                    "imputation_policy": SEN1_IMPUTATION_POLICY,
                     "standard_test_formal_manifest": str(
                         standard_bundle.manifest
                     ),

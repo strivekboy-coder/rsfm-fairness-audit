@@ -12,6 +12,14 @@ import numpy as np
 from rsfm_fairness_audit.formal_outputs import file_sha256
 from rsfm_fairness_audit.persistent_cache import hydrate_output, persist_output
 from rsfm_fairness_audit.probe_selection import group_disjoint_inner_split
+from rsfm_fairness_audit.sen1_input_quality import (
+    FORMAL_COMPLETE_MODALITY_MISSING_EXPECTATION,
+    SEN1_IMPUTATION_POLICY,
+    Sen1InputQualityError,
+    audit_mode_input,
+    input_quality_summary,
+    normalize_mode_input,
+)
 from rsfm_fairness_audit.sen1floods11_formal import write_sen1_probability_export
 from rsfm_fairness_audit.terramind_sen1_config import (
     OFFICIAL_SEN1FLOODS11_SPLIT_COUNTS,
@@ -29,7 +37,7 @@ class Sen1SupervisedCampaignError(RuntimeError):
 SENSOR_MODES = ("S1", "S2", "S1+S2")
 MODE_CHANNELS = {"S1": 2, "S2": 13, "S1+S2": 15}
 FORMAL_MASK_VALUES = {-1, 0, 1}
-IMPUTATION_POLICY = "official_train_band_mean_normalized_zero"
+IMPUTATION_POLICY = SEN1_IMPUTATION_POLICY
 
 
 @dataclass(frozen=True)
@@ -156,52 +164,19 @@ def _input_quality_record(
     *,
     prefix: str,
     mode: str,
+    split_role: str = "train",
 ) -> dict[str, Any]:
     """Describe non-finite inputs without changing the source raster."""
 
-    value = np.asarray(image, dtype=np.float32)
-    if value.ndim != 3 or value.shape[0] != MODE_CHANNELS[mode]:
-        raise Sen1SupervisedCampaignError(
-            f"Invalid input shape while auditing non-finite values: "
-            f"prefix={prefix}, mode={mode}, shape={value.shape}."
+    try:
+        return audit_mode_input(
+            image,
+            prefix=prefix,
+            mode=mode,
+            split_role=split_role,
         )
-    flat = value.reshape(value.shape[0], -1)
-    finite = np.isfinite(flat)
-    jointly_finite_pixel_count = int(np.all(finite, axis=0).sum())
-    if jointly_finite_pixel_count <= 0:
-        raise Sen1SupervisedCampaignError(
-            "Input sample has no jointly-finite pixel: "
-            f"prefix={prefix}, mode={mode}, "
-            f"nan_count={int(np.isnan(flat).sum())}, "
-            f"posinf_count={int(np.isposinf(flat).sum())}, "
-            f"neginf_count={int(np.isneginf(flat).sum())}."
-        )
-    channels: list[dict[str, int]] = []
-    for channel_index in range(value.shape[0]):
-        channel = flat[channel_index]
-        nan_count = int(np.isnan(channel).sum())
-        posinf_count = int(np.isposinf(channel).sum())
-        neginf_count = int(np.isneginf(channel).sum())
-        channels.append(
-            {
-                "channel_index": channel_index,
-                "nan_count": nan_count,
-                "posinf_count": posinf_count,
-                "neginf_count": neginf_count,
-                "nonfinite_count": nan_count + posinf_count + neginf_count,
-                "value_count": int(channel.size),
-            }
-        )
-    imputed_value_count = int(sum(item["nonfinite_count"] for item in channels))
-    return {
-        "prefix": str(prefix),
-        "sensor_mode": mode,
-        "channel_counts": channels,
-        "jointly_finite_pixel_count": jointly_finite_pixel_count,
-        "pixel_count": int(flat.shape[1]),
-        "imputed_value_count": imputed_value_count,
-        "imputed_fraction": float(imputed_value_count / value.size),
-    }
+    except Sen1InputQualityError as exc:
+        raise Sen1SupervisedCampaignError(str(exc)) from exc
 
 
 def _input_quality_summary(
@@ -209,45 +184,7 @@ def _input_quality_summary(
     *,
     mode: str,
 ) -> dict[str, Any]:
-    channel_totals = [
-        {
-            "channel_index": channel_index,
-            "nan_count": 0,
-            "posinf_count": 0,
-            "neginf_count": 0,
-            "nonfinite_count": 0,
-            "value_count": 0,
-        }
-        for channel_index in range(MODE_CHANNELS[mode])
-    ]
-    aggregate_imputed_value_count = 0
-    samples_with_imputation = 0
-    maximum_imputed_fraction = 0.0
-    for record in records:
-        imputed = int(record["imputed_value_count"])
-        aggregate_imputed_value_count += imputed
-        samples_with_imputation += int(imputed > 0)
-        maximum_imputed_fraction = max(
-            maximum_imputed_fraction,
-            float(record["imputed_fraction"]),
-        )
-        for channel in record["channel_counts"]:
-            target = channel_totals[int(channel["channel_index"])]
-            for key in (
-                "nan_count",
-                "posinf_count",
-                "neginf_count",
-                "nonfinite_count",
-                "value_count",
-            ):
-                target[key] += int(channel[key])
-    return {
-        "sample_count": len(records),
-        "samples_with_imputation": samples_with_imputation,
-        "aggregate_imputed_value_count": aggregate_imputed_value_count,
-        "maximum_imputed_fraction": maximum_imputed_fraction,
-        "channel_totals": channel_totals,
-    }
+    return input_quality_summary(records, mode=mode)
 
 
 def _normalize_input(
@@ -257,34 +194,21 @@ def _normalize_input(
     std: np.ndarray,
     prefix: str,
     mode: str,
+    split_role: str = "train",
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Apply frozen train-band normalization and deterministic NoData imputation."""
 
-    raw = np.asarray(image, dtype=np.float32)
-    quality = _input_quality_record(raw, prefix=prefix, mode=mode)
-    normalized_mean = np.asarray(mean, dtype=np.float32).reshape(
-        MODE_CHANNELS[mode], 1, 1
-    )
-    normalized_std = np.maximum(
-        np.asarray(std, dtype=np.float32).reshape(MODE_CHANNELS[mode], 1, 1),
-        1e-6,
-    )
-    # Replacing each non-finite band value with that band's official-train
-    # mean is exactly equivalent to a normalized value of zero.
-    imputed = np.where(np.isfinite(raw), raw, normalized_mean)
-    normalized = (imputed - normalized_mean) / normalized_std
-    if not np.all(np.isfinite(normalized)):
-        flat = raw.reshape(raw.shape[0], -1)
-        raise Sen1SupervisedCampaignError(
-            "Input remains non-finite after official-train mean imputation: "
-            f"prefix={prefix}, mode={mode}, "
-            f"nan_count={int(np.isnan(flat).sum())}, "
-            f"posinf_count={int(np.isposinf(flat).sum())}, "
-            f"neginf_count={int(np.isneginf(flat).sum())}, "
-            f"normalization_mean={normalized_mean[:, 0, 0].tolist()}, "
-            f"normalization_std={normalized_std[:, 0, 0].tolist()}."
+    try:
+        return normalize_mode_input(
+            image,
+            mean=mean,
+            std=std,
+            prefix=prefix,
+            mode=mode,
+            split_role=split_role,
         )
-    return np.asarray(normalized, dtype=np.float32), quality
+    except Sen1InputQualityError as exc:
+        raise Sen1SupervisedCampaignError(str(exc)) from exc
 
 
 def _diagnostic_prefix_subset(
@@ -363,7 +287,7 @@ def compute_train_normalization(
     mean = total / count
     variance = np.maximum(square / count - np.square(mean), 1e-12)
     return {
-        "schema": "geobwer.sen1floods11.train_normalization.v3",
+        "schema": "geobwer.sen1floods11.train_normalization.v4",
         "sensor_mode": mode,
         "selection_split": "official_train",
         "test_rows_used": False,
@@ -395,6 +319,7 @@ class _Dataset:
         *,
         augment: bool,
         seed: int,
+        split_role: str = "train",
     ) -> None:
         self.config = config
         self.prefixes = list(prefixes)
@@ -405,6 +330,7 @@ class _Dataset:
         )
         self.augment = bool(augment)
         self.seed = int(seed)
+        self.split_role = str(split_role)
         self.epoch = 0
 
     def __len__(self) -> int:
@@ -423,6 +349,7 @@ class _Dataset:
             std=self.std,
             prefix=prefix,
             mode=self.mode,
+            split_role=self.split_role,
         )
         mask = _mask(self.config, prefix)
         if self.augment:
@@ -461,12 +388,16 @@ def _build_input_quality_contract(
         records: list[dict[str, Any]] = []
         for index, prefix in enumerate(prefixes, start=1):
             raw = _mode_array(config, str(prefix), mode)
+            split_role = (
+                "standard_test" if str(split) == "test" else str(split)
+            )
             _normalized, record = _normalize_input(
                 raw,
                 mean=np.asarray(normalization["mean"], dtype=np.float32),
                 std=np.asarray(normalization["std"], dtype=np.float32),
                 prefix=str(prefix),
                 mode=mode,
+                split_role=split_role,
             )
             record = {**record, "split": str(split)}
             records.append(record)
@@ -483,7 +414,7 @@ def _build_input_quality_contract(
             "records": records,
         }
     return {
-        "schema": "geobwer.sen1floods11.input_quality.v1",
+        "schema": "geobwer.sen1floods11.input_quality.v2",
         "sensor_mode": mode,
         "imputation_policy": IMPUTATION_POLICY,
         "normalization_selection_split": "official_train",
@@ -498,6 +429,34 @@ def _build_input_quality_contract(
         "summary": _input_quality_summary(all_records, mode=mode),
         "splits": split_contracts,
     }
+
+
+def _validate_formal_complete_modality_missing_contract(
+    contract: Mapping[str, Any],
+    *,
+    mode: str,
+) -> None:
+    """Freeze the one verified official-source anomaly without dropping it."""
+
+    expected = FORMAL_COMPLETE_MODALITY_MISSING_EXPECTATION[mode]
+    observed: dict[str, dict[str, list[str]]] = {}
+    for split in ("train", "validation", "test", "bolivia_holdout"):
+        observed[split] = {
+            str(sample_id): list(map(str, modalities))
+            for sample_id, modalities in (
+                contract.get("splits", {})
+                .get(split, {})
+                .get("summary", {})
+                .get("fully_missing_modalities_by_sample", {})
+                .items()
+            )
+        }
+    if observed != expected:
+        raise Sen1SupervisedCampaignError(
+            "Official Sen1 complete-modality-missing contract changed: "
+            f"mode={mode}, expected={expected}, observed={observed}. "
+            "Do not drop samples or silently extend the evaluation-only policy."
+        )
 
 
 def _loader(dataset: _Dataset, config: Sen1SupervisedConfig, *, shuffle: bool) -> Any:
@@ -817,7 +776,13 @@ def _train_seed(
     inner_fit_prefixes = [train_prefixes[index] for index in fit_indices]
     inner_selection_prefixes = [train_prefixes[index] for index in selection_indices]
     train_dataset = _Dataset(
-        config, inner_fit_prefixes, mode, normalization, augment=True, seed=seed
+        config,
+        inner_fit_prefixes,
+        mode,
+        normalization,
+        augment=True,
+        seed=seed,
+        split_role="train",
     )
     selection_dataset = _Dataset(
         config,
@@ -826,6 +791,7 @@ def _train_seed(
         normalization,
         augment=False,
         seed=seed,
+        split_role="train",
     )
     selection_loader = _loader(selection_dataset, config, shuffle=False)
     best_iou = -1.0
@@ -924,7 +890,13 @@ def _train_seed(
     )
     scaler = torch.amp.GradScaler("cuda", enabled=bool(config.amp and device.type == "cuda"))
     full_train_dataset = _Dataset(
-        config, train_prefixes, mode, normalization, augment=True, seed=seed + 100_003
+        config,
+        train_prefixes,
+        mode,
+        normalization,
+        augment=True,
+        seed=seed + 100_003,
+        split_role="train",
     )
     refit_history: list[dict[str, Any]] = []
     refit_skipped_all_ignore_batch_count = 0
@@ -1000,7 +972,13 @@ def _train_seed(
     split_support: dict[str, dict[str, Any]] = {}
     for split in ("validation", "test", "bolivia_holdout"):
         dataset = _Dataset(
-            config, split_prefixes[split], mode, normalization, augment=False, seed=seed
+            config,
+            split_prefixes[split],
+            mode,
+            normalization,
+            augment=False,
+            seed=seed,
+            split_role="standard_test" if split == "test" else split,
         )
         iou, probabilities, targets, prefixes, support = _evaluate(
             model, _loader(dataset, config, shuffle=False), device, mode=mode
@@ -1019,6 +997,37 @@ def _train_seed(
             filenames=filenames,
             batch_size=config.batch_size,
         )
+        quality_split = dict(input_quality_contract["splits"][split])
+        quality_binding_path = (
+            exports[split] / "input_quality_binding.json"
+        )
+        quality_binding_path.write_text(
+            json.dumps(
+                {
+                    "schema": "geobwer.sen1floods11.input_quality_binding.v1",
+                    "split": split,
+                    "split_role": (
+                        "standard_test" if split == "test" else split
+                    ),
+                    "sensor_mode": mode,
+                    "imputation_policy": IMPUTATION_POLICY,
+                    "input_quality_contract": str(input_quality_contract_path),
+                    "input_quality_contract_sha256": str(
+                        input_quality_contract_sha256
+                    ),
+                    "prefix_sha256": str(quality_split["prefix_sha256"]),
+                    "summary": dict(quality_split["summary"]),
+                    "fully_missing_modality_records": [
+                        dict(record)
+                        for record in quality_split["records"]
+                        if record.get("fully_missing_modality")
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         support_path = exports[split] / "support_contract.json"
         support_path.write_text(
             json.dumps(
@@ -1026,6 +1035,18 @@ def _train_seed(
                     "schema": "geobwer.sen1floods11.probability_support.v1",
                     "split": split,
                     "sensor_mode": mode,
+                    "input_quality_binding": str(quality_binding_path),
+                    "input_quality_binding_sha256": file_sha256(
+                        quality_binding_path
+                    ),
+                    "fully_missing_modality_count": int(
+                        quality_split["summary"][
+                            "fully_missing_modality_count"
+                        ]
+                    ),
+                    "fully_missing_sample_ids": list(
+                        quality_split["summary"]["fully_missing_sample_ids"]
+                    ),
                     **support,
                 },
                 ensure_ascii=False,
@@ -1037,13 +1058,18 @@ def _train_seed(
             **support,
             "support_contract": str(support_path),
             "support_contract_sha256": file_sha256(support_path),
+            "input_quality_binding": str(quality_binding_path),
+            "input_quality_binding_sha256": file_sha256(
+                quality_binding_path
+            ),
+            "input_quality_summary": dict(quality_split["summary"]),
         }
         split_metrics[split] = iou
     manifest = output_dir / "run_manifest.json"
     manifest.write_text(
         json.dumps(
             {
-                "schema": "geobwer.sen1floods11.supervised_resnet34_unet.v4",
+                "schema": "geobwer.sen1floods11.supervised_resnet34_unet.v5",
                 "formal_evidence": config.diagnostic_max_samples is None,
                 "architecture": "resnet34_unet",
                 "adaptation_protocol": "supervised_from_scratch_decoder_imagenet_encoder_initialization"
@@ -1111,7 +1137,7 @@ def _reuse_completed_seed(
         return None
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     if (
-        payload.get("schema") != "geobwer.sen1floods11.supervised_resnet34_unet.v4"
+        payload.get("schema") != "geobwer.sen1floods11.supervised_resnet34_unet.v5"
         or str(payload.get("sensor_mode")) != mode
         or int(payload.get("seed", -1)) != int(seed)
         or str(payload.get("checkpoint_sha256", "")) != file_sha256(checkpoint)
@@ -1136,7 +1162,12 @@ def _reuse_completed_seed(
     ):
         index = exports[split] / "index_parts" / "part-000000.jsonl"
         support_path = exports[split] / "support_contract.json"
-        if not index.is_file() or not support_path.is_file():
+        quality_binding_path = exports[split] / "input_quality_binding.json"
+        if (
+            not index.is_file()
+            or not support_path.is_file()
+            or not quality_binding_path.is_file()
+        ):
             return None
         rows = [
             json.loads(line)
@@ -1159,6 +1190,8 @@ def _reuse_completed_seed(
             or int(support.get("aggregate_valid_pixel_count", 0)) <= 0
             or str(manifest_support.get("support_contract_sha256", ""))
             != file_sha256(support_path)
+            or str(manifest_support.get("input_quality_binding_sha256", ""))
+            != file_sha256(quality_binding_path)
         ):
             raise Sen1SupervisedCampaignError(
                 f"Completed probability support contract is invalid: {support_path}."
@@ -1243,7 +1276,7 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
             normalization = json.loads(normalization_path.read_text(encoding="utf-8"))
             if (
                 normalization.get("schema")
-                != "geobwer.sen1floods11.train_normalization.v3"
+                != "geobwer.sen1floods11.train_normalization.v4"
                 or normalization.get("sensor_mode") != mode
                 or normalization.get("selection_split") != "official_train"
                 or normalization.get("test_rows_used") is not False
@@ -1296,7 +1329,7 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
             )
             if (
                 quality_contract.get("schema")
-                != "geobwer.sen1floods11.input_quality.v1"
+                != "geobwer.sen1floods11.input_quality.v2"
                 or quality_contract.get("sensor_mode") != mode
                 or quality_contract.get("imputation_policy")
                 != IMPUTATION_POLICY
@@ -1318,6 +1351,11 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
             quality_path.write_text(
                 json.dumps(quality_contract, ensure_ascii=False, indent=2),
                 encoding="utf-8",
+            )
+        if config.diagnostic_max_samples is None:
+            _validate_formal_complete_modality_missing_contract(
+                quality_contract,
+                mode=mode,
             )
         quality_sha256 = file_sha256(quality_path)
         input_quality_contracts[mode] = {
@@ -1369,7 +1407,7 @@ def run_sen1_supervised_campaign(config: Sen1SupervisedConfig) -> dict[str, Any]
     campaign_manifest.write_text(
         json.dumps(
             {
-                "schema": "geobwer.sen1floods11.supervised_panel.v4",
+                "schema": "geobwer.sen1floods11.supervised_panel.v5",
                 "formal_evidence": config.diagnostic_max_samples is None,
                 "design": "resnet34_unet_x_sensor_mode_x_seed",
                 "split_protocol": "official_252_89_90_plus_15_bolivia_holdout",
