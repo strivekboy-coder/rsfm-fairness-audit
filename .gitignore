@@ -14,3 +14,11 @@ embedding_chunks/
 AGENTS.md
 reports/advisor_meeting_*/
 reports/advisor_progress_*/
+
+# Local Codex, test, and document-rendering scratch artifacts
+work/
+.pytest*/
+.test_tmp*/
+.bolivia_pytest_tmp*/
+.codex_test_tmp*/
+.codex_tmp*/

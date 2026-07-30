@@ -1,4 +1,0 @@
-sensor_mode,seed,best_epoch,best_validation_weighted_bce,best_inner_selection_weighted_bce,outer_validation_used_for_model_selection,macro_ap,micro_ap,macro_f1,micro_f1,mean_bce_risk,n_samples,n_labels,threshold_policy
-S1,42,1,0.25,0.25,False,1.0,1.0,0.2631578947368421,0.125,0.2231435540591605,32,19,validation_per_label_f1
-S2,42,1,0.25,0.25,False,1.0,1.0,0.2631578947368421,0.125,0.2231435540591605,32,19,validation_per_label_f1
-S1+S2,42,1,0.25,0.25,False,1.0,1.0,0.2631578947368421,0.125,0.2231435540591605,32,19,validation_per_label_f1

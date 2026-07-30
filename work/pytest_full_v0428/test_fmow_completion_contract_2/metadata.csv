@@ -1,4 +1,0 @@
-sample_id,split,category,site_id
-a,train,airport,airport|1
-b,calibration,airport,airport|2
-c,test,airport,airport|3

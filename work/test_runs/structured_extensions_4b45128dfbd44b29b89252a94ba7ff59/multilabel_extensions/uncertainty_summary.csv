@@ -1,3 +1,0 @@
-extension,risk_target,test_mean_risk,mean_prediction_set_fraction,probability_threshold,protocol_hash,target_coverage,test_coverage,selective_risk
-conformal_risk_control,0.2,0.11875,0.5375,0.4862960807073076,050fe74cbc3e76b6989d00ea6ef15ef0a3981288de3d7d2beb087886207a44b4,,,
-selective_080,,,,,255e9fa1fbe3e9270da4ccc9d128001360fc600dfffe1f5768d82a2b45ca3cf2,0.8,0.875,0.0

@@ -1,3 +1,0 @@
-sample_id,chip_path,mask_path,label,water_fraction,region,event,fallback_group,sensor,source_dataset,band_profile,band_indices,band_names,split
-Bolivia_001,chips\Bolivia_001_prithvi_s2.npz,masks\Bolivia_001_qc.npz,0,0.0,Bolivia,Bolivia,Bolivia,S2,sen1floods11,prithvi_tl_sen1floods11,"[1, 2, 3, 8, 11, 12]","[""BLUE"", ""GREEN"", ""RED"", ""NIR_NARROW"", ""SWIR_1"", ""SWIR_2""]",all
-Bolivia_002,chips\Bolivia_002_prithvi_s2.npz,masks\Bolivia_002_qc.npz,0,0.0,Bolivia,Bolivia,Bolivia,S2,sen1floods11,prithvi_tl_sen1floods11,"[1, 2, 3, 8, 11, 12]","[""BLUE"", ""GREEN"", ""RED"", ""NIR_NARROW"", ""SWIR_1"", ""SWIR_2""]",all

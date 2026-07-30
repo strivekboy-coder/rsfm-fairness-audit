@@ -1,4 +1,0 @@
-seed,test_accuracy,country_geobwer,country_geobwer_validity,country_geobwer_ci_low,country_geobwer_ci_high,country_geobwer_lower_confidence_bound
-42,0.2,0.2,descriptive_only,0.0,0.7,0.0
-73,0.2,0.21000000000000002,descriptive_only,0.0,0.7,0.0
-101,0.2,0.22,descriptive_only,0.0,0.7,0.0
