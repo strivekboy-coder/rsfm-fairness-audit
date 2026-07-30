@@ -923,7 +923,7 @@ def main() -> None:
         runtime_version = validate_terratorch_runtime()
         if runtime_version != "1.2.10":
             raise RuntimeError(
-                "The frozen v0.4.29 formal TerraMind campaign requires "
+                "The frozen v0.4.30 formal TerraMind campaign requires "
                 f"TerraTorch 1.2.10; observed={runtime_version}."
             )
         local_text = args.output_dir.as_posix().rstrip("/")

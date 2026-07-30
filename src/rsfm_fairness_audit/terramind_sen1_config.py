@@ -184,6 +184,9 @@ def build_terramind_sen1floods11_config(
         "num_nodes": 1,
         "precision": "16-mixed",
         "deterministic": True,
+        # Lightning caches the loader when this is zero. This is required for
+        # DataLoader.persistent_workers to persist across epochs.
+        "reload_dataloaders_every_n_epochs": 0,
         "logger": True,
         "callbacks": callbacks,
         "max_epochs": int(max_epochs),
@@ -220,6 +223,10 @@ def build_terramind_sen1floods11_config(
                     persistent_workers and int(num_workers) > 0
                 ),
                 "prefetch_factor": int(prefetch_factor),
+                # A dedicated loader/augmentation seed isolates sample order
+                # and Albumentations worker streams from unrelated global RNG
+                # consumption while retaining the registered experiment seed.
+                "loader_seed": int(seed),
                 "modalities": modalities,
                 "allow_substring_file_names": True,
                 "channel_position": -3,

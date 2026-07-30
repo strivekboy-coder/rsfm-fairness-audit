@@ -17,6 +17,7 @@ from rsfm_fairness_audit.terramind_sen1_config import (
     read_sen1floods11_split_prefixes,
     write_terramind_sen1floods11_config,
 )
+from rsfm_fairness_audit.terratorch_exports import _seed_transform_tree
 
 
 def _build(mode: str, prediction_split=None):
@@ -33,6 +34,24 @@ def _build(mode: str, prediction_split=None):
         prediction_split=prediction_split,
         probability_output_dir=None if prediction_split is None else f"/content/outputs/{mode}/{prediction_split}",
     )
+
+
+def test_transform_tree_seeding_reaches_wrapped_compose() -> None:
+    class Seedable:
+        def __init__(self) -> None:
+            self.seeds: list[int] = []
+
+        def set_random_seed(self, seed: int) -> None:
+            self.seeds.append(int(seed))
+
+    class TerraTorchWrapper:
+        def __init__(self, transform) -> None:
+            self.transforms = transform
+
+    transform = Seedable()
+    assert _seed_transform_tree(TerraTorchWrapper(transform), 73) is True
+    assert transform.seeds == [73]
+    assert _seed_transform_tree(object(), 73) is False
 
 
 def _sen1_source_fixture(tmp_path, split_members, *, unused=()):
@@ -122,8 +141,10 @@ def test_frozen_formal_loader_and_observability_contract():
     assert data["pin_memory"] is True
     assert data["persistent_workers"] is True
     assert data["prefetch_factor"] == 4
+    assert data["loader_seed"] == 42
     assert trainer["precision"] == "16-mixed"
     assert trainer["deterministic"] is True
+    assert trainer["reload_dataloaders_every_n_epochs"] == 0
     assert trainer["max_epochs"] == 100
     callback_paths = [
         callback["class_path"] for callback in trainer["callbacks"]
@@ -449,8 +470,10 @@ def test_generated_fit_yaml_parses_with_frozen_terratorch_cli(tmp_path):
     reason="Real TerraTorch dataset construction requires TerraTorch and rasterio.",
 )
 def test_real_terratorch_dataset_builds_for_all_sensor_modes(tmp_path):
+    import albumentations as A
     import numpy as np
     import rasterio
+    from albumentations.pytorch.transforms import ToTensorV2
     from rasterio.transform import from_origin
     from rsfm_fairness_audit.terratorch_exports import (
         GeoBWERSen1DataModule,
@@ -465,7 +488,9 @@ def test_real_terratorch_dataset_builds_for_all_sensor_modes(tmp_path):
     }
     source = _sen1_source_fixture(tmp_path, splits)
     transform = from_origin(0, 16, 1, 1)
-    for prefix in ("A", "B", "C", "D", "Bolivia_E"):
+    for prefix_index, prefix in enumerate(
+        ("A", "B", "C", "D", "Bolivia_E")
+    ):
         for root_key, suffix, count in (
             ("s1_root", "_S1Hand.tif", 2),
             ("s2_root", "_S2Hand.tif", 13),
@@ -480,7 +505,20 @@ def test_real_terratorch_dataset_builds_for_all_sensor_modes(tmp_path):
                 dtype="float32",
                 transform=transform,
             ) as dataset:
-                dataset.write(np.ones((count, 16, 16), dtype=np.float32))
+                gradient = np.arange(16 * 16, dtype=np.float32).reshape(
+                    16,
+                    16,
+                )
+                dataset.write(
+                    np.stack(
+                        [
+                            gradient
+                            + float(prefix_index * 1000)
+                            + float(channel * 100)
+                            for channel in range(count)
+                        ]
+                    )
+                )
         with rasterio.open(
             Path(source["label_root"], f"{prefix}_LabelHand.tif"),
             "w",
@@ -525,7 +563,10 @@ def test_real_terratorch_dataset_builds_for_all_sensor_modes(tmp_path):
             fast_dev_run=True,
         )
         data_args = dict(config["data"]["init_args"])
-        data_args.pop("train_transform")
+        data_args["train_transform"] = [
+            A.D4(p=1.0),
+            ToTensorV2(transpose_mask=False),
+        ]
         datamodule = GeoBWERSen1DataModule(**data_args)
         datamodule.setup("fit")
         assert len(datamodule.train_dataset) == 2
@@ -534,6 +575,11 @@ def test_real_terratorch_dataset_builds_for_all_sensor_modes(tmp_path):
         assert validation_loader.num_workers == 8
         assert validation_loader.persistent_workers is True
         assert validation_loader.prefetch_factor == 4
+        assert validation_loader.worker_init_fn is not None
+        assert validation_loader.generator is not None
+        assert validation_loader.timeout == 0
+        assert validation_loader.multiprocessing_context is None
+        assert validation_loader.pin_memory_device == ""
         batch = next(iter(validation_loader))
         assert set(batch["image"]) == expected_modalities
         assert "mask" in batch
@@ -549,6 +595,53 @@ def test_real_terratorch_dataset_builds_for_all_sensor_modes(tmp_path):
             second_batch["mask"].detach().cpu().numpy(),
             first_target,
         )
+
+        def collect_two_epochs(module):
+            loader = module.train_dataloader()
+            epochs = []
+            for _ in range(2):
+                epoch = []
+                for train_batch in loader:
+                    epoch.append(
+                        (
+                            tuple(train_batch["filename"]),
+                            {
+                                key: value.detach().cpu().numpy().copy()
+                                for key, value in train_batch["image"].items()
+                            },
+                        )
+                    )
+                epochs.append(epoch)
+            iterator = getattr(loader, "_iterator", None)
+            if iterator is not None:
+                iterator._shutdown_workers()
+            return epochs
+
+        first_epochs = collect_two_epochs(datamodule)
+        second_epochs = collect_two_epochs(second)
+        assert [
+            [filenames for filenames, _ in epoch]
+            for epoch in first_epochs
+        ] == [
+            [filenames for filenames, _ in epoch]
+            for epoch in second_epochs
+        ]
+        for first_epoch, second_epoch in zip(
+            first_epochs,
+            second_epochs,
+            strict=True,
+        ):
+            for (_, first_images), (_, second_images) in zip(
+                first_epoch,
+                second_epoch,
+                strict=True,
+            ):
+                assert first_images.keys() == second_images.keys()
+                for modality in first_images:
+                    np.testing.assert_array_equal(
+                        first_images[modality],
+                        second_images[modality],
+                    )
 
 
 @pytest.mark.skipif(

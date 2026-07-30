@@ -228,6 +228,36 @@ def mean_impute_and_normalize_tensor(
     return output
 
 
+def _seed_transform_tree(value: Any, seed: int) -> bool:
+    """Seed an Albumentations transform hidden inside TerraTorch wrappers.
+
+    Albumentations owns an internal RNG, so seeding Python/NumPy alone is not
+    sufficient.  Keep this helper framework-neutral to make the compatibility
+    contract testable without importing the optional TerraTorch runtime.
+    """
+
+    if value is None:
+        return False
+    setter = getattr(value, "set_random_seed", None)
+    if callable(setter):
+        setter(int(seed))
+        return True
+    if isinstance(value, Mapping):
+        seeded = False
+        for item in value.values():
+            seeded = _seed_transform_tree(item, seed) or seeded
+        return seeded
+    if isinstance(value, (list, tuple)):
+        seeded = False
+        for item in value:
+            seeded = _seed_transform_tree(item, seed) or seeded
+        return seeded
+    nested = getattr(value, "transforms", None)
+    if nested is not None and nested is not value:
+        return _seed_transform_tree(nested, seed)
+    return False
+
+
 try:  # Optional Colab-only runtime; pure helpers above remain locally testable.
     import torch
     from lightning.pytorch.callbacks import BasePredictionWriter, Callback
@@ -254,6 +284,28 @@ except ImportError:  # pragma: no cover - exercised when TerraTorch is not insta
     LabeledValidationAsPredictDataModule = _MissingTerraTorch
 
 else:  # pragma: no cover - executed in the Colab model runtime
+
+    def _geobwer_worker_init_fn(worker_id: int) -> None:
+        """Retain Lightning worker seeding and seed Albumentations explicitly."""
+
+        from lightning.fabric.utilities.seed import pl_worker_init_function
+
+        rank_text = os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0"))
+        try:
+            rank = int(rank_text)
+        except (TypeError, ValueError):
+            rank = 0
+        pl_worker_init_function(int(worker_id), rank=rank)
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is None:
+            raise TerraTorchExportError(
+                "GeoBWER worker initialization ran outside a DataLoader worker."
+            )
+        worker_seed = int(torch.initial_seed() % (2**32))
+        transform = getattr(worker_info.dataset, "transform", None)
+        # Validation/prediction may use TerraTorch's deterministic
+        # MultimodalToTensor, which intentionally has no RNG to seed.
+        _seed_transform_tree(transform, worker_seed)
 
     class _MeanImputingMultimodalNormalize:
         """Replace non-finite EO values with frozen means before normalization."""
@@ -330,6 +382,7 @@ else:  # pragma: no cover - executed in the Colab model runtime
             stds: Mapping[str, Sequence[float]],
             persistent_workers: bool = False,
             prefetch_factor: int = 2,
+            loader_seed: int = 0,
             **kwargs: Any,
         ) -> None:
             if kwargs.get("no_data_replace") is not None:
@@ -345,8 +398,15 @@ else:  # pragma: no cover - executed in the Colab model runtime
                 )
             self.geobwer_persistent_workers = bool(persistent_workers)
             self.geobwer_prefetch_factor = int(prefetch_factor)
+            self.geobwer_loader_seed = int(loader_seed)
             super().__init__(*args, means=means, stds=stds, **kwargs)
             self.aug = _MeanImputingMultimodalNormalize(means, stds)
+            for transform in (
+                self.train_transform,
+                self.val_transform,
+                self.test_transform,
+            ):
+                _seed_transform_tree(transform, self.geobwer_loader_seed)
 
         def _dataloader_factory(self, split: str):
             """Add loader-only tuning absent from TerraTorch 1.2.10.
@@ -358,18 +418,35 @@ else:  # pragma: no cover - executed in the Colab model runtime
             """
 
             upstream = super()._dataloader_factory(split)
+            if upstream.worker_init_fn is not None:
+                raise TerraTorchExportError(
+                    "TerraTorch 1.2.10 unexpectedly supplied worker_init_fn; "
+                    "refusing to overwrite unknown worker initialization."
+                )
+            generator = torch.Generator()
+            generator.manual_seed(self.geobwer_loader_seed)
+            sampler = getattr(upstream.batch_sampler, "sampler", None)
+            if hasattr(sampler, "generator"):
+                sampler.generator = generator
             kwargs: dict[str, Any] = {
                 "dataset": upstream.dataset,
                 "batch_sampler": upstream.batch_sampler,
-                "num_workers": int(self.num_workers),
+                "num_workers": int(upstream.num_workers),
                 "collate_fn": upstream.collate_fn,
-                "pin_memory": bool(self.pin_memory),
+                "pin_memory": bool(upstream.pin_memory),
+                "worker_init_fn": _geobwer_worker_init_fn,
+                "generator": generator,
+                "multiprocessing_context": upstream.multiprocessing_context,
+                "timeout": float(upstream.timeout),
+                "pin_memory_device": str(upstream.pin_memory_device),
                 "persistent_workers": bool(
                     self.geobwer_persistent_workers
-                    and int(self.num_workers) > 0
+                    and int(upstream.num_workers) > 0
                 ),
             }
-            if int(self.num_workers) > 0:
+            if hasattr(upstream, "in_order"):
+                kwargs["in_order"] = bool(upstream.in_order)
+            if int(upstream.num_workers) > 0:
                 kwargs["prefetch_factor"] = int(
                     self.geobwer_prefetch_factor
                 )
