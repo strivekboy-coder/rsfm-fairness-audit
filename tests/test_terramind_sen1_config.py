@@ -113,6 +113,30 @@ def test_uses_released_terramind_pretraining_standardisation_and_recipe():
     assert config["optimizer"]["init_args"]["lr"] == 2e-5
 
 
+def test_frozen_formal_loader_and_observability_contract():
+    config = _build("S1+S2")
+    data = config["data"]["init_args"]
+    trainer = config["trainer"]
+    assert data["batch_size"] == 8
+    assert data["num_workers"] == 8
+    assert data["pin_memory"] is True
+    assert data["persistent_workers"] is True
+    assert data["prefetch_factor"] == 4
+    assert trainer["precision"] == "16-mixed"
+    assert trainer["deterministic"] is True
+    assert trainer["max_epochs"] == 100
+    callback_paths = [
+        callback["class_path"] for callback in trainer["callbacks"]
+    ]
+    assert not any(path.endswith("EarlyStopping") for path in callback_paths)
+    monitor = next(
+        callback
+        for callback in trainer["callbacks"]
+        if callback["class_path"].endswith("TerraMindOperationalMonitor")
+    )
+    assert monitor["init_args"]["gpu_log_every_n_steps"] == 20
+
+
 def test_fit_scheduler_uses_lightning_cli_plateau_wrapper():
     config = _build("S1+S2")
     assert config["lr_scheduler"] == {
@@ -428,7 +452,9 @@ def test_real_terratorch_dataset_builds_for_all_sensor_modes(tmp_path):
     import numpy as np
     import rasterio
     from rasterio.transform import from_origin
-    from terratorch.datamodules import GenericMultiModalDataModule
+    from rsfm_fairness_audit.terratorch_exports import (
+        GeoBWERSen1DataModule,
+    )
 
     validate_terratorch_runtime()
     splits = {
@@ -493,18 +519,36 @@ def test_real_terratorch_dataset_builds_for_all_sensor_modes(tmp_path):
             run_dir=tmp_path / f"run_{mode}",
             backbone_checkpoint_path=tmp_path / "TerraMind_v1_base.pt",
             batch_size=1,
-            num_workers=0,
+            num_workers=8,
+            persistent_workers=True,
+            prefetch_factor=4,
             fast_dev_run=True,
         )
         data_args = dict(config["data"]["init_args"])
         data_args.pop("train_transform")
-        datamodule = GenericMultiModalDataModule(**data_args)
+        datamodule = GeoBWERSen1DataModule(**data_args)
         datamodule.setup("fit")
         assert len(datamodule.train_dataset) == 2
         assert len(datamodule.val_dataset) == 1
-        batch = next(iter(datamodule.train_dataloader()))
+        validation_loader = datamodule.val_dataloader()
+        assert validation_loader.num_workers == 8
+        assert validation_loader.persistent_workers is True
+        assert validation_loader.prefetch_factor == 4
+        batch = next(iter(validation_loader))
         assert set(batch["image"]) == expected_modalities
         assert "mask" in batch
+        first_target = batch["mask"].detach().cpu().numpy().copy()
+
+        # A second identically seeded module must preserve the same sample
+        # membership and targets with the optimized worker configuration.
+        second = GeoBWERSen1DataModule(**data_args)
+        second.setup("fit")
+        second_batch = next(iter(second.val_dataloader()))
+        assert second_batch["filename"] == batch["filename"]
+        np.testing.assert_array_equal(
+            second_batch["mask"].detach().cpu().numpy(),
+            first_target,
+        )
 
 
 @pytest.mark.skipif(
@@ -600,7 +644,7 @@ def test_fit_can_mirror_checkpoints_without_using_drive_as_live_run_dir():
     callbacks = config["trainer"]["callbacks"]
     mirror = next(item for item in callbacks if item["class_path"].endswith("PersistentCheckpointMirror"))
     assert mirror["init_args"]["source_dir"] == "/content/runs/s2/checkpoints"
-    assert mirror["init_args"]["every_n_epochs"] == 5
+    assert mirror["init_args"]["every_n_epochs"] == 10
 
 
 def test_real_gpu_smoke_uses_lightning_fast_dev_run():

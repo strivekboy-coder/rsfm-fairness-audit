@@ -28,4 +28,4 @@ __all__ = [
     "SpatialConformalConfig",
 ]
 
-__version__ = "0.4.28"
+__version__ = "0.4.29"

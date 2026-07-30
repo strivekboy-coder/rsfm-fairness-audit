@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 from typing import Any, Mapping
 
 import numpy as np
@@ -18,6 +19,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from rsfm_fairness_audit.formal_outputs import file_sha256  # noqa: E402
+from rsfm_fairness_audit import __version__  # noqa: E402
 from rsfm_fairness_audit.adapters.terramind import (  # noqa: E402
     INPUT_PROFILES,
     S1_MEAN,
@@ -107,7 +109,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--protocol", type=Path, default=PROJECT_ROOT / "configs/geobwer/sen1floods11.yaml")
     parser.add_argument("--mode", action="append", choices=MODES, help="Repeat to restrict modes; default is all three.")
     parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--num-workers", type=int, default=8)
+    parser.add_argument(
+        "--persistent-workers",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument("--prefetch-factor", type=int, default=4)
+    parser.add_argument("--gpu-log-every-n-steps", type=int, default=20)
     parser.add_argument("--max-epochs", type=int, default=100)
     parser.add_argument(
         "--seeds",
@@ -127,8 +136,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="NAME=PATH",
         help=(
-            "Validation probability export from another Sen1 model. Repeat for every supervised-baseline "
-            "seed and Prithvi so one validation-only spatial scale is frozen for the entire model panel."
+            "Diagnostic-only validation probability export from another Sen1 "
+            "model. Formal runs instead require the audited U-Net panel and "
+            "the explicit Prithvi manifest/export pair."
         ),
     )
     parser.add_argument("--calibration-simulations", type=int, default=200)
@@ -136,7 +146,40 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--audit-bootstrap", type=int, default=2000)
     parser.add_argument("--crc-alpha", type=float, default=0.10)
     parser.add_argument("--minimum-moderate-tail-power", type=float, default=0.80)
-    parser.add_argument("--checkpoint-mirror-every-n-epochs", type=int, default=5)
+    parser.add_argument("--checkpoint-mirror-every-n-epochs", type=int, default=10)
+    parser.add_argument(
+        "--supervised-campaign-manifest",
+        type=Path,
+        help=(
+            "Read-only v0.4.28 U-Net campaign manifest. Required for a formal "
+            "panel so all nine validation exports enter common calibration."
+        ),
+    )
+    parser.add_argument(
+        "--supervised-audit-json",
+        type=Path,
+        help=(
+            "PASS evidence from audit_sen1_unet_v0428_artifacts_colab.py. "
+            "Required with --supervised-campaign-manifest."
+        ),
+    )
+    parser.add_argument(
+        "--prithvi-validation-export",
+        type=Path,
+        help=(
+            "Read-only formal Prithvi validation probability export. Required "
+            "before a formal all-model spatial calibration."
+        ),
+    )
+    parser.add_argument(
+        "--prithvi-campaign-manifest",
+        type=Path,
+        help=(
+            "Read-only formal Prithvi probability-migration manifest. Required "
+            "with --prithvi-validation-export so the 89-unit export is bound "
+            "to the official 252/89/90+15 contract."
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true", help="Generate and validate configs without training/inference.")
     parser.add_argument(
         "--smoke-only",
@@ -169,9 +212,67 @@ def _terratorch_predict_command() -> list[str]:
     ]
 
 
-def _run(command: list[str]) -> None:
+def _stage_log(
+    *,
+    stage: str,
+    phase: str,
+    mode: str | None = None,
+    seed: int | None = None,
+    elapsed_seconds: float | None = None,
+    detail: str | None = None,
+) -> None:
+    values = [
+        f"stage={stage}",
+        f"phase={phase}",
+        f"mode={mode or 'panel'}",
+        f"seed={seed if seed is not None else 'panel'}",
+    ]
+    if elapsed_seconds is not None:
+        values.append(f"elapsed_seconds={elapsed_seconds:.3f}")
+    if detail:
+        values.append(f"detail={detail}")
+    print("[terramind:stage] " + " ".join(values), flush=True)
+
+
+def _run(
+    command: list[str],
+    *,
+    stage: str,
+    mode: str,
+    seed: int,
+) -> None:
+    _stage_log(stage=stage, phase="start", mode=mode, seed=seed)
     print("[terramind:campaign]", " ".join(command), flush=True)
+    started = time.perf_counter()
     subprocess.run(command, check=True, cwd=PROJECT_ROOT)
+    _stage_log(
+        stage=stage,
+        phase="end",
+        mode=mode,
+        seed=seed,
+        elapsed_seconds=time.perf_counter() - started,
+    )
+
+
+def _persist_with_log(
+    source: Path,
+    destination: Path | None,
+    *,
+    label: str,
+    mode: str | None = None,
+    seed: int | None = None,
+) -> None:
+    _stage_log(stage="persist", phase="start", mode=mode, seed=seed, detail=label)
+    started = time.perf_counter()
+    persist_output(source, destination, label=label)
+    _stage_log(
+        stage="persist",
+        phase="end",
+        mode=mode,
+        seed=seed,
+        elapsed_seconds=time.perf_counter() - started,
+        detail=label,
+    )
 
 
 def _split_count(path: Path) -> int:
@@ -395,6 +496,186 @@ def _export_complete(path: Path, expected: int) -> bool:
     )
 
 
+def _audited_supervised_validation_exports(
+    campaign_manifest_path: Path,
+    audit_json_path: Path,
+) -> tuple[dict[str, Path], dict[str, Any]]:
+    """Resolve nine immutable U-Net validation exports from PASS evidence."""
+
+    if not campaign_manifest_path.is_file() or not audit_json_path.is_file():
+        raise RuntimeError(
+            "Formal TerraMind calibration requires the audited v0.4.28 U-Net "
+            "campaign manifest and its external PASS audit JSON."
+        )
+    campaign = json.loads(
+        campaign_manifest_path.read_text(encoding="utf-8")
+    )
+    audit = json.loads(audit_json_path.read_text(encoding="utf-8"))
+    if (
+        campaign.get("schema")
+        != "geobwer.sen1floods11.supervised_panel.v6"
+        or campaign.get("formal_evidence") is not True
+        or campaign.get("package_version") != "0.4.28"
+        or campaign.get("code_commit")
+        != "60cff004057c99799ae3c9523a0eab5de4070f59"
+        or audit.get("schema")
+        != "geobwer.sen1floods11.unet_artifact_audit.v1"
+        or audit.get("status") != "pass"
+        or int(audit.get("model_count", -1)) != 9
+        or audit.get("cross_model_sample_and_target_identity") != "exact"
+        or audit.get("target", {}).get("campaign_manifest_sha256")
+        != file_sha256(campaign_manifest_path)
+        or audit.get("target", {}).get("code_commit")
+        != campaign.get("code_commit")
+    ):
+        raise RuntimeError(
+            "The supplied U-Net campaign/audit pair is not the frozen, "
+            "successfully audited v0.4.28 nine-model panel."
+        )
+    exports: dict[str, Path] = {}
+    for mode in MODES:
+        slug = mode.lower().replace("+", "_plus_")
+        for seed in (42, 73, 101):
+            name = f"resnet34_unet_{slug}_seed_{seed}"
+            run = campaign.get("runs", {}).get(name)
+            if not isinstance(run, Mapping):
+                raise RuntimeError(
+                    f"Audited U-Net campaign is missing run={name}."
+                )
+            export = Path(str(run.get("validation_export", "")))
+            if not _export_complete(export, 89):
+                # Persistent campaign manifests intentionally retain their
+                # original /content lineage. Resolve the audited Drive copy by
+                # the frozen panel layout without rewriting that manifest.
+                persistent_export = (
+                    campaign_manifest_path.parent
+                    / slug
+                    / f"seed_{seed}"
+                    / "probabilities"
+                    / "validation"
+                )
+                if _export_complete(persistent_export, 89):
+                    export = persistent_export
+            if not _export_complete(export, 89):
+                raise RuntimeError(
+                    f"Audited U-Net validation export is unavailable or "
+                    f"incomplete: run={name}, path={export}."
+                )
+            exports[name] = export
+    return exports, {
+        "campaign_manifest": str(campaign_manifest_path),
+        "campaign_manifest_sha256": file_sha256(campaign_manifest_path),
+        "audit_json": str(audit_json_path),
+        "audit_json_sha256": file_sha256(audit_json_path),
+        "validation_export_count": len(exports),
+        "read_only": True,
+    }
+
+
+def _validated_prithvi_validation_export(
+    campaign_manifest_path: Path,
+    validation_export: Path,
+) -> dict[str, Any]:
+    """Bind the immutable Prithvi validation export to its formal manifest."""
+
+    if not campaign_manifest_path.is_file():
+        raise RuntimeError(
+            "Formal TerraMind calibration requires the Prithvi campaign "
+            f"manifest: {campaign_manifest_path}."
+        )
+    manifest = json.loads(
+        campaign_manifest_path.read_text(encoding="utf-8")
+    )
+    if (
+        manifest.get("schema")
+        != "geobwer.sen1floods11.prithvi_tl_probability_migration.v3"
+        or manifest.get("formal_evidence") is not True
+        or manifest.get("split_protocol")
+        != "official_252_89_90_plus_15_bolivia_holdout"
+        or int(manifest.get("train_count", -1)) != 252
+        or int(manifest.get("validation_count", -1)) != 89
+        or int(manifest.get("test_count", -1)) != 90
+        or int(manifest.get("bolivia_holdout_count", -1)) != 15
+        or int(manifest.get("combined_evaluation_count", -1)) != 105
+        or manifest.get("bolivia_holdout_used_for_training_or_calibration")
+        is not False
+        or manifest.get("no_training_or_calibration_leakage") is not True
+    ):
+        raise RuntimeError(
+            "The supplied Prithvi manifest is not a formal official "
+            "252/89/90+15 probability migration."
+        )
+    declared = Path(
+        str(manifest.get("probability_exports", {}).get("validation", ""))
+    )
+    if declared.name != validation_export.name or declared.parent.name != "probabilities":
+        # In persistent copies the frozen manifest can retain its original
+        # /content path, so compare the stable terminal layout rather than
+        # requiring that disposable absolute path to still exist.
+        if declared.parts[-2:] != ("probabilities", "validation"):
+            raise RuntimeError(
+                "Prithvi manifest does not declare the expected validation "
+                f"export: declared={declared}, supplied={validation_export}."
+            )
+    if not _export_complete(validation_export, 89):
+        raise RuntimeError(
+            "Prithvi validation export is incomplete; expected 89 frozen "
+            f"validation units at {validation_export}."
+        )
+    return {
+        "campaign_manifest": str(campaign_manifest_path),
+        "campaign_manifest_sha256": file_sha256(campaign_manifest_path),
+        "validation_export": str(validation_export),
+        "validation_row_count": 89,
+        "read_only": True,
+    }
+
+
+def _git_head() -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    value = result.stdout.strip()
+    if len(value) != 40:
+        raise RuntimeError(f"Could not resolve a frozen code commit: {value!r}.")
+    return value
+
+
+def _assert_frozen_checkout() -> str:
+    commit = _git_head()
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if status:
+        raise RuntimeError(
+            "Formal TerraMind execution requires an unmodified frozen "
+            f"checkout; tracked changes were found:\n{status}"
+        )
+    return commit
+
+
+def _artifact_record(path: Path, root: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise RuntimeError(f"Required completion artifact is missing: {path}.")
+    try:
+        relative = path.relative_to(root).as_posix()
+    except ValueError:
+        relative = str(path)
+    return {
+        "path": relative,
+        "sha256": file_sha256(path),
+        "size_bytes": path.stat().st_size,
+    }
+
+
 def _validate_diagnostic_export(
     path: Path,
     *,
@@ -510,15 +791,19 @@ def _fit_if_needed(
     config: Path,
     run_dir: Path,
     *,
+    mode: str,
+    seed: int,
     backbone_checkpoint_sha256: str,
     dry_run: bool,
 ) -> Path | None:
     protocol_path = run_dir / "fit_protocol.json"
     current_protocol = {
-        "schema": "geobwer.terramind.fit_protocol.v1",
+        "schema": "geobwer.terramind.fit_protocol.v2",
         "config_sha256": file_sha256(config),
         "backbone_checkpoint_sha256": backbone_checkpoint_sha256,
         "backbone_revision": TERRAMIND_OFFICIAL_REVISION,
+        "training_length_policy": "fixed_100_epochs_no_early_stopping",
+        "early_stopping_enabled": False,
     }
     if protocol_path.exists():
         previous = json.loads(protocol_path.read_text(encoding="utf-8"))
@@ -546,7 +831,7 @@ def _fit_if_needed(
     last = run_dir / "checkpoints" / "last.ckpt"
     if last.exists():
         command += ["--ckpt_path", str(last)]
-    _run(command)
+    _run(command, stage="fit", mode=mode, seed=seed)
     best = _checkpoint(run_dir)
     if best is None:
         raise RuntimeError(f"TerraTorch fit finished without one best checkpoint under {run_dir}.")
@@ -570,6 +855,9 @@ def _predict_if_needed(
     checkpoint: Path | None,
     output: Path,
     *,
+    mode: str,
+    seed: int,
+    split: str,
     expected: int,
     dry_run: bool,
     input_quality_contract_sha256: str,
@@ -609,7 +897,10 @@ def _predict_if_needed(
         raise RuntimeError("Prediction requires a completed checkpoint.")
     _run(
         _terratorch_predict_command()
-        + ["predict", "-c", str(config), "--ckpt_path", str(checkpoint)]
+        + ["predict", "-c", str(config), "--ckpt_path", str(checkpoint)],
+        stage=f"predict_{split}",
+        mode=mode,
+        seed=seed,
     )
     if not _export_complete(output, expected):
         raise RuntimeError(
@@ -624,8 +915,35 @@ def _predict_if_needed(
 
 def main() -> None:
     args = build_parser().parse_args()
+    formal_run = not (args.dry_run or args.smoke_only)
     if args.dry_run and args.smoke_only:
         raise ValueError("--dry-run and --smoke-only are mutually exclusive.")
+    if formal_run:
+        frozen_code_commit = _assert_frozen_checkout()
+        runtime_version = validate_terratorch_runtime()
+        if runtime_version != "1.2.10":
+            raise RuntimeError(
+                "The frozen v0.4.29 formal TerraMind campaign requires "
+                f"TerraTorch 1.2.10; observed={runtime_version}."
+            )
+        local_text = args.output_dir.as_posix().rstrip("/")
+        persistent_text = (
+            args.persistent_output_dir.as_posix().rstrip("/")
+            if args.persistent_output_dir is not None
+            else ""
+        )
+        if (
+            not local_text.startswith("/content/")
+            or local_text.startswith("/content/drive/")
+            or not persistent_text.startswith(
+                "/content/drive/MyDrive/rsfm_fairness_audit/"
+            )
+        ):
+            raise RuntimeError(
+                "Formal TerraMind fitting must use a non-Drive /content "
+                "output directory and a persistent mirror under "
+                "/content/drive/MyDrive/rsfm_fairness_audit/."
+            )
     if args.dry_run and not args.checkpoint.is_file():
         backbone_checkpoint_sha256 = TERRAMIND_OFFICIAL_SHA256
         print(
@@ -636,13 +954,58 @@ def main() -> None:
     else:
         _, backbone_checkpoint_sha256 = validate_terramind_checkpoint(args.checkpoint)
     seeds = (int(args.seed),) if args.seed is not None else tuple(map(int, args.seeds))
-    if not (args.dry_run or args.smoke_only) and len(seeds) < 3:
+    if formal_run and (
+        seeds != (42, 73, 101)
+        or int(args.batch_size) != 8
+        or int(args.max_epochs) != 100
+        or int(args.num_workers) != 8
+        or args.persistent_workers is not True
+        or int(args.prefetch_factor) != 4
+    ):
         raise RuntimeError(
-            "The formal TerraMind campaign requires at least three independent training seeds. "
-            "Use --seed only for dry-run or smoke diagnostics."
+            "The frozen formal TerraMind campaign requires seeds=42,73,101, "
+            "batch_size=8, max_epochs=100, num_workers=8, "
+            "persistent_workers=true, and prefetch_factor=4. Operational "
+            "alternatives are diagnostic-only and require --dry-run or "
+            "--smoke-only."
         )
     external_validation_exports: dict[str, Path] = {}
+    audited_supervised_lineage: dict[str, Any] | None = None
+    prithvi_lineage: dict[str, Any] | None = None
+    if formal_run:
+        if (
+            args.supervised_campaign_manifest is None
+            or args.supervised_audit_json is None
+            or args.prithvi_validation_export is None
+            or args.prithvi_campaign_manifest is None
+        ):
+            raise RuntimeError(
+                "Formal all-model spatial calibration requires "
+                "--supervised-campaign-manifest, --supervised-audit-json, "
+                "--prithvi-campaign-manifest, and "
+                "--prithvi-validation-export."
+            )
+        (
+            external_validation_exports,
+            audited_supervised_lineage,
+        ) = _audited_supervised_validation_exports(
+            args.supervised_campaign_manifest,
+            args.supervised_audit_json,
+        )
+        prithvi_lineage = _validated_prithvi_validation_export(
+            args.prithvi_campaign_manifest,
+            args.prithvi_validation_export,
+        )
+        external_validation_exports[
+            "prithvi_eo_v2_300_tl_s2"
+        ] = args.prithvi_validation_export
     for name, path in args.additional_validation_export:
+        if formal_run:
+            raise RuntimeError(
+                "Ad-hoc --additional-validation-export values are not accepted "
+                "in the frozen formal panel. Use the audited U-Net and explicit "
+                "Prithvi inputs."
+            )
         if name in external_validation_exports:
             raise RuntimeError(f"Duplicate --additional-validation-export name: {name}")
         external_validation_exports[name] = path
@@ -717,6 +1080,38 @@ def main() -> None:
                 "terramind_checkpoint": str(args.checkpoint),
                 "terramind_checkpoint_sha256": backbone_checkpoint_sha256,
                 "terramind_revision": TERRAMIND_OFFICIAL_REVISION,
+                "package_version": __version__,
+                "code_commit": (
+                    frozen_code_commit if formal_run else "diagnostic"
+                ),
+                "operational_contract": {
+                    "num_workers": int(args.num_workers),
+                    "pin_memory": True,
+                    "persistent_workers": bool(args.persistent_workers),
+                    "prefetch_factor": int(args.prefetch_factor),
+                    "checkpoint_mirror_every_n_epochs": int(
+                        args.checkpoint_mirror_every_n_epochs
+                    ),
+                    "checkpoint_interval_payload": "last.ckpt_only",
+                    "checkpoint_fit_end_payload": "last_plus_unique_best",
+                    "gpu_log_every_n_steps": int(
+                        args.gpu_log_every_n_steps
+                    ),
+                    "live_training_filesystem": "/content",
+                    "drive_role": "checkpoint_and_completed_artifact_mirror",
+                },
+                "training_length_contract": {
+                    "max_epochs": int(args.max_epochs),
+                    "early_stopping_enabled": False,
+                    "policy": "fixed_100_epochs_no_early_stopping",
+                    "reason": (
+                        "Frozen cross-seed/cross-modality protocol; best "
+                        "validation-loss checkpoint is selected after the same "
+                        "100-epoch opportunity for every run."
+                    ),
+                },
+                "audited_supervised_lineage": audited_supervised_lineage,
+                "prithvi_lineage": prithvi_lineage,
                 "model_selection": {
                     str(seed): {
                         "policy": "official_train_inner_event_disjoint",
@@ -742,7 +1137,11 @@ def main() -> None:
         ),
         encoding="utf-8",
     )
-    persist_output(args.output_dir, args.persistent_output_dir, label="source-preflight")
+    _persist_with_log(
+        args.output_dir,
+        args.persistent_output_dir,
+        label="source-preflight",
+    )
     checkpoints: dict[str, Path | None] = {}
     validation_exports: dict[str, Path] = dict(external_validation_exports)
     test_exports: dict[str, Path] = {}
@@ -769,6 +1168,9 @@ def main() -> None:
                 "seed": seed,
                 "batch_size": args.batch_size,
                 "num_workers": args.num_workers,
+                "persistent_workers": args.persistent_workers,
+                "prefetch_factor": args.prefetch_factor,
+                "gpu_log_every_n_steps": args.gpu_log_every_n_steps,
                 "max_epochs": 1 if args.smoke_only else args.max_epochs,
                 "fast_dev_run": False,
                 "diagnostic_batch_limit": SMOKE_BATCH_LIMIT if args.smoke_only else None,
@@ -803,17 +1205,25 @@ def main() -> None:
                 checkpoint = _fit_if_needed(
                     fit_config,
                     run_dir,
+                    mode=mode,
+                    seed=seed,
                     backbone_checkpoint_sha256=backbone_checkpoint_sha256,
                     dry_run=False,
                 )
                 assert checkpoint is not None
                 _run(
                     _terratorch_predict_command()
-                    + ["predict", "-c", str(validation_config), "--ckpt_path", str(checkpoint)]
+                    + ["predict", "-c", str(validation_config), "--ckpt_path", str(checkpoint)],
+                    stage="predict_validation",
+                    mode=mode,
+                    seed=seed,
                 )
                 _run(
                     _terratorch_predict_command()
-                    + ["predict", "-c", str(test_config), "--ckpt_path", str(checkpoint)]
+                    + ["predict", "-c", str(test_config), "--ckpt_path", str(checkpoint)],
+                    stage="predict_test",
+                    mode=mode,
+                    seed=seed,
                 )
                 validation_quality_binding = _bind_input_quality(
                     validation_output,
@@ -890,7 +1300,7 @@ def main() -> None:
                     ),
                     encoding="utf-8",
                 )
-                persist_output(
+                _persist_with_log(
                     run_dir,
                     (
                         args.persistent_output_dir / slug / f"seed_{seed}"
@@ -898,6 +1308,8 @@ def main() -> None:
                         else None
                     ),
                     label=f"{run_name}-diagnostic",
+                    mode=mode,
+                    seed=seed,
                 )
                 continue
             validation_config = write_terramind_sen1floods11_config(
@@ -924,10 +1336,12 @@ def main() -> None:
             checkpoint = _fit_if_needed(
                 fit_config,
                 run_dir,
+                mode=mode,
+                seed=seed,
                 backbone_checkpoint_sha256=backbone_checkpoint_sha256,
                 dry_run=args.dry_run,
             )
-            persist_output(
+            _persist_with_log(
                 run_dir,
                 (
                     args.persistent_output_dir / slug / f"seed_{seed}"
@@ -935,11 +1349,16 @@ def main() -> None:
                     else None
                 ),
                 label=f"{run_name}-fit",
+                mode=mode,
+                seed=seed,
             )
             _predict_if_needed(
                 validation_config,
                 checkpoint,
                 validation_output,
+                mode=mode,
+                seed=seed,
+                split="validation",
                 expected=_split_count(terratorch_splits["validation"]),
                 dry_run=args.dry_run,
                 input_quality_contract_sha256=(
@@ -957,7 +1376,7 @@ def main() -> None:
                     contract_path=input_quality_contracts[mode]["path"],
                     contract_sha256=input_quality_contracts[mode]["sha256"],
                 )
-            persist_output(
+            _persist_with_log(
                 validation_output,
                 (
                     args.persistent_output_dir
@@ -969,6 +1388,8 @@ def main() -> None:
                     else None
                 ),
                 label=f"{run_name}-validation-predictions",
+                mode=mode,
+                seed=seed,
             )
             checkpoints[run_name] = checkpoint
             validation_exports[run_name] = validation_output
@@ -1003,11 +1424,19 @@ def main() -> None:
             ),
             encoding="utf-8",
         )
-        persist_output(args.output_dir, args.persistent_output_dir, label="sen1-terramind-diagnostic-complete")
+        _persist_with_log(
+            args.output_dir,
+            args.persistent_output_dir,
+            label="sen1-terramind-diagnostic-complete",
+        )
         print(f"[terramind:campaign] diagnostic complete: {diagnostic_manifest}")
         return
     if args.dry_run:
-        persist_output(args.output_dir, args.persistent_output_dir, label="dry-run-configs")
+        _persist_with_log(
+            args.output_dir,
+            args.persistent_output_dir,
+            label="dry-run-configs",
+        )
         print(f"[terramind:campaign] dry-run configs ready under {args.output_dir}")
         return
 
@@ -1021,10 +1450,15 @@ def main() -> None:
         seed=seeds[0],
         minimum_moderate_tail_power=args.minimum_moderate_tail_power,
     )
-    persist_output(args.output_dir, args.persistent_output_dir, label="spatial-calibration")
+    _persist_with_log(
+        args.output_dir,
+        args.persistent_output_dir,
+        label="spatial-calibration",
+    )
     terratorch_version = importlib.metadata.version("terratorch")
     panel_tables: dict[str, Path] = {}
     panel_protocol: BWERProtocol | None = None
+    completed_run_artifacts: dict[str, dict[str, Any]] = {}
     for mode in modes:
         slug = mode.lower().replace("+", "_plus_")
         for seed in seeds:
@@ -1036,6 +1470,9 @@ def main() -> None:
                 test_config,
                 checkpoints[run_name],
                 test_exports[run_name],
+                mode=mode,
+                seed=seed,
+                split="test",
                 expected=_split_count(terratorch_splits["test"]),
                 dry_run=False,
                 input_quality_contract_sha256=input_quality_contracts[mode][
@@ -1050,7 +1487,7 @@ def main() -> None:
                 contract_path=input_quality_contracts[mode]["path"],
                 contract_sha256=input_quality_contracts[mode]["sha256"],
             )
-            persist_output(
+            _persist_with_log(
                 test_exports[run_name],
                 (
                     args.persistent_output_dir
@@ -1062,11 +1499,16 @@ def main() -> None:
                     else None
                 ),
                 label=f"{run_name}-test-predictions",
+                mode=mode,
+                seed=seed,
             )
             _predict_if_needed(
                 bolivia_config,
                 checkpoints[run_name],
                 bolivia_exports[run_name],
+                mode=mode,
+                seed=seed,
+                split="bolivia_holdout",
                 expected=_split_count(terratorch_splits["bolivia_holdout"]),
                 dry_run=False,
                 input_quality_contract_sha256=input_quality_contracts[mode][
@@ -1081,7 +1523,7 @@ def main() -> None:
                 contract_path=input_quality_contracts[mode]["path"],
                 contract_sha256=input_quality_contracts[mode]["sha256"],
             )
-            persist_output(
+            _persist_with_log(
                 bolivia_exports[run_name],
                 (
                     args.persistent_output_dir
@@ -1093,6 +1535,8 @@ def main() -> None:
                     else None
                 ),
                 label=f"{run_name}-bolivia-holdout-predictions",
+                mode=mode,
+                seed=seed,
             )
             combined_export = combine_sen1_evaluation_exports(
                 test_exports[run_name],
@@ -1223,7 +1667,40 @@ def main() -> None:
                 n_bootstrap=args.audit_bootstrap,
                 seed=seed,
             )
-            persist_output(
+            run_artifact_paths = {
+                "checkpoint": checkpoints[run_name],
+                "fit_protocol": run_dir / "fit_protocol.json",
+                "fit_completion": run_dir / "fit_complete.json",
+                "validation_prediction_contract": (
+                    validation_exports[run_name]
+                    / "prediction_completion_contract.json"
+                ),
+                "test_prediction_contract": (
+                    test_exports[run_name]
+                    / "prediction_completion_contract.json"
+                ),
+                "bolivia_prediction_contract": (
+                    bolivia_exports[run_name]
+                    / "prediction_completion_contract.json"
+                ),
+                "standard_test_formal_manifest": standard_bundle.manifest,
+                "bolivia_holdout_formal_manifest": bolivia_bundle.manifest,
+                "combined_held_out_formal_manifest": bundle.manifest,
+                "evaluation_split_report": (
+                    run_dir
+                    / "formal_outputs"
+                    / "evaluation_split_report.json"
+                ),
+                "operational_log": (
+                    run_dir / "operational" / "performance.jsonl"
+                ),
+            }
+            completed_run_artifacts[run_name] = {
+                key: _artifact_record(Path(path), args.output_dir)
+                for key, path in run_artifact_paths.items()
+                if path is not None
+            }
+            _persist_with_log(
                 run_dir,
                 (
                     args.persistent_output_dir / slug / f"seed_{seed}"
@@ -1231,6 +1708,8 @@ def main() -> None:
                     else None
                 ),
                 label=f"{run_name}-formal",
+                mode=mode,
+                seed=seed,
             )
     if set(modes) == set(MODES):
         if panel_protocol is None:
@@ -1256,8 +1735,91 @@ def main() -> None:
             n_bootstrap=args.audit_bootstrap,
             seed=seeds[0],
         )
-    persist_output(args.output_dir, args.persistent_output_dir, label="campaign-complete")
+    expected_run_names = {
+        f"terramind_v1_base_{mode.lower().replace('+', '_plus_')}_seed_{seed}"
+        for mode in MODES
+        for seed in (42, 73, 101)
+    }
+    if formal_run and set(completed_run_artifacts) != expected_run_names:
+        raise RuntimeError(
+            "Formal TerraMind completion requires exactly nine completed "
+            f"model×seed runs; expected={sorted(expected_run_names)}, "
+            f"observed={sorted(completed_run_artifacts)}."
+        )
+    model_panel_root = args.output_dir / "model_panel"
+    panel_artifacts = {
+        path.relative_to(model_panel_root).as_posix(): _artifact_record(
+            path, args.output_dir
+        )
+        for path in sorted(model_panel_root.rglob("*"))
+        if path.is_file()
+    }
+    completion_contract = args.output_dir / "campaign_completion_contract.json"
+    completion_contract.write_text(
+        json.dumps(
+            {
+                "schema": (
+                    "geobwer.sen1floods11.terramind_formal_panel.v1"
+                ),
+                "status": "complete",
+                "formal_evidence": True,
+                "package_version": __version__,
+                "code_commit": frozen_code_commit,
+                "terratorch_version": terratorch_version,
+                "science_contract": {
+                    "modes": list(MODES),
+                    "seeds": [42, 73, 101],
+                    "batch_size": 8,
+                    "max_epochs": 100,
+                    "precision": "16-mixed",
+                    "deterministic": True,
+                    "early_stopping_enabled": False,
+                    "spatial_calibration_population": "validation_only_89",
+                    "standard_test_count": 90,
+                    "bolivia_holdout_count": 15,
+                    "combined_evaluation_count": 105,
+                },
+                "operational_contract": {
+                    "num_workers": int(args.num_workers),
+                    "persistent_workers": bool(args.persistent_workers),
+                    "prefetch_factor": int(args.prefetch_factor),
+                    "pin_memory": True,
+                    "checkpoint_mirror_every_n_epochs": int(
+                        args.checkpoint_mirror_every_n_epochs
+                    ),
+                    "live_training_filesystem": "/content",
+                    "persistent_storage_role": (
+                        "checkpoint_and_completed_artifact_mirror"
+                    ),
+                },
+                "read_only_external_validation_inputs": {
+                    "supervised_unet": audited_supervised_lineage,
+                    "prithvi": prithvi_lineage,
+                },
+                "source_preflight": _artifact_record(
+                    args.output_dir / "source_preflight.json",
+                    args.output_dir,
+                ),
+                "common_spatial_block_calibration": _artifact_record(
+                    calibration_path,
+                    args.output_dir,
+                ),
+                "run_count": len(completed_run_artifacts),
+                "runs": completed_run_artifacts,
+                "model_panel_artifacts": panel_artifacts,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _persist_with_log(
+        args.output_dir,
+        args.persistent_output_dir,
+        label="campaign-complete",
+    )
     print(f"[terramind:campaign] complete: {args.output_dir}")
+    print("SEN1_TERRAMIND_FORMAL_CAMPAIGN=COMPLETE")
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import time
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -247,6 +248,7 @@ except ImportError:  # pragma: no cover - exercised when TerraTorch is not insta
     GeoBWERSemanticSegmentationTask = _MissingTerraTorch
     GeoBWERProbabilityWriter = _MissingTerraTorch
     PersistentCheckpointMirror = _MissingTerraTorch
+    TerraMindOperationalMonitor = _MissingTerraTorch
     GeoBWERSen1DataModule = _MissingTerraTorch
     LabeledTestAsPredictDataModule = _MissingTerraTorch
     LabeledValidationAsPredictDataModule = _MissingTerraTorch
@@ -326,6 +328,8 @@ else:  # pragma: no cover - executed in the Colab model runtime
             *args: Any,
             means: Mapping[str, Sequence[float]],
             stds: Mapping[str, Sequence[float]],
+            persistent_workers: bool = False,
+            prefetch_factor: int = 2,
             **kwargs: Any,
         ) -> None:
             if kwargs.get("no_data_replace") is not None:
@@ -334,8 +338,42 @@ else:  # pragma: no cover - executed in the Colab model runtime
                     "scalar raw-value replacement would violate the frozen "
                     "per-band mean-imputation contract."
                 )
+            num_workers = int(kwargs.get("num_workers", 0))
+            if int(prefetch_factor) <= 0:
+                raise TerraTorchExportError(
+                    "prefetch_factor must be positive."
+                )
+            self.geobwer_persistent_workers = bool(persistent_workers)
+            self.geobwer_prefetch_factor = int(prefetch_factor)
             super().__init__(*args, means=means, stds=stds, **kwargs)
             self.aug = _MeanImputingMultimodalNormalize(means, stds)
+
+        def _dataloader_factory(self, split: str):
+            """Add loader-only tuning absent from TerraTorch 1.2.10.
+
+            The upstream loader has already frozen the dataset, deterministic
+            sampler, batch sampler, and collate function. Rebuilding only the
+            DataLoader wrapper avoids copying the upstream dataset-selection
+            implementation or changing any scientific sample semantics.
+            """
+
+            upstream = super()._dataloader_factory(split)
+            kwargs: dict[str, Any] = {
+                "dataset": upstream.dataset,
+                "batch_sampler": upstream.batch_sampler,
+                "num_workers": int(self.num_workers),
+                "collate_fn": upstream.collate_fn,
+                "pin_memory": bool(self.pin_memory),
+                "persistent_workers": bool(
+                    self.geobwer_persistent_workers
+                    and int(self.num_workers) > 0
+                ),
+            }
+            if int(self.num_workers) > 0:
+                kwargs["prefetch_factor"] = int(
+                    self.geobwer_prefetch_factor
+                )
+            return torch.utils.data.DataLoader(**kwargs)
 
     def _tensor_devices(value: Any) -> set[str]:
         if isinstance(value, Mapping):
@@ -399,7 +437,7 @@ else:  # pragma: no cover - executed in the Colab model runtime
             source_dir: str,
             persistent_dir: str,
             *,
-            every_n_epochs: int = 5,
+            every_n_epochs: int = 10,
         ) -> None:
             super().__init__()
             if int(every_n_epochs) <= 0:
@@ -408,12 +446,18 @@ else:  # pragma: no cover - executed in the Colab model runtime
             self.persistent_dir = Path(persistent_dir)
             self.every_n_epochs = int(every_n_epochs)
 
-        def _mirror(self, trainer: Any) -> None:
+        def _mirror(self, trainer: Any, *, include_best: bool) -> None:
             if not bool(getattr(trainer, "is_global_zero", True)):
                 return
+            started = time.perf_counter()
             self.persistent_dir.mkdir(parents=True, exist_ok=True)
+            sources = [self.source_dir / "last.ckpt"]
+            if include_best:
+                sources.extend(sorted(self.source_dir.glob("best-*.ckpt")))
             copied = 0
-            for source in sorted(self.source_dir.glob("*.ckpt")):
+            for source in sources:
+                if not source.is_file():
+                    continue
                 destination = self.persistent_dir / source.name
                 if destination.exists():
                     source_stat = source.stat()
@@ -427,19 +471,257 @@ else:  # pragma: no cover - executed in the Colab model runtime
                 shutil.copy2(source, temporary)
                 os.replace(temporary, destination)
                 copied += 1
+            removed = 0
+            if include_best:
+                active_best = {
+                    source.name
+                    for source in sources
+                    if source.is_file() and source.name.startswith("best-")
+                }
+                for stale in self.persistent_dir.glob("best-*.ckpt"):
+                    if stale.name not in active_best:
+                        stale.unlink()
+                        removed += 1
             print(
                 f"[terramind:checkpoint-mirror] epoch={int(getattr(trainer, 'current_epoch', -1))} "
-                f"copied={copied} persistent_dir={self.persistent_dir}",
+                f"include_best={include_best} copied={copied} removed_stale_best={removed} "
+                f"seconds={time.perf_counter() - started:.3f} "
+                f"persistent_dir={self.persistent_dir}",
                 flush=True,
             )
 
         def on_validation_end(self, trainer: Any, pl_module: Any) -> None:
             epoch = int(getattr(trainer, "current_epoch", 0)) + 1
             if epoch % self.every_n_epochs == 0:
-                self._mirror(trainer)
+                # A resumable interval needs only last.ckpt. Copying every
+                # transient best checkpoint wastes Drive bandwidth and leaves
+                # multiple ambiguous best-* files after hydration.
+                self._mirror(trainer, include_best=False)
 
         def on_fit_end(self, trainer: Any, pl_module: Any) -> None:
-            self._mirror(trainer)
+            self._mirror(trainer, include_best=True)
+
+
+    class TerraMindOperationalMonitor(Callback):
+        """Low-overhead timing, throughput, and GPU observability callback."""
+
+        def __init__(
+            self,
+            *,
+            sensor_mode: str,
+            seed: int,
+            stage: str,
+            log_path: str,
+            gpu_log_every_n_steps: int = 20,
+        ) -> None:
+            super().__init__()
+            if int(gpu_log_every_n_steps) <= 0:
+                raise TerraTorchExportError(
+                    "gpu_log_every_n_steps must be positive."
+                )
+            self.sensor_mode = str(sensor_mode)
+            self.seed = int(seed)
+            self.stage = str(stage)
+            self.log_path = Path(log_path)
+            self.gpu_log_every_n_steps = int(gpu_log_every_n_steps)
+            self._stage_started: float | None = None
+            self._epoch_started: float | None = None
+            self._epoch_samples = 0
+            self._validation_started: float | None = None
+            self._validation_samples = 0
+            self._predict_samples = 0
+
+        @staticmethod
+        def _batch_size(batch: Any) -> int:
+            if isinstance(batch, Mapping):
+                for key in ("mask", "label"):
+                    value = batch.get(key)
+                    if hasattr(value, "shape") and len(value.shape):
+                        return int(value.shape[0])
+                image = batch.get("image")
+                if isinstance(image, Mapping):
+                    for value in image.values():
+                        if hasattr(value, "shape") and len(value.shape):
+                            return int(value.shape[0])
+                if hasattr(image, "shape") and len(image.shape):
+                    return int(image.shape[0])
+            return 0
+
+        @staticmethod
+        def _gpu_snapshot() -> dict[str, Any]:
+            if not torch.cuda.is_available():
+                return {"cuda_available": False}
+            device = torch.cuda.current_device()
+            snapshot: dict[str, Any] = {
+                "cuda_available": True,
+                "device": f"cuda:{device}",
+                "gpu_name": torch.cuda.get_device_name(device),
+                "memory_allocated_bytes": int(
+                    torch.cuda.memory_allocated(device)
+                ),
+                "memory_reserved_bytes": int(
+                    torch.cuda.memory_reserved(device)
+                ),
+            }
+            utilization = getattr(torch.cuda, "utilization", None)
+            if callable(utilization):
+                try:
+                    snapshot["utilization_percent"] = int(
+                        utilization(device)
+                    )
+                except Exception:
+                    snapshot["utilization_percent"] = None
+            return snapshot
+
+        def _record(self, event: str, **values: Any) -> None:
+            payload = {
+                "schema": "geobwer.terramind.operational_event.v1",
+                "event": event,
+                "sensor_mode": self.sensor_mode,
+                "seed": self.seed,
+                "stage": self.stage,
+                "monotonic_seconds": time.perf_counter(),
+                **values,
+            }
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            print(
+                "[terramind:operational] "
+                + " ".join(
+                    f"{key}={value}"
+                    for key, value in payload.items()
+                    if key not in {"schema", "monotonic_seconds"}
+                ),
+                flush=True,
+            )
+
+        def on_fit_start(self, trainer: Any, pl_module: Any) -> None:
+            self._stage_started = time.perf_counter()
+            self._record("fit_start", gpu=self._gpu_snapshot())
+
+        def on_fit_end(self, trainer: Any, pl_module: Any) -> None:
+            elapsed = (
+                time.perf_counter() - self._stage_started
+                if self._stage_started is not None
+                else None
+            )
+            self._record("fit_end", elapsed_seconds=elapsed, gpu=self._gpu_snapshot())
+
+        def on_train_epoch_start(self, trainer: Any, pl_module: Any) -> None:
+            self._epoch_started = time.perf_counter()
+            self._epoch_samples = 0
+            self._record(
+                "train_epoch_start",
+                epoch=int(getattr(trainer, "current_epoch", -1)) + 1,
+            )
+
+        def on_train_batch_end(
+            self,
+            trainer: Any,
+            pl_module: Any,
+            outputs: Any,
+            batch: Any,
+            batch_idx: int,
+        ) -> None:
+            self._epoch_samples += self._batch_size(batch)
+            if (int(batch_idx) + 1) % self.gpu_log_every_n_steps == 0:
+                self._record(
+                    "gpu_snapshot",
+                    epoch=int(getattr(trainer, "current_epoch", -1)) + 1,
+                    batch_index=int(batch_idx),
+                    gpu=self._gpu_snapshot(),
+                )
+
+        def on_train_epoch_end(self, trainer: Any, pl_module: Any) -> None:
+            elapsed = (
+                time.perf_counter() - self._epoch_started
+                if self._epoch_started is not None
+                else 0.0
+            )
+            self._record(
+                "train_epoch_end",
+                epoch=int(getattr(trainer, "current_epoch", -1)) + 1,
+                elapsed_seconds=elapsed,
+                samples=self._epoch_samples,
+                samples_per_second=(
+                    self._epoch_samples / elapsed if elapsed > 0 else None
+                ),
+                gpu=self._gpu_snapshot(),
+            )
+
+        def on_validation_epoch_start(
+            self, trainer: Any, pl_module: Any
+        ) -> None:
+            self._validation_started = time.perf_counter()
+            self._validation_samples = 0
+            self._record(
+                "validation_epoch_start",
+                epoch=int(getattr(trainer, "current_epoch", -1)) + 1,
+            )
+
+        def on_validation_batch_end(
+            self,
+            trainer: Any,
+            pl_module: Any,
+            outputs: Any,
+            batch: Any,
+            batch_idx: int,
+            dataloader_idx: int = 0,
+        ) -> None:
+            self._validation_samples += self._batch_size(batch)
+
+        def on_validation_epoch_end(
+            self, trainer: Any, pl_module: Any
+        ) -> None:
+            elapsed = (
+                time.perf_counter() - self._validation_started
+                if self._validation_started is not None
+                else 0.0
+            )
+            self._record(
+                "validation_epoch_end",
+                epoch=int(getattr(trainer, "current_epoch", -1)) + 1,
+                elapsed_seconds=elapsed,
+                samples=self._validation_samples,
+                samples_per_second=(
+                    self._validation_samples / elapsed
+                    if elapsed > 0
+                    else None
+                ),
+            )
+
+        def on_predict_start(self, trainer: Any, pl_module: Any) -> None:
+            self._stage_started = time.perf_counter()
+            self._predict_samples = 0
+            self._record("predict_start", gpu=self._gpu_snapshot())
+
+        def on_predict_batch_end(
+            self,
+            trainer: Any,
+            pl_module: Any,
+            outputs: Any,
+            batch: Any,
+            batch_idx: int,
+            dataloader_idx: int = 0,
+        ) -> None:
+            self._predict_samples += self._batch_size(batch)
+
+        def on_predict_end(self, trainer: Any, pl_module: Any) -> None:
+            elapsed = (
+                time.perf_counter() - self._stage_started
+                if self._stage_started is not None
+                else 0.0
+            )
+            self._record(
+                "predict_end",
+                elapsed_seconds=elapsed,
+                samples=self._predict_samples,
+                samples_per_second=(
+                    self._predict_samples / elapsed if elapsed > 0 else None
+                ),
+                gpu=self._gpu_snapshot(),
+            )
 
     class LabeledTestAsPredictDataModule(GeoBWERSen1DataModule):
         """Expose the labeled, frozen test split to Lightning's predict loop.

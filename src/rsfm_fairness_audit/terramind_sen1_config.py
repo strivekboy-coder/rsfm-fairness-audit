@@ -60,10 +60,13 @@ def build_terramind_sen1floods11_config(
     prediction_split: str | None = None,
     probability_output_dir: str | Path | None = None,
     persistent_checkpoint_dir: str | Path | None = None,
-    checkpoint_mirror_every_n_epochs: int = 5,
+    checkpoint_mirror_every_n_epochs: int = 10,
     seed: int = 42,
     batch_size: int = 8,
-    num_workers: int = 4,
+    num_workers: int = 8,
+    persistent_workers: bool = True,
+    prefetch_factor: int = 4,
+    gpu_log_every_n_steps: int = 20,
     max_epochs: int = 100,
     fast_dev_run: bool = False,
     diagnostic_batch_limit: int | None = None,
@@ -77,6 +80,12 @@ def build_terramind_sen1floods11_config(
         raise TerraMindSen1ConfigError("Prediction configs require probability_output_dir.")
     if int(checkpoint_mirror_every_n_epochs) <= 0:
         raise TerraMindSen1ConfigError("checkpoint_mirror_every_n_epochs must be positive.")
+    if int(num_workers) < 0:
+        raise TerraMindSen1ConfigError("num_workers must be non-negative.")
+    if int(prefetch_factor) <= 0:
+        raise TerraMindSen1ConfigError("prefetch_factor must be positive.")
+    if int(gpu_log_every_n_steps) <= 0:
+        raise TerraMindSen1ConfigError("gpu_log_every_n_steps must be positive.")
     if diagnostic_batch_limit is not None and int(diagnostic_batch_limit) < 2:
         raise TerraMindSen1ConfigError(
             "diagnostic_batch_limit must be at least 2. Lightning treats 1/1.0 "
@@ -134,6 +143,21 @@ def build_terramind_sen1floods11_config(
                 "auto_insert_metric_name": False,
             },
         },
+        {
+            "class_path": (
+                "rsfm_fairness_audit.terratorch_exports."
+                "TerraMindOperationalMonitor"
+            ),
+            "init_args": {
+                "sensor_mode": mode,
+                "seed": int(seed),
+                "stage": prediction_split or "fit",
+                "log_path": (
+                    Path(run_dir) / "operational" / "performance.jsonl"
+                ).as_posix(),
+                "gpu_log_every_n_steps": int(gpu_log_every_n_steps),
+            },
+        },
     ]
     if prediction_split:
         callbacks.append(
@@ -188,6 +212,14 @@ def build_terramind_sen1floods11_config(
                 "task": "segmentation",
                 "batch_size": int(batch_size),
                 "num_workers": int(num_workers),
+                # TerraTorch 1.2.10 does not expose these two DataLoader
+                # arguments. GeoBWERSen1DataModule implements a minimal
+                # compatibility layer while preserving its dataset, sampler,
+                # collation, sample membership, and target semantics.
+                "persistent_workers": bool(
+                    persistent_workers and int(num_workers) > 0
+                ),
+                "prefetch_factor": int(prefetch_factor),
                 "modalities": modalities,
                 "allow_substring_file_names": True,
                 "channel_position": -3,
