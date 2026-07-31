@@ -210,8 +210,10 @@ def test_run_segmentation_with_official_tl_adapter_preserves_protocol_metadata()
     assert event_rows[0]["adaptation_protocol"] == "task_adapted_decoder"
 
 
-def test_prepare_sen1floods11_maps_13_band_s2_to_prithvi_shape(monkeypatch) -> None:
-    source = Path("outputs/test_sen1_prepare_source")
+def test_prepare_sen1floods11_maps_13_band_s2_to_prithvi_shape(
+    tmp_path, monkeypatch
+) -> None:
+    source = tmp_path / "source"
     source.mkdir(parents=True, exist_ok=True)
     s2 = source / "Bolivia_000001_S2Hand.tif"
     qc = source / "Bolivia_000001_LabelHand.tif"
@@ -227,22 +229,25 @@ def test_prepare_sen1floods11_maps_13_band_s2_to_prithvi_shape(monkeypatch) -> N
         return np.ones((13, 5, 7), dtype=np.float32)
 
     monkeypatch.setattr(prep, "_read_tif", fake_read_tif)
+    output = tmp_path / "output"
     metadata_path = prep.prepare_sen1floods11_subset(
-        output_dir=Path("outputs/test_sen1_prepare_output"),
+        output_dir=output,
         source_root=source,
         max_samples=1,
         target_size=16,
     )
     rows = read_csv_rows(metadata_path)
-    image = np.load(Path("outputs/test_sen1_prepare_output", rows[0]["chip_path"]))["image"]
-    mask = np.load(Path("outputs/test_sen1_prepare_output", rows[0]["mask_path"]))["mask"]
+    image = np.load(output / rows[0]["chip_path"])["image"]
+    mask = np.load(output / rows[0]["mask_path"])["mask"]
     assert image.shape == (4, 6, 16, 16)
     assert mask.shape == (16, 16)
     assert rows[0]["source_dataset"] == "sen1floods11"
 
 
-def test_prepare_sen1floods11_tl_band_profile_uses_official_indices(monkeypatch) -> None:
-    source = Path("outputs/test_sen1_prepare_tl_source")
+def test_prepare_sen1floods11_tl_band_profile_uses_official_indices(
+    tmp_path, monkeypatch
+) -> None:
+    source = tmp_path / "source"
     source.mkdir(parents=True, exist_ok=True)
     s2 = source / "Bolivia_000002_S2Hand.tif"
     qc = source / "Bolivia_000002_LabelHand.tif"
@@ -257,22 +262,25 @@ def test_prepare_sen1floods11_tl_band_profile_uses_official_indices(monkeypatch)
         return np.stack([np.full((5, 7), index, dtype=np.float32) for index in range(13)])
 
     monkeypatch.setattr(prep, "_read_tif", fake_read_tif)
+    output = tmp_path / "output"
     metadata_path = prep.prepare_sen1floods11_subset(
-        output_dir=Path("outputs/test_sen1_prepare_tl_output"),
+        output_dir=output,
         source_root=source,
         max_samples=1,
         target_size=5,
         band_profile="prithvi_tl_sen1floods11",
     )
     rows = read_csv_rows(metadata_path)
-    image = np.load(Path("outputs/test_sen1_prepare_tl_output", rows[0]["chip_path"]))["image"]
+    image = np.load(output / rows[0]["chip_path"])["image"]
     assert image.shape == (1, 6, 5, 5)
     assert image[:, :, 0, 0].tolist() == [[1.0, 2.0, 3.0, 8.0, 11.0, 12.0]]
     assert rows[0]["band_profile"] == "prithvi_tl_sen1floods11"
 
 
-def test_prepare_sen1floods11_max_samples_zero_uses_all_local_pairs(monkeypatch) -> None:
-    source = Path("outputs/test_sen1_prepare_all_source")
+def test_prepare_sen1floods11_max_samples_zero_uses_all_local_pairs(
+    tmp_path, monkeypatch
+) -> None:
+    source = tmp_path / "source"
     source.mkdir(parents=True, exist_ok=True)
     for name in ["Bolivia_001", "Bolivia_002"]:
         (source / f"{name}_S2Hand.tif").write_text("mock", encoding="utf-8")
@@ -287,7 +295,7 @@ def test_prepare_sen1floods11_max_samples_zero_uses_all_local_pairs(monkeypatch)
 
     monkeypatch.setattr(prep, "_read_tif", fake_read_tif)
     metadata_path = prep.prepare_sen1floods11_subset(
-        output_dir=Path("outputs/test_sen1_prepare_all_output"),
+        output_dir=tmp_path / "output",
         source_root=source,
         max_samples=0,
         target_size=16,

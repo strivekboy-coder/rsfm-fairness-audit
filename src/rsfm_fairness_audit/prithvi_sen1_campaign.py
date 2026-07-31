@@ -13,6 +13,9 @@ from rsfm_fairness_audit.config import load_yaml
 from rsfm_fairness_audit.formal_outputs import file_sha256
 from rsfm_fairness_audit.persistent_cache import hydrate_output, persist_output
 from rsfm_fairness_audit.sen1floods11_formal import write_sen1_probability_export
+from rsfm_fairness_audit.sen1_prithvi_mask_gate import (
+    gate_prithvi_prepared_masks,
+)
 from rsfm_fairness_audit.terramind_sen1_config import read_sen1floods11_split_prefixes
 
 
@@ -298,6 +301,17 @@ def run_prithvi_sen1_probability_campaign(
         split="all",
     )
     bolivia_rows = bolivia_dataset.load_metadata()
+    prepared_mask_gate = gate_prithvi_prepared_masks(
+        core_root=config.prepared_data_root,
+        core_metadata=config.prepared_metadata_csv,
+        bolivia_root=config.bolivia_prepared_data_root,
+        bolivia_metadata=config.bolivia_prepared_metadata_csv,
+    )
+    mask_gate_path = output / "pre_model_prepared_mask_gate.json"
+    mask_gate_path.write_text(
+        json.dumps(prepared_mask_gate, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     split_indices = match_prepared_rows_to_official_splits(
         rows,
         train_split=config.train_split,
@@ -440,6 +454,13 @@ def run_prithvi_sen1_probability_campaign(
                 "device_contract": getattr(model, "device_contract", {}),
                 "inference_debug_records": getattr(model, "debug_records", []),
                 "split_runtime_validation": split_runtime_validation,
+                "pre_model_prepared_mask_gate": {
+                    "path": str(mask_gate_path),
+                    "sha256": file_sha256(mask_gate_path),
+                    "schema": prepared_mask_gate["schema"],
+                    "status": prepared_mask_gate["status"],
+                    "model_loaded_by_gate": False,
+                },
                 "diagnostic_full_probability_artifacts": diagnostic_full_probability_artifacts,
                 "probability_exports": {key: str(value) for key, value in exports.items()},
                 "config": asdict(config),

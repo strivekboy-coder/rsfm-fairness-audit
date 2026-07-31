@@ -11,6 +11,12 @@ from typing import Any, Iterable
 
 import numpy as np
 
+from rsfm_fairness_audit.sen1_prithvi_mask_gate import (
+    validate_prepared_mask,
+    validate_source_label,
+    write_verified_mask_npz,
+)
+
 
 GCS_ROOT = "gs://sen1floods11"
 PRITHVI_BAND_INDICES = [1, 2, 3, 4, 5, 6]  # B02-B07 from 13-band Sen1Floods11 S2 GeoTIFFs.
@@ -77,8 +83,15 @@ def _prithvi_chip_from_s2(
 
 
 def _mask_from_label(path: Path, target_size: int = TARGET_SIZE) -> np.ndarray:
-    mask = _read_tif(path)[0]
-    return _resize_2d(mask, target_size, nearest=True).astype(np.int16)
+    source = validate_source_label(
+        _read_tif(path)[0], stage=f"label_read[{path}]"
+    )
+    resized = _resize_2d(source, target_size, nearest=True)
+    return validate_prepared_mask(
+        resized,
+        stage=f"nearest_resize[{path}]",
+        expected_shape=(target_size, target_size),
+    )
 
 
 def _water_label(mask: np.ndarray) -> tuple[int, float]:
@@ -384,6 +397,10 @@ def prepare_sen1floods11_subset(
     parallel_download: bool = True,
     band_profile: str = "prithvi_hls_6band_4frame_compat",
 ) -> Path:
+    if output_dir.exists():
+        raise RuntimeError(
+            f"Refusing to overwrite existing prepared output directory: {output_dir}"
+        )
     if max_samples < 0:
         raise ValueError("--max-samples must be non-negative; use 0 for all selected candidates.")
     start_time = time.time()
@@ -451,7 +468,7 @@ def prepare_sen1floods11_subset(
         if failures:
             _log(f"[summary] Skipped {failures} unavailable S2/label candidates before preparing {len(pairs)} pairs.")
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=False)
     chip_dir = output_dir / "chips"
     mask_dir = output_dir / "masks"
     chip_dir.mkdir(exist_ok=True)
@@ -464,13 +481,20 @@ def prepare_sen1floods11_subset(
         mask = _mask_from_label(label_path, target_size=target_size)
         if chip.shape != (frames, 6, target_size, target_size):
             raise RuntimeError(f"Prepared Prithvi chip has wrong shape for {sample_id}: {chip.shape}.")
-        if mask.shape != (target_size, target_size):
-            raise RuntimeError(f"Prepared label mask has wrong shape for {sample_id}: {mask.shape}.")
+        mask = validate_prepared_mask(
+            mask,
+            stage=f"pre_write[{sample_id}]",
+            expected_shape=(target_size, target_size),
+        )
         label, water_fraction = _water_label(mask)
         chip_path = chip_dir / f"{sample_id}_prithvi_s2.npz"
         mask_path = mask_dir / f"{sample_id}_qc.npz"
         np.savez_compressed(chip_path, image=chip)
-        np.savez_compressed(mask_path, mask=mask)
+        write_verified_mask_npz(
+            mask_path,
+            mask,
+            expected_shape=(target_size, target_size),
+        )
         event = _event_from_sample(sample_id)
         rows.append(
             {
