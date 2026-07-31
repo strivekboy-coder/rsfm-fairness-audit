@@ -87,8 +87,13 @@ def _mask_from_label(path: Path, target_size: int = TARGET_SIZE) -> np.ndarray:
         _read_tif(path)[0], stage=f"label_read[{path}]"
     )
     resized = _resize_2d(source, target_size, nearest=True)
-    return validate_prepared_mask(
+    target_mask = validate_prepared_mask(
         resized,
+        stage=f"label_read_targetized[{path}]",
+        expected_shape=(target_size, target_size),
+    )
+    return validate_prepared_mask(
+        target_mask,
         stage=f"nearest_resize[{path}]",
         expected_shape=(target_size, target_size),
     )
