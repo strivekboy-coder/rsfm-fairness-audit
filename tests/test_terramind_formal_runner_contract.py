@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 
 import pytest
 
 from scripts.colab.run_terramind_sen1floods11_final_colab import (
+    CALIBRATION_PANEL_SCOPE,
     MODES,
     _audited_supervised_validation_exports,
+    _expected_calibration_model_names,
+    _fit_if_needed,
+    _predict_if_needed,
     _validated_prithvi_validation_export,
 )
+from rsfm_fairness_audit.adapters.terramind import TERRAMIND_OFFICIAL_REVISION
 from rsfm_fairness_audit.formal_outputs import file_sha256
 
 
@@ -172,3 +178,95 @@ def test_audited_unet_exports_resolve_persistent_copy_without_rewrite(
     assert len(exports) == 9
     assert lineage["read_only"] is True
     assert all(str(path).startswith(str(root)) for path in exports.values())
+
+
+def test_frozen_calibration_scope_is_exactly_all_nineteen_models() -> None:
+    names = _expected_calibration_model_names()
+    assert CALIBRATION_PANEL_SCOPE == "all_19_models_unet9_terramind9_prithvi1"
+    assert len(names) == 19
+    assert len([name for name in names if name.startswith("resnet34_unet_")]) == 9
+    assert len([name for name in names if name.startswith("terramind_v1_base_")]) == 9
+    assert "prithvi_eo_v2_300_tl_s2" in names
+
+
+def test_resume_contract_reuses_fit_and_validation_without_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path("work/test_terramind_resume_contract")
+    if tmp_path.exists():
+        shutil.rmtree(tmp_path)
+    tmp_path.mkdir(parents=True)
+    run_dir = tmp_path / "run"
+    checkpoint = run_dir / "checkpoints" / "best-epoch.ckpt"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"checkpoint")
+    config = run_dir / "fit.yaml"
+    config.write_text("frozen: true\n", encoding="utf-8")
+    backbone_sha = "a" * 64
+    fit_protocol = run_dir / "fit_protocol.json"
+    fit_protocol.write_text(
+        json.dumps(
+            {
+                "schema": "geobwer.terramind.fit_protocol.v2",
+                "config_sha256": file_sha256(config),
+                "backbone_checkpoint_sha256": backbone_sha,
+                "backbone_revision": TERRAMIND_OFFICIAL_REVISION,
+                "training_length_policy": "fixed_100_epochs_no_early_stopping",
+                "early_stopping_enabled": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "fit_complete.json").write_text(
+        json.dumps(
+            {
+                "checkpoint_sha256": file_sha256(checkpoint),
+                "fit_protocol_sha256": file_sha256(fit_protocol),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "scripts.colab.run_terramind_sen1floods11_final_colab._run",
+        lambda *_args, **_kwargs: pytest.fail("resume unexpectedly executed fit/predict"),
+    )
+    assert _fit_if_needed(
+        config,
+        run_dir,
+        mode="S1",
+        seed=42,
+        backbone_checkpoint_sha256=backbone_sha,
+        dry_run=False,
+        reuse_only=True,
+    ) == checkpoint
+
+    export = _probability_export(tmp_path / "validation", count=89)
+    prediction_config = tmp_path / "predict.yaml"
+    prediction_config.write_text("frozen: true\n", encoding="utf-8")
+    input_quality_sha = "b" * 64
+    (export / "prediction_completion_contract.json").write_text(
+        json.dumps(
+            {
+                "schema": "geobwer.sen1floods11.terramind_prediction_protocol.v1",
+                "config_sha256": file_sha256(prediction_config),
+                "checkpoint_sha256": file_sha256(checkpoint),
+                "input_quality_contract_sha256": input_quality_sha,
+                "imputation_policy": "official_train_band_mean_normalized_zero",
+                "expected_row_count": 89,
+            }
+        ),
+        encoding="utf-8",
+    )
+    _predict_if_needed(
+        prediction_config,
+        checkpoint,
+        export,
+        mode="S1",
+        seed=42,
+        split="validation",
+        expected=89,
+        dry_run=False,
+        input_quality_contract_sha256=input_quality_sha,
+        reuse_only=True,
+    )
+    shutil.rmtree(tmp_path)

@@ -722,6 +722,88 @@ def _spatial_panel_signature(rows: Sequence[Mapping[str, Any]], risks: Sequence[
     ).hexdigest()
 
 
+def write_sen1_descriptive_probability_report(
+    export_dir: str | Path,
+    output_json: str | Path,
+    *,
+    model_name: str,
+    split_role: str,
+    data_root: str | Path | None = None,
+    metadata_csv: str | Path | None = None,
+) -> Path:
+    """Write a non-inferential split summary from an immutable probability export."""
+
+    rows, probabilities, targets, valid_masks = _load_units(
+        export_dir,
+        data_root=data_root,
+        metadata_csv=metadata_csv,
+    )
+    identified = _identified_units(
+        rows,
+        probabilities,
+        targets,
+        valid_masks,
+        context=f"descriptive-only split={split_role}, model={model_name}",
+    )
+    audit_rows, audit_probabilities, audit_targets, audit_valid, support = identified
+    risks = _chip_risks(audit_probabilities, audit_targets, audit_valid)
+    event_values: dict[str, list[float]] = {}
+    for row, risk in zip(audit_rows, risks):
+        event_values.setdefault(str(row["event_id"]), []).append(float(risk))
+    event_summary = {
+        event: {
+            "auditable_sample_count": len(values),
+            "mean_chip_iou_risk": float(np.mean(values)),
+            "maximum_chip_iou_risk": float(np.max(values)),
+        }
+        for event, values in sorted(event_values.items())
+    }
+    payload = {
+        "schema": "geobwer.sen1floods11.descriptive_probability_report.v1",
+        "status": "descriptive_only",
+        "formal_evidence": False,
+        "model": str(model_name),
+        "split_role": str(split_role),
+        "source_probability_export": str(Path(export_dir)),
+        "source_probability_assignment_signature": _spatial_panel_signature(
+            audit_rows, risks
+        ),
+        "risk_definition": "per_chip_one_minus_flood_iou_at_probability_0.5",
+        "source_split_sample_count": int(support["source_split_sample_count"]),
+        "auditable_sample_count": int(support["auditable_sample_count"]),
+        "all_ignore_sample_count": int(support["all_ignore_sample_count"]),
+        "all_ignore_sample_ids": list(support["all_ignore_sample_ids"]),
+        "mean_chip_iou_risk": float(np.mean(risks)),
+        "median_chip_iou_risk": float(np.median(risks)),
+        "minimum_chip_iou_risk": float(np.min(risks)),
+        "maximum_chip_iou_risk": float(np.max(risks)),
+        "event_count": len(event_summary),
+        "events": event_summary,
+        "inferential_geobwer_run": False,
+        "bootstrap_run": False,
+        "significance_claim_permitted": False,
+        "interpretation": (
+            "Descriptive point summaries only. The pre-registered common "
+            "spatial calibration failed, so this report is not a formal "
+            "GeoBWER estimate and carries no inferential claim."
+        ),
+    }
+    output = Path(output_json)
+    if output.exists():
+        previous = json.loads(output.read_text(encoding="utf-8"))
+        if previous != payload:
+            raise Sen1FormalizationError(
+                f"Existing descriptive report is incompatible: {output}."
+            )
+        return output
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return output
+
+
 def calibrate_common_sen1_spatial_blocks(
     validation_exports: Mapping[str, str | Path],
     output_json: str | Path,
@@ -735,11 +817,35 @@ def calibrate_common_sen1_spatial_blocks(
     seed: int = 42,
     beta: float = 0.10,
     minimum_moderate_tail_power: float = 0.80,
+    calibration_panel_scope: str = "all_19_models_unet9_terramind9_prithvi1",
+    expected_model_names: Sequence[str] | None = None,
+    failure_output_json: str | Path | None = None,
+    return_invalid: bool = False,
 ) -> dict[str, Any]:
-    """Choose one validation-only spatial scale shared by all TerraMind modes."""
+    """Choose one validation-only scale shared by a pre-registered model panel.
+
+    A failed calibration is itself formal validation-only evidence.  Callers
+    may request a durable failure report and continue with explicitly
+    descriptive outputs, but a failed report is never accepted by the formal
+    GeoBWER finalizer.
+    """
 
     if not validation_exports:
         raise Sen1FormalizationError("At least one validation probability export is required.")
+    observed_model_names = tuple(sorted(map(str, validation_exports)))
+    expected_names = (
+        tuple(sorted(map(str, expected_model_names)))
+        if expected_model_names is not None
+        else observed_model_names
+    )
+    if observed_model_names != expected_names:
+        missing = sorted(set(expected_names) - set(observed_model_names))
+        unexpected = sorted(set(observed_model_names) - set(expected_names))
+        raise Sen1FormalizationError(
+            "Spatial calibration panel does not match its frozen scope: "
+            f"scope={calibration_panel_scope}, missing={missing}, "
+            f"unexpected={unexpected}."
+        )
     loaded: dict[str, tuple[list[dict[str, Any]], list[float]]] = {}
     input_signatures: dict[str, str] = {}
     support_by_model: dict[str, dict[str, Any]] = {}
@@ -768,12 +874,19 @@ def calibrate_common_sen1_spatial_blocks(
         "seed": seed,
         "beta": beta,
         "minimum_moderate_tail_power": minimum_moderate_tail_power,
+        "calibration_panel_scope": str(calibration_panel_scope),
+        "expected_model_names": list(expected_names),
         "validity_gate": "range_adequacy_and_simulated_coverage_fpr_for_every_model",
     }
     calibration_signature = hashlib.sha256(
         json.dumps(signature_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     output = Path(output_json)
+    failure_output = (
+        Path(failure_output_json)
+        if failure_output_json is not None
+        else output.with_name("calibration_failure_report.json")
+    )
     if output.exists():
         previous = json.loads(output.read_text(encoding="utf-8"))
         if (
@@ -788,6 +901,30 @@ def calibrate_common_sen1_spatial_blocks(
             raise Sen1FormalizationError("The cached common spatial calibration is not valid.")
         print(f"[sen1:spatial-calibration] reusing verified calibration {output}")
         return previous
+    if failure_output.exists():
+        previous = json.loads(failure_output.read_text(encoding="utf-8"))
+        if (
+            previous.get("schema")
+            != "geobwer.sen1floods11.common_spatial_block_calibration_failure.v1"
+            or previous.get("calibration_signature") != calibration_signature
+            or previous.get("calibration_panel_scope")
+            != str(calibration_panel_scope)
+        ):
+            raise Sen1FormalizationError(
+                "Existing spatial-calibration failure evidence is incompatible "
+                "with the current validation panel or protocol. Use a new "
+                "output directory."
+            )
+        if return_invalid:
+            print(
+                "[sen1:spatial-calibration] reusing verified failure report "
+                f"{failure_output}"
+            )
+            return previous
+        raise Sen1FormalizationError(
+            "The cached validation-only common spatial calibration is invalid; "
+            f"see {failure_output}."
+        )
     reports: dict[str, Any] = {}
     passing_by_model: dict[str, set[float]] = {}
     records_by_model: dict[str, dict[float, Any]] = {}
@@ -816,9 +953,87 @@ def calibrate_common_sen1_spatial_blocks(
         }
     common = set.intersection(*passing_by_model.values())
     if not common:
+        alpha = 1.0 - float(confidence_level)
+
+        def failure_reasons(record: Any) -> list[str]:
+            reasons: list[str] = []
+            if int(record.valid_simulations) != int(n_simulations):
+                reasons.append("incomplete_valid_simulations")
+            if not bool(record.range_adequate):
+                reasons.append("spatial_range_not_adequate")
+            if float(record.null_coverage_ci_high) < float(confidence_level):
+                reasons.append("coverage_gate_failed")
+            if float(record.false_positive_ci_low) > alpha:
+                reasons.append("false_positive_rate_gate_failed")
+            if not reasons and not bool(record.passes):
+                reasons.append("unspecified_frozen_gate_failure")
+            return reasons
+
+        failures_by_cell: dict[str, Any] = {}
+        for cell in sorted(map(float, candidate_cell_km)):
+            failed_models: list[str] = []
+            model_failures: dict[str, list[str]] = {}
+            for model_name in expected_names:
+                record = records_by_model[model_name][cell]
+                if not bool(record.passes):
+                    failed_models.append(model_name)
+                    model_failures[model_name] = failure_reasons(record)
+            failures_by_cell[str(cell)] = {
+                "cell_km": cell,
+                "failed_models": failed_models,
+                "failure_reasons_by_model": model_failures,
+            }
+        failure_payload = {
+            "schema": (
+                "geobwer.sen1floods11."
+                "common_spatial_block_calibration_failure.v1"
+            ),
+            "status": "calibration_invalid",
+            "formal_evidence": True,
+            "validation_only": True,
+            "selection_data": "validation_only",
+            "validity": Validity.SPATIAL_BLOCK_NOT_CALIBRATED.value,
+            "inferential_geobwer_permitted": False,
+            "bootstrap_significance_permitted": False,
+            "model_panel_inference_permitted": False,
+            "calibration_panel_scope": str(calibration_panel_scope),
+            "model_names": list(expected_names),
+            "model_count": len(expected_names),
+            "models": reports,
+            "candidate_cell_km": [float(value) for value in candidate_cell_km],
+            "common_passing_cells": [],
+            "failures_by_cell": failures_by_cell,
+            "validity_gate": (
+                "range_adequacy_and_simulated_coverage_fpr_for_every_model"
+            ),
+            "power_role": "reported_and_candidate_ranking_not_validity",
+            "confidence_level": confidence_level,
+            "n_simulations": n_simulations,
+            "n_bootstrap": n_bootstrap,
+            "seed": seed,
+            "beta": beta,
+            "minimum_moderate_tail_power": minimum_moderate_tail_power,
+            "calibration_signature": calibration_signature,
+            "validation_input_signatures": input_signatures,
+            "validation_label_support": support_by_model,
+            "message": (
+                "No candidate spatial block size passed the frozen coverage/FPR "
+                "gates for every model in the pre-registered calibration panel. "
+                "Test and Bolivia may be summarized descriptively, but no "
+                "scale-dependent inferential GeoBWER is valid."
+            ),
+        }
+        failure_output.parent.mkdir(parents=True, exist_ok=True)
+        failure_output.write_text(
+            json.dumps(failure_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        if return_invalid:
+            return failure_payload
         raise Sen1FormalizationError(
-            "No spatial block size passed coverage/FPR gates for every sensor mode. Keep Sen1 inference descriptive; "
-            "do not choose a scale from test results."
+            "No spatial block size passed the frozen coverage/FPR gates for "
+            f"all models in scope={calibration_panel_scope}. See "
+            f"{failure_output}; do not choose a scale from test results."
         )
     ranked = sorted(
         common,
@@ -833,6 +1048,9 @@ def calibrate_common_sen1_spatial_blocks(
         "schema": "geobwer.sen1floods11.common_spatial_block_calibration.v2",
         "validity": Validity.VALID.value,
         "all_models_passed": True,
+        "calibration_panel_scope": str(calibration_panel_scope),
+        "expected_model_names": list(expected_names),
+        "model_count": len(expected_names),
         "selection_data": "validation_only",
         "models": reports,
         "candidate_cell_km": [float(value) for value in candidate_cell_km],
@@ -1132,6 +1350,7 @@ __all__ = [
     "finalize_sen1_probability_export",
     "finalize_sen1floods11_segmentation",
     "load_sen1_probability_units",
+    "write_sen1_descriptive_probability_report",
     "write_sen1_evaluation_split_report",
     "write_sen1_probability_export",
 ]

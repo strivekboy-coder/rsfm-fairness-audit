@@ -32,13 +32,18 @@ from rsfm_fairness_audit.adapters.terramind import (  # noqa: E402
 from rsfm_fairness_audit.bwer_protocol import BWERProtocol  # noqa: E402
 from rsfm_fairness_audit.geobwer_extensions import run_segmentation_uncertainty_suite  # noqa: E402
 from rsfm_fairness_audit.geobwer_panel import run_geobwer_model_panel  # noqa: E402
-from rsfm_fairness_audit.persistent_cache import hydrate_output, persist_output  # noqa: E402
+from rsfm_fairness_audit.persistent_cache import (  # noqa: E402
+    copy_changed_tree,
+    hydrate_output,
+    persist_output,
+)
 from rsfm_fairness_audit.probe_selection import group_disjoint_inner_split  # noqa: E402
 from rsfm_fairness_audit.sen1floods11_formal import (  # noqa: E402
     calibrate_common_sen1_spatial_blocks,
     combine_sen1_evaluation_exports,
     finalize_sen1floods11_segmentation,
     load_sen1_probability_units,
+    write_sen1_descriptive_probability_report,
     write_sen1_evaluation_split_report,
 )
 from rsfm_fairness_audit.sen1_input_quality import (  # noqa: E402
@@ -55,6 +60,18 @@ from rsfm_fairness_audit.terramind_sen1_config import (  # noqa: E402
 
 MODES = ("S1", "S2", "S1+S2")
 SMOKE_BATCH_LIMIT = 2
+CALIBRATION_PANEL_SCOPE = "all_19_models_unet9_terramind9_prithvi1"
+
+
+def _expected_calibration_model_names() -> tuple[str, ...]:
+    names = [
+        f"{prefix}_{mode.lower().replace('+', '_plus_')}_seed_{seed}"
+        for prefix in ("resnet34_unet", "terramind_v1_base")
+        for mode in MODES
+        for seed in (42, 73, 101)
+    ]
+    names.append("prithvi_eo_v2_300_tl_s2")
+    return tuple(sorted(names))
 
 
 def _csv_ints(value: str) -> tuple[int, ...]:
@@ -104,6 +121,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--persistent-output-dir",
         type=Path,
         help="Drive mirror for completed stages. Keep --output-dir on /content; never train directly on Drive.",
+    )
+    parser.add_argument(
+        "--resume-source-root",
+        type=Path,
+        help=(
+            "Read-only frozen Drive root from a prior calibration-failed run. "
+            "Its verified fit/checkpoint and validation prediction contracts "
+            "are copied to local scratch; all new evidence is persisted only "
+            "to --persistent-output-dir."
+        ),
     )
     parser.add_argument("--metadata-csv", type=Path)
     parser.add_argument("--protocol", type=Path, default=PROJECT_ROOT / "configs/geobwer/sen1floods11.yaml")
@@ -795,6 +822,7 @@ def _fit_if_needed(
     seed: int,
     backbone_checkpoint_sha256: str,
     dry_run: bool,
+    reuse_only: bool = False,
 ) -> Path | None:
     protocol_path = run_dir / "fit_protocol.json"
     current_protocol = {
@@ -825,6 +853,11 @@ def _fit_if_needed(
         ):
             print(f"[terramind:campaign] reusing complete checkpoint {best}")
             return best
+    if reuse_only:
+        raise RuntimeError(
+            "--resume-source-root forbids fitting, but the hydrated "
+            f"fit_complete/checkpoint contract is missing or incompatible: {run_dir}."
+        )
     if dry_run:
         return best
     command = _terratorch_command() + ["fit", "-c", str(config)]
@@ -861,6 +894,7 @@ def _predict_if_needed(
     expected: int,
     dry_run: bool,
     input_quality_contract_sha256: str,
+    reuse_only: bool = False,
 ) -> None:
     prediction_protocol = {
         "schema": "geobwer.sen1floods11.terramind_prediction_protocol.v1",
@@ -891,6 +925,11 @@ def _predict_if_needed(
             )
         print(f"[terramind:campaign] reusing complete probability export {output}")
         return
+    if reuse_only:
+        raise RuntimeError(
+            "--resume-source-root forbids regenerating the frozen validation "
+            f"probabilities, but their completion contract is missing or incompatible: {output}."
+        )
     if dry_run:
         return
     if checkpoint is None:
@@ -923,7 +962,7 @@ def main() -> None:
         runtime_version = validate_terratorch_runtime()
         if runtime_version != "1.2.10":
             raise RuntimeError(
-                "The frozen v0.4.30 formal TerraMind campaign requires "
+                "The frozen formal TerraMind campaign requires "
                 f"TerraTorch 1.2.10; observed={runtime_version}."
             )
         local_text = args.output_dir.as_posix().rstrip("/")
@@ -944,6 +983,19 @@ def main() -> None:
                 "output directory and a persistent mirror under "
                 "/content/drive/MyDrive/rsfm_fairness_audit/."
             )
+        if args.resume_source_root is not None:
+            resume_text = args.resume_source_root.as_posix().rstrip("/")
+            if (
+                not resume_text.startswith(
+                    "/content/drive/MyDrive/rsfm_fairness_audit/"
+                )
+                or resume_text == persistent_text
+            ):
+                raise RuntimeError(
+                    "--resume-source-root must be a distinct, read-only Drive "
+                    "root under the project directory. New artifacts must use "
+                    "a different --persistent-output-dir."
+                )
     if args.dry_run and not args.checkpoint.is_file():
         backbone_checkpoint_sha256 = TERRAMIND_OFFICIAL_SHA256
         print(
@@ -1010,6 +1062,16 @@ def main() -> None:
             raise RuntimeError(f"Duplicate --additional-validation-export name: {name}")
         external_validation_exports[name] = path
     hydrate_output(args.output_dir, args.persistent_output_dir)
+    if args.resume_source_root is not None:
+        if not args.resume_source_root.is_dir():
+            raise RuntimeError(
+                f"Frozen resume source does not exist: {args.resume_source_root}."
+            )
+        copy_changed_tree(
+            args.resume_source_root,
+            args.output_dir,
+            label="hydrate-read-only-calibration-failed-source",
+        )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     source_report = prepare_terramind_sen1_splits(
         {
@@ -1112,6 +1174,22 @@ def main() -> None:
                 },
                 "audited_supervised_lineage": audited_supervised_lineage,
                 "prithvi_lineage": prithvi_lineage,
+                "calibration_panel_scope": CALIBRATION_PANEL_SCOPE,
+                "expected_calibration_model_names": list(
+                    _expected_calibration_model_names()
+                ),
+                "resume_source": (
+                    {
+                        "path": str(args.resume_source_root),
+                        "read_only": True,
+                        "new_persistent_output_is_distinct": True,
+                        "fit_and_validation_policy": (
+                            "completion_contract_match_or_hard_fail_no_reexecution"
+                        ),
+                    }
+                    if args.resume_source_root is not None
+                    else None
+                ),
                 "model_selection": {
                     str(seed): {
                         "policy": "official_train_inner_event_disjoint",
@@ -1340,6 +1418,7 @@ def main() -> None:
                 seed=seed,
                 backbone_checkpoint_sha256=backbone_checkpoint_sha256,
                 dry_run=args.dry_run,
+                reuse_only=args.resume_source_root is not None,
             )
             _persist_with_log(
                 run_dir,
@@ -1366,6 +1445,7 @@ def main() -> None:
                     if not args.dry_run
                     else "dry_run_not_executed"
                 ),
+                reuse_only=args.resume_source_root is not None,
             )
             if not args.dry_run:
                 _bind_input_quality(
@@ -1440,8 +1520,19 @@ def main() -> None:
         print(f"[terramind:campaign] dry-run configs ready under {args.output_dir}")
         return
 
+    expected_calibration_models = _expected_calibration_model_names()
+    observed_calibration_models = tuple(sorted(validation_exports))
+    if observed_calibration_models != expected_calibration_models:
+        raise RuntimeError(
+            "Frozen 19-model calibration panel mismatch before calibration: "
+            f"expected={list(expected_calibration_models)}, "
+            f"observed={list(observed_calibration_models)}."
+        )
     calibration_path = args.output_dir / "common_spatial_block_calibration.json"
-    calibrate_common_sen1_spatial_blocks(
+    calibration_failure_path = (
+        args.output_dir / "calibration_failure_report.json"
+    )
+    calibration = calibrate_common_sen1_spatial_blocks(
         validation_exports,
         calibration_path,
         metadata_csv=args.metadata_csv,
@@ -1449,11 +1540,55 @@ def main() -> None:
         n_bootstrap=args.calibration_bootstrap,
         seed=seeds[0],
         minimum_moderate_tail_power=args.minimum_moderate_tail_power,
+        calibration_panel_scope=CALIBRATION_PANEL_SCOPE,
+        expected_model_names=expected_calibration_models,
+        failure_output_json=calibration_failure_path,
+        return_invalid=True,
     )
+    calibration_valid = (
+        calibration.get("validity") == "valid"
+        and calibration.get("all_models_passed") is True
+    )
+    if not calibration_valid:
+        invalid_contract = args.output_dir / "calibration_invalid_contract.json"
+        invalid_contract.write_text(
+            json.dumps(
+                {
+                    "schema": (
+                        "geobwer.sen1floods11."
+                        "terramind_calibration_invalid.v1"
+                    ),
+                    "status": "calibration_invalid",
+                    "formal_evidence": True,
+                    "validation_only": True,
+                    "calibration_panel_scope": CALIBRATION_PANEL_SCOPE,
+                    "model_count": len(expected_calibration_models),
+                    "model_names": list(expected_calibration_models),
+                    "calibration_failure_report": _artifact_record(
+                        calibration_failure_path, args.output_dir
+                    ),
+                    "test_or_bolivia_used_for_calibration": False,
+                    "permitted_next_stage": (
+                        "descriptive_test_and_bolivia_probability_export_only"
+                    ),
+                    "prohibited": [
+                        "scale_dependent_inferential_geobwer",
+                        "bootstrap_significance",
+                        "model_panel_inference",
+                    ],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
     _persist_with_log(
         args.output_dir,
         args.persistent_output_dir,
-        label="spatial-calibration",
+        label=(
+            "spatial-calibration"
+            if calibration_valid
+            else "spatial-calibration-invalid-evidence"
+        ),
     )
     terratorch_version = importlib.metadata.version("terratorch")
     panel_tables: dict[str, Path] = {}
@@ -1543,6 +1678,105 @@ def main() -> None:
                 bolivia_exports[run_name],
                 run_dir / "probabilities" / "combined_held_out",
             )
+            if not calibration_valid:
+                descriptive_root = run_dir / "descriptive_only_outputs"
+                descriptive_paths = {
+                    "validation": write_sen1_descriptive_probability_report(
+                        validation_exports[run_name],
+                        descriptive_root / "validation.json",
+                        model_name=run_name,
+                        split_role="validation_calibration_population",
+                        metadata_csv=args.metadata_csv,
+                    ),
+                    "standard_test": write_sen1_descriptive_probability_report(
+                        test_exports[run_name],
+                        descriptive_root / "standard_test.json",
+                        model_name=run_name,
+                        split_role="standard_test",
+                        metadata_csv=args.metadata_csv,
+                    ),
+                    "bolivia_holdout": write_sen1_descriptive_probability_report(
+                        bolivia_exports[run_name],
+                        descriptive_root / "bolivia_holdout.json",
+                        model_name=run_name,
+                        split_role="bolivia_holdout",
+                        metadata_csv=args.metadata_csv,
+                    ),
+                    "combined_held_out": write_sen1_descriptive_probability_report(
+                        combined_export,
+                        descriptive_root / "combined_held_out.json",
+                        model_name=run_name,
+                        split_role="combined_held_out",
+                        metadata_csv=args.metadata_csv,
+                    ),
+                }
+                split_report = descriptive_root / "descriptive_split_report.json"
+                split_report.write_text(
+                    json.dumps(
+                        {
+                            "schema": (
+                                "geobwer.sen1floods11."
+                                "descriptive_split_panel.v1"
+                            ),
+                            "status": "descriptive_only",
+                            "formal_evidence": False,
+                            "model": run_name,
+                            "calibration_status": "calibration_invalid",
+                            "calibration_failure_report_sha256": file_sha256(
+                                calibration_failure_path
+                            ),
+                            "views": {
+                                name: json.loads(path.read_text(encoding="utf-8"))
+                                for name, path in descriptive_paths.items()
+                            },
+                            "inferential_geobwer_run": False,
+                            "bootstrap_run": False,
+                            "model_panel_inference_run": False,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                run_artifact_paths = {
+                    "checkpoint": checkpoints[run_name],
+                    "fit_protocol": run_dir / "fit_protocol.json",
+                    "fit_completion": run_dir / "fit_complete.json",
+                    "validation_prediction_contract": (
+                        validation_exports[run_name]
+                        / "prediction_completion_contract.json"
+                    ),
+                    "test_prediction_contract": (
+                        test_exports[run_name]
+                        / "prediction_completion_contract.json"
+                    ),
+                    "bolivia_prediction_contract": (
+                        bolivia_exports[run_name]
+                        / "prediction_completion_contract.json"
+                    ),
+                    "descriptive_split_report": split_report,
+                    **{
+                        f"descriptive_{name}": path
+                        for name, path in descriptive_paths.items()
+                    },
+                }
+                completed_run_artifacts[run_name] = {
+                    key: _artifact_record(Path(path), args.output_dir)
+                    for key, path in run_artifact_paths.items()
+                    if path is not None
+                }
+                _persist_with_log(
+                    run_dir,
+                    (
+                        args.persistent_output_dir / slug / f"seed_{seed}"
+                        if args.persistent_output_dir
+                        else None
+                    ),
+                    label=f"{run_name}-descriptive-only",
+                    mode=mode,
+                    seed=seed,
+                )
+                continue
             standard_bundle = finalize_sen1floods11_segmentation(
                 test_exports[run_name],
                 run_dir / "formal_outputs" / "standard_test",
@@ -1644,7 +1878,7 @@ def main() -> None:
                 calibration_rows,
                 calibration_probabilities,
                 calibration_targets,
-                calibration_valid,
+                calibration_valid_masks,
             ) = load_sen1_probability_units(
                 validation_exports[run_name], metadata_csv=args.metadata_csv
             )
@@ -1659,7 +1893,7 @@ def main() -> None:
                 run_dir / "uncertainty_extensions",
                 protocol=resolved_protocol,
                 group_columns=("event_id",),
-                calibration_valid_masks=calibration_valid,
+                calibration_valid_masks=calibration_valid_masks,
                 calibration_sample_ids=[
                     str(row["sample_id"]) for row in calibration_rows
                 ],
@@ -1711,6 +1945,78 @@ def main() -> None:
                 mode=mode,
                 seed=seed,
             )
+    if not calibration_valid:
+        expected_run_names = {
+            f"terramind_v1_base_{mode.lower().replace('+', '_plus_')}_seed_{seed}"
+            for mode in MODES
+            for seed in (42, 73, 101)
+        }
+        if set(completed_run_artifacts) != expected_run_names:
+            raise RuntimeError(
+                "Descriptive-only completion requires all nine TerraMind "
+                "test/Bolivia exports; observed="
+                f"{sorted(completed_run_artifacts)}."
+            )
+        completion_contract = (
+            args.output_dir / "descriptive_only_completion_contract.json"
+        )
+        completion_payload = {
+            "schema": (
+                "geobwer.sen1floods11."
+                "terramind_descriptive_only_panel.v1"
+            ),
+            "status": "descriptive_only_complete",
+            "formal_evidence": False,
+            "package_version": __version__,
+            "code_commit": frozen_code_commit,
+            "terratorch_version": terratorch_version,
+            "calibration_panel_scope": CALIBRATION_PANEL_SCOPE,
+            "calibration_failure_report": _artifact_record(
+                calibration_failure_path, args.output_dir
+            ),
+            "calibration_invalid_contract": _artifact_record(
+                args.output_dir / "calibration_invalid_contract.json",
+                args.output_dir,
+            ),
+            "validation_only_calibration": True,
+            "test_or_bolivia_used_for_calibration": False,
+            "run_count": len(completed_run_artifacts),
+            "runs": completed_run_artifacts,
+            "resume_source_root": (
+                str(args.resume_source_root)
+                if args.resume_source_root is not None
+                else None
+            ),
+            "inference_disabled": {
+                "scale_dependent_geobwer": True,
+                "bootstrap_significance": True,
+                "model_panel": True,
+            },
+            "permitted_claim": (
+                "descriptive split-level point summaries only"
+            ),
+        }
+        if completion_contract.exists():
+            previous = json.loads(
+                completion_contract.read_text(encoding="utf-8")
+            )
+            if previous != completion_payload:
+                raise RuntimeError(
+                    "Existing descriptive-only completion contract drifted. "
+                    "Use a new output directory."
+                )
+        else:
+            completion_contract.write_text(
+                json.dumps(completion_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        _persist_with_log(
+            args.output_dir,
+            args.persistent_output_dir,
+            label="campaign-descriptive-only-complete",
+        )
+        print("SEN1_TERRAMIND_STATUS=descriptive_only_complete")
+        return
     if set(modes) == set(MODES):
         if panel_protocol is None:
             raise RuntimeError("Internal error: the Sen1 model-panel protocol was not resolved.")

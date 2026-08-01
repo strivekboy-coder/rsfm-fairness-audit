@@ -11,13 +11,21 @@ from rsfm_fairness_audit.io import read_csv_rows, write_csv
 from rsfm_fairness_audit.formal_outputs import file_sha256
 from rsfm_fairness_audit.sen1floods11_formal import (
     Sen1FormalizationError,
+    calibrate_common_sen1_spatial_blocks,
     combine_sen1_evaluation_exports,
     finalize_sen1_probability_export,
     finalize_sen1floods11_segmentation,
     load_sen1_probability_units,
+    write_sen1_descriptive_probability_report,
     write_sen1_evaluation_split_report,
     write_sen1_probability_export,
 )
+from rsfm_fairness_audit.bwer_inference import (
+    BlockCandidateCalibration,
+    SpatialBlockCalibration,
+    SpatialRangeEstimate,
+)
+from rsfm_fairness_audit.bwer_protocol import Validity
 from rsfm_fairness_audit.terratorch_exports import write_probability_batch
 
 
@@ -564,3 +572,160 @@ def test_supervised_smoke_subset_rejects_one_event_training_data():
             8,
             require_multiple_groups=True,
         )
+
+
+def _synthetic_calibration_export(root: Path, model: str) -> tuple[Path, Path]:
+    export = write_sen1_probability_export(
+        root / model,
+        probabilities=[
+            np.full((2, 2), 0.2, dtype=np.float32),
+            np.full((2, 2), 0.8, dtype=np.float32),
+            np.full((2, 2), 0.6, dtype=np.float32),
+        ],
+        targets=[
+            np.asarray([[0, 0], [1, 1]], dtype=np.int16),
+            np.asarray([[1, 1], [0, 0]], dtype=np.int16),
+            np.asarray([[1, 0], [1, 0]], dtype=np.int16),
+        ],
+        filenames=[
+            "Ghana_001_S2Hand.tif",
+            "Pakistan_001_S2Hand.tif",
+            "Pakistan_002_S2Hand.tif",
+        ],
+    )
+    metadata = root / "calibration_metadata.csv"
+    if not metadata.exists():
+        write_csv(
+            metadata,
+            [
+                {"sample_id": "Ghana_001", "event_id": "Ghana", "latitude": 6.0, "longitude": -1.0},
+                {"sample_id": "Pakistan_001", "event_id": "Pakistan", "latitude": 30.0, "longitude": 70.0},
+                {"sample_id": "Pakistan_002", "event_id": "Pakistan", "latitude": 30.2, "longitude": 70.2},
+            ],
+        )
+    return export, metadata
+
+
+def _fake_spatial_calibration(*_args, pass_cell: float | None, **kwargs):
+    candidates = []
+    for cell in kwargs["candidate_cell_km"]:
+        passed = pass_cell is not None and float(cell) == float(pass_cell)
+        candidates.append(
+            BlockCandidateCalibration(
+                cell_km=float(cell),
+                cluster_count=6,
+                range_adequate=passed,
+                valid_simulations=int(kwargs["n_simulations"]),
+                null_coverage=0.96 if passed else 0.70,
+                null_coverage_ci_low=0.91 if passed else 0.60,
+                null_coverage_ci_high=0.99 if passed else 0.79,
+                false_positive_rate=0.01 if passed else 0.20,
+                false_positive_ci_low=0.0 if passed else 0.12,
+                false_positive_ci_high=0.04 if passed else 0.30,
+                moderate_tail_power=0.85,
+                moderate_tail_power_ci_low=0.80,
+                moderate_tail_power_ci_high=0.90,
+                power_target_met=True,
+                passes=passed,
+            )
+        )
+    return SpatialBlockCalibration(
+        validity=(Validity.VALID if pass_cell is not None else Validity.SPATIAL_BLOCK_NOT_CALIBRATED),
+        selected_cell_km=pass_cell,
+        range_estimate=SpatialRangeEstimate(40.0, 0.2, 3, (), ()),
+        candidates=tuple(candidates),
+        simulation_repetitions=int(kwargs["n_simulations"]),
+    )
+
+
+def test_common_spatial_calibration_records_explicit_panel_scope(monkeypatch):
+    first, metadata = _synthetic_calibration_export(WORK, "model_a")
+    second, _ = _synthetic_calibration_export(WORK, "model_b")
+    monkeypatch.setattr(
+        "rsfm_fairness_audit.sen1floods11_formal.calibrate_spatial_block_scale",
+        lambda *args, **kwargs: _fake_spatial_calibration(
+            *args, pass_cell=50.0, **kwargs
+        ),
+    )
+    result = calibrate_common_sen1_spatial_blocks(
+        {"model_a": first, "model_b": second},
+        WORK / "common.json",
+        metadata_csv=metadata,
+        candidate_cell_km=(25.0, 50.0),
+        n_simulations=100,
+        n_bootstrap=10,
+        calibration_panel_scope="synthetic_two_model_panel",
+        expected_model_names=("model_a", "model_b"),
+    )
+    assert result["validity"] == "valid"
+    assert result["selected_cell_km"] == 50.0
+    assert result["calibration_panel_scope"] == "synthetic_two_model_panel"
+    assert result["model_count"] == 2
+
+
+def test_common_spatial_calibration_writes_auditable_invalid_branch(monkeypatch):
+    first, metadata = _synthetic_calibration_export(WORK, "model_a")
+    second, _ = _synthetic_calibration_export(WORK, "model_b")
+    monkeypatch.setattr(
+        "rsfm_fairness_audit.sen1floods11_formal.calibrate_spatial_block_scale",
+        lambda *args, **kwargs: _fake_spatial_calibration(
+            *args, pass_cell=None, **kwargs
+        ),
+    )
+    failure = WORK / "calibration_failure_report.json"
+    result = calibrate_common_sen1_spatial_blocks(
+        {"model_a": first, "model_b": second},
+        WORK / "common.json",
+        metadata_csv=metadata,
+        candidate_cell_km=(25.0, 50.0),
+        n_simulations=100,
+        n_bootstrap=10,
+        calibration_panel_scope="synthetic_two_model_panel",
+        expected_model_names=("model_a", "model_b"),
+        failure_output_json=failure,
+        return_invalid=True,
+    )
+    assert not (WORK / "common.json").exists()
+    assert result["status"] == "calibration_invalid"
+    assert result["validation_only"] is True
+    assert result["common_passing_cells"] == []
+    assert result["inferential_geobwer_permitted"] is False
+    assert set(result["failures_by_cell"]["25.0"]["failed_models"]) == {
+        "model_a",
+        "model_b",
+    }
+    assert failure.is_file()
+    descriptive = write_sen1_descriptive_probability_report(
+        first,
+        WORK / "descriptive.json",
+        model_name="model_a",
+        split_role="standard_test",
+        metadata_csv=metadata,
+    )
+    descriptive_payload = json.loads(descriptive.read_text(encoding="utf-8"))
+    assert descriptive_payload["status"] == "descriptive_only"
+    assert descriptive_payload["inferential_geobwer_run"] is False
+    assert descriptive_payload["bootstrap_run"] is False
+
+
+def test_common_spatial_calibration_rejects_wrong_panel_before_simulation(monkeypatch):
+    first, metadata = _synthetic_calibration_export(WORK, "model_a")
+    called = False
+
+    def should_not_run(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("calibration should not run")
+
+    monkeypatch.setattr(
+        "rsfm_fairness_audit.sen1floods11_formal.calibrate_spatial_block_scale",
+        should_not_run,
+    )
+    with pytest.raises(Sen1FormalizationError, match="frozen scope"):
+        calibrate_common_sen1_spatial_blocks(
+            {"model_a": first},
+            WORK / "common.json",
+            metadata_csv=metadata,
+            expected_model_names=("model_a", "model_b"),
+        )
+    assert called is False
