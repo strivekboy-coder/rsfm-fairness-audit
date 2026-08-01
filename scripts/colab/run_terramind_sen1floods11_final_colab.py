@@ -1253,8 +1253,18 @@ def main() -> None:
                 "fast_dev_run": False,
                 "diagnostic_batch_limit": SMOKE_BATCH_LIMIT if args.smoke_only else None,
                 "persistent_checkpoint_dir": (
-                    args.persistent_output_dir / slug / f"seed_{seed}" / "checkpoints"
-                    if args.persistent_output_dir is not None
+                    (
+                        args.resume_source_root
+                        if args.resume_source_root is not None
+                        else args.persistent_output_dir
+                    )
+                    / slug
+                    / f"seed_{seed}"
+                    / "checkpoints"
+                    if (
+                        args.resume_source_root is not None
+                        or args.persistent_output_dir is not None
+                    )
                     else None
                 ),
                 "checkpoint_mirror_every_n_epochs": args.checkpoint_mirror_every_n_epochs,
