@@ -94,35 +94,98 @@ def _safe_roots(source_roots: Sequence[Path], output_dir: Path) -> None:
             )
 
 
-def _merge_metadata(paths: Sequence[str | Path], output: Path) -> Path:
+def _metadata_rows(path: str | Path, *, label: str) -> dict[str, dict[str, Any]]:
+    source = Path(path)
+    if not source.is_file():
+        raise Sen119ModelDescriptiveError(f"{label} metadata CSV is missing: {source}")
     by_id: dict[str, dict[str, Any]] = {}
-    fieldnames: list[str] = []
-    for raw in paths:
-        path = Path(raw)
-        if not path.is_file():
-            raise Sen119ModelDescriptiveError(f"Metadata CSV is missing: {path}")
-        for row in read_csv_rows(path):
-            sample_id = str(row.get("sample_id") or row.get("chip_id") or "").strip()
-            if not sample_id:
-                raise Sen119ModelDescriptiveError(f"Metadata row lacks sample_id/chip_id: {path}")
-            normalized = {str(key): value for key, value in row.items()}
-            previous = by_id.get(sample_id)
-            if previous is not None and previous != normalized:
-                raise Sen119ModelDescriptiveError(f"Conflicting metadata for sample_id={sample_id}.")
-            by_id[sample_id] = normalized
-            for key in normalized:
-                if key not in fieldnames:
-                    fieldnames.append(key)
-    if len(by_id) != 446:
+    for row in read_csv_rows(source):
+        sample_id = str(row.get("sample_id") or row.get("chip_id") or "").strip()
+        if not sample_id:
+            raise Sen119ModelDescriptiveError(
+                f"{label} metadata row lacks sample_id/chip_id: {source}"
+            )
+        if sample_id in by_id:
+            raise Sen119ModelDescriptiveError(
+                f"Duplicate {label} metadata sample_id={sample_id}: {source}"
+            )
+        by_id[sample_id] = {str(key): value for key, value in row.items()}
+    return by_id
+
+
+def _merge_metadata(
+    *,
+    core_metadata_csv: str | Path,
+    bolivia_metadata_csv: str | Path,
+    geospatial_metadata_csv: str | Path,
+    output: Path,
+) -> Path:
+    core = _metadata_rows(core_metadata_csv, label="core431")
+    bolivia = _metadata_rows(bolivia_metadata_csv, label="Bolivia15")
+    overlap = sorted(set(core) & set(bolivia))
+    if overlap:
         raise Sen119ModelDescriptiveError(
-            f"The merged official Sen1 metadata must bind 446 chips; observed={len(by_id)}."
+            f"Core and Bolivia attribute metadata overlap: {overlap[:5]}."
         )
+    attributes = {**core, **bolivia}
+    coordinates = _metadata_rows(
+        geospatial_metadata_csv, label="authoritative geospatial446"
+    )
+    if len(core) != 431 or len(bolivia) != 15 or len(attributes) != 446:
+        raise Sen119ModelDescriptiveError(
+            "Attribute metadata must contain exactly core431 + Bolivia15 unique chips: "
+            f"core={len(core)}, bolivia={len(bolivia)}, union={len(attributes)}."
+        )
+    if len(coordinates) != 446 or set(coordinates) != set(attributes):
+        missing = sorted(set(attributes) - set(coordinates))
+        extra = sorted(set(coordinates) - set(attributes))
+        raise Sen119ModelDescriptiveError(
+            "Authoritative geospatial metadata must join one-to-one to all 446 chips: "
+            f"rows={len(coordinates)}, missing={missing[:5]}, extra={extra[:5]}."
+        )
+    joined: dict[str, dict[str, Any]] = {}
+    fieldnames: list[str] = []
+    coordinate_aliases = {"latitude", "longitude", "lat", "lon", "lng"}
+    for sample_id in sorted(attributes):
+        attribute_row = {
+            key: value
+            for key, value in attributes[sample_id].items()
+            if key.lower() not in coordinate_aliases and key not in {"chip_id"}
+        }
+        coordinate_row = coordinates[sample_id]
+        try:
+            latitude = float(coordinate_row["latitude"])
+            longitude = float(coordinate_row["longitude"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise Sen119ModelDescriptiveError(
+                f"Invalid authoritative latitude/longitude for sample_id={sample_id}."
+            ) from exc
+        if not np.isfinite(latitude) or not np.isfinite(longitude):
+            raise Sen119ModelDescriptiveError(
+                f"Non-finite authoritative coordinate for sample_id={sample_id}."
+            )
+        if not (-90.0 <= latitude <= 90.0 and -180.0 <= longitude <= 180.0):
+            raise Sen119ModelDescriptiveError(
+                f"Out-of-range authoritative coordinate for sample_id={sample_id}: "
+                f"latitude={latitude}, longitude={longitude}."
+            )
+        normalized = {
+            **attribute_row,
+            "sample_id": sample_id,
+            "latitude": latitude,
+            "longitude": longitude,
+            "coordinate_source": "sen1_geospatial_metadata_446_v0426",
+        }
+        joined[sample_id] = normalized
+        for key in normalized:
+            if key not in fieldnames:
+                fieldnames.append(key)
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
-        for sample_id in sorted(by_id):
-            writer.writerow(by_id[sample_id])
+        for sample_id in sorted(joined):
+            writer.writerow(joined[sample_id])
     return output
 
 
@@ -358,7 +421,9 @@ def run_sen1_19model_descriptive_postprocess(
     unet_root: str | Path,
     prithvi_root: str | Path,
     terramind_root: str | Path,
-    metadata_csvs: Sequence[str | Path],
+    core_metadata_csv: str | Path,
+    bolivia_metadata_csv: str | Path,
+    geospatial_metadata_csv: str | Path,
     audit_evidence: Sequence[str | Path],
     output_dir: str | Path,
     code_commit: str,
@@ -376,7 +441,12 @@ def run_sen1_19model_descriptive_postprocess(
             f"Non-empty incomplete output exists; use a new directory: {output}"
         )
     output.mkdir(parents=True, exist_ok=True)
-    merged_metadata = _merge_metadata(metadata_csvs, output / "official_446_metadata_binding.csv")
+    merged_metadata = _merge_metadata(
+        core_metadata_csv=core_metadata_csv,
+        bolivia_metadata_csv=bolivia_metadata_csv,
+        geospatial_metadata_csv=geospatial_metadata_csv,
+        output=output / "official_446_metadata_binding.csv",
+    )
     evidence_records = []
     for raw in audit_evidence:
         path = Path(raw)
@@ -484,6 +554,23 @@ def run_sen1_19model_descriptive_postprocess(
             for spec in specs
         ],
         "official_metadata_sha256": file_sha256(merged_metadata),
+        "metadata_sources": {
+            "coordinate_authority": {
+                "path": str(Path(geospatial_metadata_csv)),
+                "sha256": file_sha256(geospatial_metadata_csv),
+                "role": "exclusive_latitude_longitude_source",
+            },
+            "core431_attributes": {
+                "path": str(Path(core_metadata_csv)),
+                "sha256": file_sha256(core_metadata_csv),
+                "role": "event_split_and_noncoordinate_attributes_only",
+            },
+            "bolivia15_attributes": {
+                "path": str(Path(bolivia_metadata_csv)),
+                "sha256": file_sha256(bolivia_metadata_csv),
+                "role": "event_split_and_noncoordinate_attributes_only",
+            },
+        },
         "audit_evidence": evidence_records,
         "probability_inventory": source_inventory,
         "risk_definition": RISK_DEFINITION,

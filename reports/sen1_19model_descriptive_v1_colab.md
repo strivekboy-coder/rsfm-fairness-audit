@@ -23,10 +23,12 @@ command = [
     '--terramind-root', f'{DRIVE}/outputs/geobwer_final_v3/sen1_geobwer_v0434/terramind_final',
     '--core-metadata', f'{DRIVE}/cache/sen1_prithvi_tl/metadata.csv',
     '--bolivia-metadata', f'{DRIVE}/cache/sen1_prithvi_tl_bolivia15_v0432/metadata.csv',
+    '--geospatial-metadata', f'{DRIVE}/cache/sen1floods11/sen1_geospatial_metadata_446_v0426.csv',
     '--unet-audit', f'{DRIVE}/outputs/geobwer_final_v3/00_audit_evidence/sen1_v0428_unet_artifact_audit_v1.json',
     '--prithvi-audit', f'{DRIVE}/outputs/geobwer_final_v3/00_audit_evidence/sen1_v0432_prithvi_artifact_audit_v1.json',
     '--terramind-audit', f'{DRIVE}/outputs/geobwer_final_v3/00_audit_evidence/sen1_v0434_terramind_descriptive_artifact_audit_v1.json',
-    '--persistent-output-dir', f'{DRIVE}/outputs/geobwer_final_v3/sen1_19model_descriptive_v1',
+    '--output-dir', '/content/sen1_19model_descriptive_v2',
+    '--persistent-output-dir', f'{DRIVE}/outputs/geobwer_final_v3/sen1_19model_descriptive_v2',
 ]
 subprocess.run(command, check=True)
 ```
@@ -50,4 +52,6 @@ SEN1_19MODEL_DESCRIPTIVE_POSTPROCESS=PASS
 - `completion_contract.json`
 - `scientific_interpretation_report.md`
 
-脚本先把概率导出复制到 `/content`，只对本地副本中的旧绝对路径索引做可移植化，然后分析；Drive 冻结源不会被修改。非空但不完整的输出目录会硬失败。
+冻结的 `sen1_geospatial_metadata_446_v0426.csv` 是 latitude/longitude 的唯一来源；core431 与 Bolivia15 metadata 只提供 event、split 等非坐标属性。
+
+脚本先检查 `/content/sen1_19model_descriptive_work/staged_probability_sources`。若现有57组 staging 的源索引、逐概率文件 SHA 和冻结 Drive 源完全一致，则直接复用；任一不一致都会硬失败且不会重新复制。全新 runtime 才会首次复制概率导出到 `/content`。Drive 冻结源不会被修改，非空但不完整的输出目录也会硬失败。
