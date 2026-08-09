@@ -17,9 +17,15 @@ from rsfm_fairness_audit.bwer_inference import (
     certify_geobwer_from_band,
     honest_confirmed_bwer,
     paired_bwer_comparison,
+    simultaneous_group_risk_band,
     simultaneous_standardized_risk_band,
 )
-from rsfm_fairness_audit.bwer_protocol import BWERProtocol, Protocol, Validity
+from rsfm_fairness_audit.bwer_protocol import BWERProtocol, EvidenceStatus, Protocol, Validity
+from rsfm_fairness_audit.cluster_eligibility import (
+    ClusterEligibilityAssessment,
+    ClusterEligibilityRule,
+    assess_cluster_eligibility,
+)
 from rsfm_fairness_audit.bwer_schema import SchemaValidation, validate_formal_audit_rows
 from rsfm_fairness_audit.bwer_standardization import (
     PartialBWERBounds,
@@ -28,6 +34,7 @@ from rsfm_fairness_audit.bwer_standardization import (
     standardize_group_risks,
 )
 from rsfm_fairness_audit.io import ensure_dir, write_csv
+from rsfm_fairness_audit.estimand_identity import EstimandIdentity, build_estimand_identity
 
 
 def _native(value: Any) -> Any:
@@ -59,14 +66,32 @@ class GeoBWERAxisResult:
     excluded_groups: tuple[str, ...]
     standardization: StandardizationResult | None = None
     partial_bounds: PartialBWERBounds | None = None
+    cluster_eligibility: ClusterEligibilityAssessment | None = None
+    estimand_identity: EstimandIdentity | None = None
     message: str = ""
+
+    def evidence_status(self) -> EvidenceStatus:
+        if self.validity == Validity.INVALID_PROTOCOL:
+            return EvidenceStatus.INVALID
+        if self.partial_bounds is not None and self.partial_bounds.point_if_identified is None:
+            return EvidenceStatus.FORMAL_PARTIAL
+        if self.validity == Validity.VALID and self.certified is not None:
+            return EvidenceStatus.FORMAL_CONFIRMED
+        if self.validity in {Validity.VALID, Validity.DESCRIPTIVE_ONLY, Validity.INFERENCE_NOT_CERTIFIED}:
+            return EvidenceStatus.DESCRIPTIVE
+        if self.point is not None:
+            return EvidenceStatus.EXPLORATORY
+        return EvidenceStatus.NOT_IDENTIFIED
 
     def summary_dict(self, protocol: BWERProtocol) -> dict[str, Any]:
         output: dict[str, Any] = {
             "axis": self.axis,
             "validity": self.validity.value,
+            "evidence_status": self.evidence_status().value,
             "protocol_hash": protocol.signature,
             "metric_version": protocol.metric_version,
+            "certification_version": protocol.certification_version,
+            "risk_spec_signature": protocol.risk_spec.signature,
             "loss_name": protocol.loss_name,
             "deployment_weighting": protocol.deployment_weighting,
             "audit_measure": protocol.audit_measure,
@@ -76,6 +101,9 @@ class GeoBWERAxisResult:
             "excluded_groups": ";".join(self.excluded_groups),
             "message": self.message,
             "standardization_target": protocol.standardization_target,
+            "estimand_signature": (
+                "" if self.estimand_identity is None else self.estimand_identity.signature
+            ),
         }
         if self.point is not None:
             output.update(self.point.to_dict())
@@ -167,6 +195,34 @@ class GeoBWERAudit:
                         "upper": axis.partial_bounds.upper,
                         "point_if_identified": axis.partial_bounds.point_if_identified,
                         "validity": axis.partial_bounds.validity.value,
+                        "exact_lower": axis.partial_bounds.exact_lower,
+                        "exact_upper": axis.partial_bounds.exact_upper,
+                        "certification_method": axis.partial_bounds.certification_method,
+                    },
+                    "cluster_eligibility": None
+                    if axis.cluster_eligibility is None
+                    else {
+                        "rule_signature": axis.cluster_eligibility.rule_signature,
+                        "total_clusters": axis.cluster_eligibility.total_clusters,
+                        "inferential_groups": list(axis.cluster_eligibility.inferential_groups),
+                        "descriptive_groups": list(axis.cluster_eligibility.descriptive_groups),
+                        "not_observed_groups": list(axis.cluster_eligibility.not_observed_groups),
+                        "groups": [
+                            {
+                                "group": record.group,
+                                "unit_count": record.unit_count,
+                                "cluster_count": record.cluster_count,
+                                "level": record.level.value,
+                                "reasons": list(record.reasons),
+                            }
+                            for record in axis.cluster_eligibility.groups
+                        ],
+                    },
+                    "estimand_identity": None
+                    if axis.estimand_identity is None
+                    else {
+                        **axis.estimand_identity.__dict__,
+                        "signature": axis.estimand_identity.signature,
                     },
                 }
                 for axis in self.axes
@@ -272,6 +328,7 @@ def audit(
     seed: int = 42,
 ) -> GeoBWERAudit:
     protocol = protocol or BWERProtocol()
+    protocol.risk_spec.validate_values(loss)
     if formal and protocol.inference_target == "slice_superpopulation":
         raise ValueError(
             "Formal slice_superpopulation inference is not implemented by the fixed-slice simultaneous-band engine. "
@@ -329,7 +386,6 @@ def audit(
     if balance_values is not None and len(balance_values) != len(y):
         raise ValueError("balance must align with loss.")
     results: list[GeoBWERAxisResult] = []
-    metadata = dict(protocol.metadata)
     for axis, raw_values in axes.items():
         group_values = np.asarray([str(value) for value in raw_values], dtype=object)
         grouped_support = {group: int(np.sum(group_values == group)) for group in sorted(set(group_values.tolist()))}
@@ -350,6 +406,20 @@ def audit(
                 )
                 for group in support_with_missing
             }
+            missing_eligibility = assess_cluster_eligibility(
+                support_with_missing,
+                cluster_support_with_missing,
+                total_clusters=(
+                    len(set(clusters.tolist())) if clusters is not None else len(units)
+                ),
+                rule=ClusterEligibilityRule(
+                    min_units_per_group=protocol.min_units_per_slice,
+                    min_clusters_per_group=protocol.min_clusters_for_inference,
+                    min_total_clusters=protocol.min_clusters_for_default,
+                    calibration_signature=protocol.cluster_eligibility_calibration_signature.strip(),
+                ),
+                required_group_universe=tuple(expected_groups),
+            )
             results.append(
                 GeoBWERAxisResult(
                     axis=str(axis),
@@ -361,6 +431,7 @@ def audit(
                     group_support=tuple(sorted(support_with_missing.items())),
                     group_cluster_support=tuple(sorted(cluster_support_with_missing.items())),
                     excluded_groups=missing_expected,
+                    cluster_eligibility=missing_eligibility,
                     message=(
                         "Conditional selective risk is not identified because these pre-registered groups "
                         f"have zero accepted units: {', '.join(missing_expected)}."
@@ -372,6 +443,21 @@ def audit(
             group: len(set(clusters[group_values == group].tolist())) if clusters is not None else grouped_support[group]
             for group in grouped_support
         }
+        calibration_signature = protocol.cluster_eligibility_calibration_signature.strip()
+        eligibility = assess_cluster_eligibility(
+            grouped_support,
+            grouped_cluster_support,
+            total_clusters=(
+                len(set(clusters.tolist())) if clusters is not None else len(units)
+            ),
+            rule=ClusterEligibilityRule(
+                min_units_per_group=protocol.min_units_per_slice,
+                min_clusters_per_group=protocol.min_clusters_for_inference,
+                min_total_clusters=protocol.min_clusters_for_default,
+                calibration_signature=calibration_signature,
+            ),
+            required_group_universe=tuple(expected_groups),
+        )
         require_cluster_support = formal and protocol.inference_method != "none"
         included = tuple(
             group
@@ -397,6 +483,7 @@ def audit(
                     group_support=tuple(sorted(grouped_support.items())),
                     group_cluster_support=tuple(sorted(grouped_cluster_support.items())),
                     excluded_groups=excluded,
+                    cluster_eligibility=eligibility,
                     message=(
                         f"Only {len(included)} groups pass min_units_per_slice={protocol.min_units_per_slice}"
                         + (
@@ -459,6 +546,7 @@ def audit(
                         excluded_groups=excluded,
                         standardization=standardization,
                         partial_bounds=bounds,
+                        cluster_eligibility=eligibility,
                         message=standardization.message,
                     )
                 )
@@ -477,18 +565,57 @@ def audit(
             weights = custom
         point = compute_geobwer_profile(group_risks, (protocol.beta,), weights)[0]
         profile = tuple(compute_geobwer_profile(group_risks, protocol.beta_profile, weights))
+        estimand_identity = build_estimand_identity(
+            protocol,
+            axis=str(axis),
+            group_universe=(tuple(expected_groups) if expected_groups else tuple(group_risks)),
+            deployment_weights=weights,
+        )
         certified: CertifiedBWER | None = None
+        sampling_partial_bounds: PartialBWERBounds | None = None
         validity = Validity.VALID if not excluded else Validity.DESCRIPTIVE_ONLY
         message = "" if not excluded else "Groups below the pre-registered support threshold were excluded; inspect valid deployment mass."
         if formal and protocol.inference_method != "none":
-            unique_clusters = len(set(clusters[mask].tolist())) if clusters is not None else 0
-            small_calibrated = str(metadata.get("small_cluster_calibrated", "false")).lower() == "true"
-            if unique_clusters < protocol.min_clusters_for_default and not small_calibrated:
+            inferential_groups = set(eligibility.inferential_groups) & set(group_risks)
+            low_inference_groups = sorted(set(group_risks) - inferential_groups)
+            if not calibration_signature:
                 validity = Validity.INFERENCE_NOT_CERTIFIED
                 message = (
-                    f"Only {unique_clusters} clusters; protocol requires {protocol.min_clusters_for_default} "
-                    "unless a task-specific small-cluster calibration has passed."
+                    "Certification 1.2 requires a frozen cluster-eligibility calibration signature; "
+                    "the point estimate remains descriptive."
                 )
+            elif low_inference_groups:
+                validity = Validity.NOT_IDENTIFIED
+                message = (
+                    "The point estimate is computable, but formal inference is only partially identified because "
+                    f"these groups have fewer than {protocol.min_clusters_for_inference} independent clusters: "
+                    + ", ".join(low_inference_groups)
+                )
+                risk_low, risk_high = protocol.risk_spec.bounds
+                combined_lower = {group: risk_low for group in group_risks}
+                combined_upper = {group: risk_high for group in group_risks}
+                if balance_values is None and len(inferential_groups) >= 2:
+                    inference_mask = mask & np.isin(group_values, tuple(sorted(inferential_groups)))
+                    eligible_band = simultaneous_group_risk_band(
+                        y[inference_mask],
+                        group_values[inference_mask],
+                        clusters[inference_mask],
+                        confidence_level=protocol.confidence_level,
+                        n_bootstrap=n_bootstrap,
+                        seed=seed,
+                        risk_bounds=protocol.risk_spec.bounds,
+                        min_clusters_per_group=protocol.min_clusters_for_inference,
+                    )
+                    if eligible_band.validity == Validity.VALID:
+                        combined_lower.update(dict(eligible_band.lower))
+                        combined_upper.update(dict(eligible_band.upper))
+                if balance_values is None:
+                    sampling_partial_bounds = partial_bwer_bounds(
+                        combined_lower,
+                        combined_upper,
+                        beta=protocol.beta,
+                        deployment_weights=weights,
+                    )
             elif balance_values is not None:
                 standardized_band = simultaneous_standardized_risk_band(
                     y[mask],
@@ -499,7 +626,8 @@ def audit(
                     confidence_level=protocol.confidence_level,
                     n_bootstrap=n_bootstrap,
                     seed=seed,
-                    min_clusters_per_group=protocol.min_clusters_per_slice,
+                    risk_bounds=protocol.risk_spec.bounds,
+                    min_clusters_per_group=protocol.min_clusters_for_inference,
                 )
                 if standardized_band.validity == Validity.VALID:
                     certified = certify_geobwer_from_band(standardized_band, beta=protocol.beta, deployment_weights=weights)
@@ -517,7 +645,8 @@ def audit(
                     confidence_level=protocol.confidence_level,
                     n_bootstrap=n_bootstrap,
                     seed=seed,
-                    min_clusters_per_group=protocol.min_clusters_per_slice,
+                    min_clusters_per_group=protocol.min_clusters_for_inference,
+                    risk_bounds=protocol.risk_spec.bounds,
                 )
                 validity = certified.validity if certified.validity != Validity.VALID else validity
                 if certified.message:
@@ -536,6 +665,9 @@ def audit(
                 ),
                 excluded_groups=excluded,
                 standardization=standardization,
+                partial_bounds=sampling_partial_bounds,
+                cluster_eligibility=eligibility,
+                estimand_identity=estimand_identity,
                 message=message,
             )
         )
@@ -625,6 +757,12 @@ def compare(
     seed: int = 42,
 ) -> PairedBWERComparison:
     protocol = protocol or BWERProtocol()
+    protocol.risk_spec.validate_values(loss_a)
+    protocol.risk_spec.validate_values(loss_b)
+    if not protocol.cluster_eligibility_calibration_signature:
+        raise ValueError(
+            "Certification 1.2 paired comparison requires a frozen cluster-eligibility calibration signature."
+        )
     if len(set(str(value) for value in unit_id)) != len(unit_id):
         raise ValueError("compare requires one aligned loss per independent unit; aggregate repeated rows first.")
     if len(loss_a) != len(unit_id):
@@ -641,6 +779,8 @@ def compare(
         confidence_level=protocol.confidence_level,
         n_bootstrap=n_bootstrap,
         seed=seed,
+        min_clusters_per_group=protocol.min_clusters_for_inference,
+        risk_bounds=protocol.risk_spec.bounds,
     )
 
 

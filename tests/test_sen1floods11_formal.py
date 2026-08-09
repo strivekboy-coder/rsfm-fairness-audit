@@ -626,6 +626,8 @@ def _fake_spatial_calibration(*_args, pass_cell: float | None, **kwargs):
                 moderate_tail_power_ci_low=0.80,
                 moderate_tail_power_ci_high=0.90,
                 power_target_met=True,
+                coverage_gate=0.93,
+                false_positive_gate=0.06,
                 passes=passed,
             )
         )

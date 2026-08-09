@@ -9,6 +9,7 @@ from rsfm_fairness_audit.bwer_inference import (
     certify_geobwer_from_band,
     equal_area_block_ids,
     honest_confirmed_bwer,
+    one_sided_calibration_gate,
     paired_bwer_comparison,
     simultaneous_group_risk_band,
     simultaneous_standardized_risk_band,
@@ -151,3 +152,24 @@ def test_honest_confirmation_rejects_group_equal_to_cluster_design() -> None:
     )
     assert result.validity == Validity.NOT_IDENTIFIED
     assert not result.folds
+
+
+def test_one_sided_gate_rejects_cases_that_old_endpoint_logic_would_pass() -> None:
+    # The old gate accepted this because coverage upper >= .95 and FPR lower
+    # <= .05.  Neither statement certifies adequate coverage/FPR control.
+    assert not one_sided_calibration_gate(
+        coverage_ci=(0.82, 0.97),
+        false_positive_ci=(0.01, 0.12),
+        confidence_level=0.95,
+        alpha=0.05,
+        coverage_tolerance=0.02,
+        false_positive_tolerance=0.01,
+    )
+    assert one_sided_calibration_gate(
+        coverage_ci=(0.94, 0.98),
+        false_positive_ci=(0.00, 0.04),
+        confidence_level=0.95,
+        alpha=0.05,
+        coverage_tolerance=0.02,
+        false_positive_tolerance=0.01,
+    )

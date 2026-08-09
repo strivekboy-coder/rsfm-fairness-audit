@@ -37,6 +37,8 @@ class AlphaEarthCampaignConfig:
     calibration_bootstrap: int = 500
     audit_bootstrap: int = 2000
     minimum_moderate_tail_power: float = 0.80
+    coverage_tolerance: float = 0.02
+    false_positive_tolerance: float = 0.01
     conformal_alpha: float = 0.10
     seed: int = 42
 
@@ -201,6 +203,8 @@ def _calibration_signature(
         "calibration_simulations": config.calibration_simulations,
         "calibration_bootstrap": config.calibration_bootstrap,
         "minimum_moderate_tail_power": config.minimum_moderate_tail_power,
+        "coverage_tolerance": config.coverage_tolerance,
+        "false_positive_tolerance": config.false_positive_tolerance,
         "seed": config.seed,
         "validity_gate": "range_adequacy_and_simulated_coverage_fpr",
     }
@@ -259,6 +263,8 @@ def run_alphaearth_geobwer_campaign(config: AlphaEarthCampaignConfig) -> dict[st
             beta=base_protocol.beta,
             minimum_moderate_tail_power=config.minimum_moderate_tail_power,
             require_power_gate=False,
+            coverage_tolerance=config.coverage_tolerance,
+            false_positive_tolerance=config.false_positive_tolerance,
         )
         block_payload = {
                 "schema": "geobwer.alphaearth.spatial_block_calibration.v2",
@@ -271,6 +277,8 @@ def run_alphaearth_geobwer_campaign(config: AlphaEarthCampaignConfig) -> dict[st
                 "calibration_rows_total": len(calibration_rows),
                 "calibration_rows_simulation_subset": len(calibration_subset),
                 "minimum_moderate_tail_power": config.minimum_moderate_tail_power,
+                "coverage_tolerance": config.coverage_tolerance,
+                "false_positive_tolerance": config.false_positive_tolerance,
         }
         block_calibration_path.write_text(
             json.dumps(
@@ -302,7 +310,12 @@ def run_alphaearth_geobwer_campaign(config: AlphaEarthCampaignConfig) -> dict[st
             "spatial_block_calibrated": "true",
         }
     )
-    protocol = replace(base_protocol, metadata=tuple(sorted(metadata.items())))
+    protocol = replace(
+        base_protocol,
+        metadata=tuple(sorted(metadata.items())),
+        min_clusters_for_inference=base_protocol.min_clusters_per_slice,
+        cluster_eligibility_calibration_signature=calibration_signature,
+    )
     bundle: FormalOutputBundle = write_multiclass_bundle(
         output / "formal_outputs",
         sample_rows=sample_rows,

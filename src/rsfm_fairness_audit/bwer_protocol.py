@@ -7,8 +7,11 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Mapping
 
+from rsfm_fairness_audit.risk_spec import RiskSpec
+
 
 METRIC_VERSION = "geobwer_fractional_1.1"
+CERTIFICATION_VERSION = "geobwer_certification_1.2"
 
 
 class Validity(str, Enum):
@@ -28,6 +31,17 @@ class Validity(str, Enum):
     INFERENCE_NOT_CERTIFIED = "inference_not_certified"
     SPATIAL_BLOCK_NOT_CALIBRATED = "spatial_block_not_calibrated"
     INVALID_PROTOCOL = "invalid_protocol"
+
+
+class EvidenceStatus(str, Enum):
+    """Publication-facing evidence taxonomy, separate from computation validity."""
+
+    FORMAL_CONFIRMED = "formal_confirmed"
+    FORMAL_PARTIAL = "formal_partial"
+    DESCRIPTIVE = "descriptive"
+    EXPLORATORY = "exploratory"
+    NOT_IDENTIFIED = "not_identified"
+    INVALID = "invalid"
 
 
 @dataclass(frozen=True)
@@ -52,6 +66,8 @@ class BWERProtocol:
     min_units_per_slice: int = 1
     min_clusters_per_slice: int = 2
     min_clusters_for_default: int = 30
+    min_clusters_for_inference: int = 75
+    cluster_eligibility_calibration_signature: str = ""
     group_variable: str = "group"
     balance_variable: str = ""
     loss_name: str = "risk"
@@ -60,9 +76,23 @@ class BWERProtocol:
     cluster_column: str = "cluster_id"
     spatial_block_column: str = "spatial_block_id"
     metric_version: str = METRIC_VERSION
+    certification_version: str = CERTIFICATION_VERSION
     metadata: tuple[tuple[str, str], ...] = field(default_factory=tuple)
+    risk_spec: RiskSpec | None = None
 
     def __post_init__(self) -> None:
+        if self.metric_version != METRIC_VERSION:
+            raise ValueError(f"Unsupported metric_version={self.metric_version!r}.")
+        if self.certification_version != CERTIFICATION_VERSION:
+            raise ValueError(f"Unsupported certification_version={self.certification_version!r}.")
+        if self.risk_spec is None:
+            object.__setattr__(
+                self,
+                "risk_spec",
+                RiskSpec(name=self.loss_name, task_adapter=self.task_adapter),
+            )
+        elif self.risk_spec.name != self.loss_name or self.risk_spec.task_adapter != self.task_adapter:
+            raise ValueError("risk_spec must agree with protocol loss_name and task_adapter.")
         if not 0.0 < float(self.beta) <= 1.0:
             raise ValueError("beta must be in (0, 1].")
         if not self.beta_profile:
@@ -136,12 +166,15 @@ class BWERProtocol:
             raise ValueError("min_clusters_per_slice must be positive.")
         if self.min_clusters_for_default < 2:
             raise ValueError("min_clusters_for_default must be at least 2.")
+        if self.min_clusters_for_inference < self.min_clusters_per_slice:
+            raise ValueError("min_clusters_for_inference must be >= min_clusters_per_slice.")
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["beta_profile"] = list(self.beta_profile)
         payload["metadata"] = {key: value for key, value in self.metadata}
         payload["standardization_weights"] = {key: value for key, value in self.standardization_weights}
+        payload["risk_spec"] = self.risk_spec.to_dict() if self.risk_spec is not None else None
         return payload
 
     @property
@@ -162,6 +195,9 @@ class BWERProtocol:
             data["standardization_weights"] = tuple(
                 sorted((str(key), float(value)) for key, value in standardization_weights.items())
             )
+        risk_spec = data.get("risk_spec")
+        if isinstance(risk_spec, Mapping):
+            data["risk_spec"] = RiskSpec.from_mapping(risk_spec)
         return cls(**data)
 
 

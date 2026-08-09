@@ -9,6 +9,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from rsfm_fairness_audit.bwer_core import BWERPointEstimate, compute_geobwer, fractional_tail_allocation, normalize_deployment_weights
+from rsfm_fairness_audit.geobwer_certification import sharp_geobwer_identification
 from rsfm_fairness_audit.bwer_protocol import Validity
 
 
@@ -61,6 +62,9 @@ class PartialBWERBounds:
     upper: float
     point_if_identified: float | None
     validity: Validity
+    exact_lower: bool = False
+    exact_upper: bool = False
+    certification_method: str = "legacy_monotone_endpoints"
 
 
 def _normalize_target_weights(levels: Sequence[str], target_weights: Mapping[Any, float] | None) -> dict[str, float]:
@@ -223,16 +227,30 @@ def partial_bwer_bounds(
     if any(lower_map[group] > upper_map[group] for group in groups):
         raise ValueError("Every group risk lower bound must not exceed its upper bound.")
     weights = normalize_deployment_weights(groups, deployment_weights)
-    tail_lower, _ = fractional_tail_allocation(lower_map, beta, weights)
-    tail_upper, _ = fractional_tail_allocation(upper_map, beta, weights)
-    mean_lower = sum(weights[group] * lower_map[group] for group in groups)
-    mean_upper = sum(weights[group] * upper_map[group] for group in groups)
-    lower = max(0.0, float(tail_lower - mean_upper))
-    upper = max(lower, float(tail_upper - mean_lower))
+    identification = sharp_geobwer_identification(
+        lower_map,
+        upper_map,
+        beta=beta,
+        deployment_weights=weights,
+    )
+    lower = identification.bwer.lower
+    upper = identification.bwer.upper
     point: float | None = None
     if all(math.isclose(lower_map[group], upper_map[group], abs_tol=1e-15) for group in groups):
         point = compute_geobwer(lower_map, beta, weights).bwer
-    return PartialBWERBounds(lower, upper, point, Validity.VALID if point is not None else Validity.NOT_IDENTIFIED)
+        lower = point
+        upper = point
+    return PartialBWERBounds(
+        lower,
+        upper,
+        point,
+        Validity.VALID if point is not None else Validity.NOT_IDENTIFIED,
+        exact_lower=identification.exact_lower,
+        exact_upper=identification.exact_upper,
+        certification_method=(
+            f"{identification.lower_method}|{identification.upper_method}"
+        ),
+    )
 
 
 def common_group_support(

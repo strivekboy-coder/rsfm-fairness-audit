@@ -953,17 +953,15 @@ def calibrate_common_sen1_spatial_blocks(
         }
     common = set.intersection(*passing_by_model.values())
     if not common:
-        alpha = 1.0 - float(confidence_level)
-
         def failure_reasons(record: Any) -> list[str]:
             reasons: list[str] = []
             if int(record.valid_simulations) != int(n_simulations):
                 reasons.append("incomplete_valid_simulations")
             if not bool(record.range_adequate):
                 reasons.append("spatial_range_not_adequate")
-            if float(record.null_coverage_ci_high) < float(confidence_level):
+            if float(record.null_coverage_ci_low) < float(record.coverage_gate):
                 reasons.append("coverage_gate_failed")
-            if float(record.false_positive_ci_low) > alpha:
+            if float(record.false_positive_ci_high) > float(record.false_positive_gate):
                 reasons.append("false_positive_rate_gate_failed")
             if not reasons and not bool(record.passes):
                 reasons.append("unspecified_frozen_gate_failure")

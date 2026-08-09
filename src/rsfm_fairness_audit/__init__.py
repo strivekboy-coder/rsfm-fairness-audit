@@ -1,6 +1,7 @@
 """Fairness auditing tools for Remote Sensing Foundation Models."""
 
-from rsfm_fairness_audit.bwer_protocol import BWERProtocol, Protocol, Validity
+from rsfm_fairness_audit.bwer_protocol import BWERProtocol, EvidenceStatus, Protocol, Validity
+from rsfm_fairness_audit.risk_spec import RiskSpec
 from rsfm_fairness_audit.geobwer import audit, audit_rows, compare, confirm
 from rsfm_fairness_audit.geobwer_panel import run_geobwer_model_panel
 from rsfm_fairness_audit.geobwer_extensions import (
@@ -16,6 +17,8 @@ __all__ = [
     "BWERProtocol",
     "Protocol",
     "Validity",
+    "EvidenceStatus",
+    "RiskSpec",
     "audit",
     "audit_rows",
     "compare",
@@ -28,4 +31,4 @@ __all__ = [
     "SpatialConformalConfig",
 ]
 
-__version__ = "0.4.37"
+__version__ = "0.5.0"

@@ -1,0 +1,105 @@
+schema: geobwer.canonical_evidence_registry.v1
+registry_version: "1.0.0"
+assets:
+  - asset_id: fmow_predictions_v3
+    task: fmow_sentinel
+    role: dofav2_frozen_predictions
+    status: canonical_source
+    drive_path: /content/drive/MyDrive/rsfm_fairness_audit/outputs/geobwer_final_v3/fmow_dofav2_geo_clean_v1
+    drive_url: https://drive.google.com/drive/folders/1k5UdiLJWraLHdeK83K3MKa8vgm3DdDFE
+    immutable: true
+    allowed_use: [cpu_reaudit, paired_comparison, uncertainty_reaudit]
+    notes: Frozen DOFAv2 source.
+  - asset_id: fmow_resnet50_v3
+    task: fmow_sentinel
+    role: resnet50_frozen_predictions
+    status: canonical_source
+    drive_path: /content/drive/MyDrive/rsfm_fairness_audit/outputs/geobwer_final_v3/fmow_resnet50_common9_v1
+    drive_url: https://drive.google.com/drive/folders/1iE7R3SVdxyycLEkT28X8kOo_0T8eJqrU
+    immutable: true
+    allowed_use: [cpu_reaudit, paired_comparison, uncertainty_reaudit]
+    notes: Same common-9-band split used by the frozen paired panel.
+  - asset_id: fmow_superclass_v2
+    task: fmow_sentinel
+    role: canonical_derived_panel
+    status: canonical_derived
+    drive_path: /content/drive/MyDrive/rsfm_fairness_audit/outputs/geobwer_final_v3/fmow_superclass_frozen_v2
+    drive_url: https://drive.google.com/drive/folders/1b2IdJQWGbFrkXhITzt0Jyc0eMSWIccE2
+    immutable: true
+    allowed_use: [cpu_reaudit, scientific_reporting]
+    completion_artifact: postprocess_manifest.json
+  - asset_id: reben_27run_v3
+    task: reben
+    role: frozen_predictions
+    status: canonical_source
+    drive_path: /content/drive/MyDrive/rsfm_fairness_audit/outputs/geobwer_final_v3/reben_full_panel
+    drive_url: https://drive.google.com/drive/folders/1NrZ6oRMbTLllo4EbKmlERULPtKNzXilJ
+    immutable: true
+    allowed_use: [cpu_reaudit, paired_comparison, uncertainty_reaudit]
+    completion_artifact: _cross_model_scientific_review_v1/reben_27run_integrity_report.json
+  - asset_id: reben_postprocess_v1
+    task: reben
+    role: canonical_derived_panel
+    status: canonical_derived
+    drive_path: /content/drive/MyDrive/rsfm_fairness_audit/outputs/geobwer_final_v3/reben_full_panel/_scientific_postprocess_v1
+    drive_url: https://drive.google.com/drive/folders/1H4Nptuv_9NAUJ_mmNWrBY4ERp84p2X_9
+    immutable: true
+    allowed_use: [cpu_reaudit, scientific_reporting]
+    completion_artifact: postprocess_manifest.json
+  - asset_id: alphaearth_predictions_v2
+    task: alphaearth
+    role: frozen_predictions
+    status: canonical_source
+    drive_path: /content/drive/MyDrive/rsfm_fairness_audit/outputs/geobwer_final_v3/alphaearth_geobwer_spatial_v2
+    drive_url: https://drive.google.com/drive/folders/1TMRs8pghlp_cYeGteFU_phorBEYe7ogO
+    immutable: true
+    allowed_use: [cpu_reaudit, spatial_calibration, uncertainty_reaudit]
+    completion_artifact: completion_contract.json
+  - asset_id: alphaearth_spatial_v1_revoked
+    task: alphaearth
+    role: revoked_derived_panel
+    status: revoked
+    drive_path: /content/drive/MyDrive/rsfm_fairness_audit/outputs/geobwer_final_v3/alphaearth_geobwer_spatial_v1
+    drive_url: https://drive.google.com/drive/folders/1OtzUn0w-gaupHgvyDeeB3141gen_RQuH
+    immutable: true
+    allowed_use: [traceability_only]
+    replaced_by: alphaearth_predictions_v2
+    notes: Revoked target encoding; never use for paper results.
+  - asset_id: sen1_unet_v0428
+    task: sen1floods11
+    role: unet_frozen_predictions
+    status: canonical_source
+    drive_path: /content/drive/MyDrive/rsfm_fairness_audit/outputs/geobwer_final_v3/sen1_geobwer_v0428/supervised
+    drive_url: https://drive.google.com/drive/folders/1lMPUnCNMfj5jvvksrC-i4FBVhJFB3e94
+    immutable: true
+    allowed_use: [descriptive_cpu_reaudit]
+    completion_artifact: campaign_manifest.json
+  - asset_id: sen1_prithvi_v0432
+    task: sen1floods11
+    role: prithvi_frozen_predictions
+    status: canonical_source
+    drive_path: /content/drive/MyDrive/rsfm_fairness_audit/outputs/geobwer_final_v3/sen1_geobwer_v0432/prithvi_final
+    drive_url: https://drive.google.com/drive/folders/1cVypHK8dxtmIJmnDSLj0dSukknW5OOuq
+    immutable: true
+    allowed_use: [descriptive_cpu_reaudit]
+    completion_artifact: campaign_manifest.json
+  - asset_id: sen1_terramind_v0434
+    task: sen1floods11
+    role: terramind_frozen_predictions
+    status: descriptive_only
+    drive_path: /content/drive/MyDrive/rsfm_fairness_audit/outputs/geobwer_final_v3/sen1_geobwer_v0434/terramind_final
+    drive_url: https://drive.google.com/drive/folders/1flu0zXlEN_t0DWtYg4gMyR3ctYadOSlZ
+    immutable: true
+    allowed_use: [descriptive_cpu_reaudit]
+    completion_artifact: completion_contract.json
+    notes: spatial_inference_valid=false; model probabilities are complete.
+  - asset_id: sen1_prithvi_v0429_revoked
+    task: sen1floods11
+    role: revoked_prithvi_predictions
+    status: revoked
+    drive_path: /content/drive/MyDrive/rsfm_fairness_audit/outputs/geobwer_final_v3/sen1_geobwer_v0429/prithvi_final
+    drive_url: https://drive.google.com/drive/folders/11_yaeQRQrqi8O_x_blY5_UEPoRNXaR8j
+    immutable: true
+    allowed_use: [traceability_only]
+    replaced_by: sen1_prithvi_v0432
+    notes: Bolivia prepared-mask corruption; never use for science.

@@ -7,7 +7,11 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from rsfm_fairness_audit.bwer_core import BWERPointEstimate, compute_geobwer, fractional_tail_allocation, normalize_deployment_weights
-from rsfm_fairness_audit.bwer_protocol import Validity
+from rsfm_fairness_audit.bwer_protocol import CERTIFICATION_VERSION, Validity
+from rsfm_fairness_audit.geobwer_certification import (
+    paired_risk_triple_from_boxes,
+    sharp_geobwer_identification,
+)
 
 
 @dataclass(frozen=True)
@@ -50,6 +54,9 @@ class CertifiedBWER:
     parameter_upper_bound: float
     confidence_level: float
     band: SimultaneousRiskBand
+    sharp_exact_lower: bool = False
+    sharp_exact_upper: bool = False
+    certification_version: str = CERTIFICATION_VERSION
     message: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,6 +76,9 @@ class CertifiedBWER:
                 "confidence_level": self.confidence_level,
                 "cluster_count": self.band.cluster_count,
                 "critical_value": self.band.critical_value,
+                "sharp_exact_lower": self.sharp_exact_lower,
+                "sharp_exact_upper": self.sharp_exact_upper,
+                "certification_version": self.certification_version,
                 "message": self.message,
             }
         )
@@ -83,12 +93,20 @@ class PairedBWERComparison:
     delta_bwer: float
     ci_low: float
     ci_high: float
+    delta_mean_risk: float
+    delta_mean_ci_low: float
+    delta_mean_ci_high: float
+    delta_tail_risk: float
+    delta_tail_ci_low: float
+    delta_tail_ci_high: float
+    no_harm_decision: str
     direct_multiplier_ci_low: float
     direct_multiplier_ci_high: float
     common_groups: tuple[str, ...]
     common_units: int
     cluster_count: int
     confidence_level: float
+    certification_version: str = CERTIFICATION_VERSION
     message: str = ""
 
 
@@ -384,20 +402,26 @@ def certify_geobwer_from_band(
     # band yields a second valid Lipschitz radius. Taking the smaller of two
     # valid radii preserves coverage and can be much sharper near beta=1.
     total_variation_radius = float(2.0 * (1.0 - float(beta)) * max(errors.values(), default=0.0))
-    radius = min(weighted_sum_radius, total_variation_radius)
-    radius_method = (
-        "total_variation_envelope"
-        if total_variation_radius < weighted_sum_radius
-        else "weighted_tail_plus_mean"
+    identification = sharp_geobwer_identification(
+        dict(band.lower),
+        dict(band.upper),
+        beta=beta,
+        deployment_weights=weights,
+        point_risks=estimates,
     )
+    radius = max(
+        identification.bwer.point - identification.bwer.lower,
+        identification.bwer.upper - identification.bwer.point,
+    )
+    radius_method = f"sharp_simultaneous_box:{identification.upper_method}"
     parameter_lower_bound = 0.0
     if band.risk_lower_bound is not None and band.risk_upper_bound is not None:
         risk_range = max(0.0, band.risk_upper_bound - band.risk_lower_bound)
         parameter_upper_bound = float((1.0 - float(beta)) * risk_range)
     else:
         parameter_upper_bound = float("inf")
-    lower = max(parameter_lower_bound, point.bwer - radius)
-    upper = min(parameter_upper_bound, point.bwer + radius)
+    lower = max(parameter_lower_bound, identification.bwer.lower)
+    upper = min(parameter_upper_bound, identification.bwer.upper)
     return CertifiedBWER(
         validity=Validity.VALID,
         point=point,
@@ -412,6 +436,8 @@ def certify_geobwer_from_band(
         parameter_upper_bound=parameter_upper_bound,
         confidence_level=band.confidence_level,
         band=band,
+        sharp_exact_lower=identification.exact_lower,
+        sharp_exact_upper=identification.exact_upper,
     )
 
 
@@ -427,6 +453,7 @@ def certified_geobwer(
     seed: int = 42,
     multiplier: str = "rademacher",
     min_clusters_per_group: int = 2,
+    risk_bounds: tuple[float, float] | None = (0.0, 1.0),
 ) -> CertifiedBWER:
     band = simultaneous_group_risk_band(
         losses,
@@ -436,6 +463,7 @@ def certified_geobwer(
         n_bootstrap=n_bootstrap,
         seed=seed,
         multiplier=multiplier,
+        risk_bounds=risk_bounds,
         min_clusters_per_group=min_clusters_per_group,
     )
     if band.validity != Validity.VALID:
@@ -455,6 +483,8 @@ def certified_geobwer(
             parameter_upper_bound=float("nan"),
             confidence_level=confidence_level,
             band=band,
+            sharp_exact_lower=False,
+            sharp_exact_upper=False,
             message=band.message,
         )
     return certify_geobwer_from_band(band, beta=beta, deployment_weights=deployment_weights)
@@ -474,6 +504,10 @@ def paired_bwer_comparison(
     n_bootstrap: int = 2000,
     seed: int = 42,
     multiplier: str = "rademacher",
+    min_clusters_per_group: int = 2,
+    risk_bounds: tuple[float, float] = (0.0, 1.0),
+    mean_harm_tolerance: float = 0.0,
+    tail_harm_tolerance: float = 0.0,
 ) -> PairedBWERComparison:
     if not (len(losses_a) == len(losses_b) == len(groups) == len(clusters)) or len(losses_a) == 0:
         raise ValueError("Paired inputs must be non-empty and aligned.")
@@ -495,17 +529,49 @@ def paired_bwer_comparison(
     weights = normalize_deployment_weights(names_a, deployment_weights)
     point_a = compute_geobwer(risks_a, beta, weights)
     point_b = compute_geobwer(risks_b, beta, weights)
-    delta = point_a.bwer - point_b.bwer
-    tail_a, _ = fractional_tail_allocation(dict(zip(names_a, width_a.tolist())), beta, weights)
-    tail_b, _ = fractional_tail_allocation(dict(zip(names_b, width_b.tolist())), beta, weights)
-    radius_a = tail_a + sum(weights[group] * width_a[index] for index, group in enumerate(names_a))
-    radius_b = tail_b + sum(weights[group] * width_b[index] for index, group in enumerate(names_b))
-    formal_radius = float(radius_a + radius_b)
+    risk_low, risk_high = map(float, risk_bounds)
+    lower_a = {
+        group: float(np.clip(estimates_a[index] - width_a[index], risk_low, risk_high))
+        for index, group in enumerate(names_a)
+    }
+    upper_a = {
+        group: float(np.clip(estimates_a[index] + width_a[index], risk_low, risk_high))
+        for index, group in enumerate(names_a)
+    }
+    lower_b = {
+        group: float(np.clip(estimates_b[index] - width_b[index], risk_low, risk_high))
+        for index, group in enumerate(names_b)
+    }
+    upper_b = {
+        group: float(np.clip(estimates_b[index] + width_b[index], risk_low, risk_high))
+        for index, group in enumerate(names_b)
+    }
+    triple = paired_risk_triple_from_boxes(
+        lower_a,
+        upper_a,
+        lower_b,
+        upper_b,
+        beta=beta,
+        deployment_weights=weights,
+        point_a=risks_a,
+        point_b=risks_b,
+        mean_harm_tolerance=mean_harm_tolerance,
+        tail_harm_tolerance=tail_harm_tolerance,
+    )
     direct_deltas = np.empty(n_bootstrap, dtype=float)
     for replicate in range(n_bootstrap):
-        perturbed_a = {group: float(np.clip(estimates_a[index] + perturbations[replicate, index], 0.0, 1.0)) for index, group in enumerate(names_a)}
+        perturbed_a = {
+            group: float(np.clip(estimates_a[index] + perturbations[replicate, index], risk_low, risk_high))
+            for index, group in enumerate(names_a)
+        }
         perturbed_b = {
-            group: float(np.clip(estimates_b[index] + perturbations[replicate, len(names_a) + index], 0.0, 1.0))
+            group: float(
+                np.clip(
+                    estimates_b[index] + perturbations[replicate, len(names_a) + index],
+                    risk_low,
+                    risk_high,
+                )
+            )
             for index, group in enumerate(names_b)
         }
         direct_deltas[replicate] = compute_geobwer(perturbed_a, beta, weights).bwer - compute_geobwer(perturbed_b, beta, weights).bwer
@@ -513,16 +579,23 @@ def paired_bwer_comparison(
     direct_low, direct_high = np.quantile(direct_deltas, [alpha / 2.0, 1.0 - alpha / 2.0])
     validity = Validity.VALID
     message = "Formal CI propagates a joint simultaneous group-risk band; direct multiplier CI is a non-smooth sensitivity interval."
-    if min(int(np.min(counts_a)), int(np.min(counts_b))) < 2:
+    if min(int(np.min(counts_a)), int(np.min(counts_b))) < int(min_clusters_per_group):
         validity = Validity.INSUFFICIENT_INDEPENDENT_UNITS
-        message = "At least one group has fewer than two paired clusters."
+        message = f"At least one group has fewer than {min_clusters_per_group} paired clusters."
     return PairedBWERComparison(
         validity=validity,
         model_a=model_a,
         model_b=model_b,
-        delta_bwer=float(delta),
-        ci_low=float(delta - formal_radius),
-        ci_high=float(delta + formal_radius),
+        delta_bwer=triple.delta_bwer.point,
+        ci_low=triple.delta_bwer.lower,
+        ci_high=triple.delta_bwer.upper,
+        delta_mean_risk=triple.delta_mean.point,
+        delta_mean_ci_low=triple.delta_mean.lower,
+        delta_mean_ci_high=triple.delta_mean.upper,
+        delta_tail_risk=triple.delta_tail.point,
+        delta_tail_ci_low=triple.delta_tail.lower,
+        delta_tail_ci_high=triple.delta_tail.upper,
+        no_harm_decision=triple.no_harm_decision.value,
         direct_multiplier_ci_low=float(direct_low),
         direct_multiplier_ci_high=float(direct_high),
         common_groups=names_a,
@@ -794,6 +867,8 @@ class BlockCandidateCalibration:
     moderate_tail_power_ci_low: float
     moderate_tail_power_ci_high: float
     power_target_met: bool
+    coverage_gate: float
+    false_positive_gate: float
     passes: bool
 
 
@@ -805,6 +880,27 @@ class SpatialBlockCalibration:
     candidates: tuple[BlockCandidateCalibration, ...]
     simulation_repetitions: int
     message: str = ""
+
+
+def one_sided_calibration_gate(
+    *,
+    coverage_ci: tuple[float, float],
+    false_positive_ci: tuple[float, float],
+    confidence_level: float,
+    alpha: float,
+    coverage_tolerance: float,
+    false_positive_tolerance: float,
+) -> bool:
+    """Require evidence of adequate coverage and controlled false positives.
+
+    The lower coverage endpoint and upper false-positive endpoint are the
+    conservative directions.  Using the opposite endpoints merely fails to
+    reject adequacy and was the v1 gate bug.
+    """
+
+    coverage_gate = max(0.0, float(confidence_level) - float(coverage_tolerance))
+    fpr_gate = min(1.0, float(alpha) + float(false_positive_tolerance))
+    return bool(coverage_ci[0] >= coverage_gate and false_positive_ci[1] <= fpr_gate)
 
 
 def calibrate_spatial_block_scale(
@@ -821,11 +917,17 @@ def calibrate_spatial_block_scale(
     beta: float = 0.10,
     minimum_moderate_tail_power: float = 0.80,
     require_power_gate: bool = False,
+    coverage_tolerance: float = 0.02,
+    false_positive_tolerance: float = 0.01,
 ) -> SpatialBlockCalibration:
     if n_simulations < 100:
         raise ValueError("n_simulations must be at least 100 for a formal coverage/power gate.")
     if not 0.0 < float(minimum_moderate_tail_power) < 1.0:
         raise ValueError("minimum_moderate_tail_power must be in (0,1).")
+    if not 0.0 <= float(coverage_tolerance) < 1.0:
+        raise ValueError("coverage_tolerance must be in [0,1).")
+    if not 0.0 <= float(false_positive_tolerance) < 1.0:
+        raise ValueError("false_positive_tolerance must be in [0,1).")
     range_estimate = estimate_spatial_correlation_range(losses, groups, latitudes, longitudes, seed=seed)
     base = max(range_estimate.range_km, 1.0)
     candidates = tuple(sorted(set(float(value) for value in (candidate_cell_km or (base, 1.5 * base, 2.0 * base)) if float(value) > 0.0)))
@@ -903,6 +1005,8 @@ def calibrate_spatial_block_scale(
         power_ci = wilson(power, denominator)
         range_adequate = bool(candidate + 1e-12 >= max(range_estimate.range_km, 1.0))
         power_target_met = bool(power_ci[0] >= minimum_moderate_tail_power)
+        coverage_gate = max(0.0, float(confidence_level) - float(coverage_tolerance))
+        false_positive_gate = min(1.0, float(alpha) + float(false_positive_tolerance))
         # Inference validity and sensitivity are deliberately separated.
         # Requiring a fixed power level would confound an honest but imprecise
         # dataset with an invalid block design. Power remains visible and is a
@@ -910,8 +1014,14 @@ def calibrate_spatial_block_scale(
         passes = (
             valid_simulations == n_simulations
             and range_adequate
-            and coverage_ci[1] >= confidence_level
-            and fpr_ci[0] <= alpha
+            and one_sided_calibration_gate(
+                coverage_ci=coverage_ci,
+                false_positive_ci=fpr_ci,
+                confidence_level=confidence_level,
+                alpha=alpha,
+                coverage_tolerance=coverage_tolerance,
+                false_positive_tolerance=false_positive_tolerance,
+            )
             and (power_target_met or not require_power_gate)
         )
         records.append(
@@ -930,6 +1040,8 @@ def calibrate_spatial_block_scale(
                 moderate_tail_power_ci_low=power_ci[0],
                 moderate_tail_power_ci_high=power_ci[1],
                 power_target_met=power_target_met,
+                coverage_gate=coverage_gate,
+                false_positive_gate=false_positive_gate,
                 passes=passes,
             )
         )

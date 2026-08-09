@@ -19,6 +19,8 @@ class TailAllocation:
     boundary_tie_groups: tuple[str, ...]
     tail_effective_groups: float
     max_tail_atom_share: float
+    tail_regime: str
+    tail_capacity_ratio: float
 
     def selected_mass_dict(self) -> dict[str, float]:
         return dict(self.selected_mass)
@@ -48,6 +50,8 @@ class BWERPointEstimate:
             "deployment_effective_groups": self.deployment_effective_groups,
             "tail_effective_groups": self.allocation.tail_effective_groups,
             "max_tail_atom_share": self.allocation.max_tail_atom_share,
+            "tail_regime": self.allocation.tail_regime,
+            "tail_capacity_ratio": self.allocation.tail_capacity_ratio,
             "boundary_risk": self.allocation.boundary_risk,
             "boundary_tie_groups": list(self.allocation.boundary_tie_groups),
             "deployment_weights": dict(self.allocation.deployment_weights),
@@ -109,12 +113,27 @@ def fractional_tail_allocation(
     ranked = sorted(risks, key=lambda group: (-risks[group], group))
     remaining = float(beta)
     selected = {group: 0.0 for group in ranked}
-    for group in ranked:
+    cursor = 0
+    while cursor < len(ranked):
         if remaining <= 1e-15:
             break
-        mass = min(weights[group], remaining)
-        selected[group] = mass
-        remaining -= mass
+        boundary = risks[ranked[cursor]]
+        tied: list[str] = []
+        while cursor < len(ranked) and abs(risks[ranked[cursor]] - boundary) <= tie_tolerance:
+            tied.append(ranked[cursor])
+            cursor += 1
+        tied_mass = float(sum(weights[group] for group in tied))
+        if remaining >= tied_mass - 1e-15:
+            for group in tied:
+                selected[group] = weights[group]
+            remaining -= tied_mass
+        else:
+            # The tail value is invariant to how a boundary tie is split.  A
+            # proportional allocation makes attribution permutation-invariant.
+            fraction = remaining / tied_mass
+            for group in tied:
+                selected[group] = weights[group] * fraction
+            remaining = 0.0
     if remaining > 1e-10:
         raise RuntimeError("Fractional tail allocation did not reach beta mass.")
     selected_total = float(sum(selected.values()))
@@ -127,6 +146,13 @@ def fractional_tail_allocation(
     ties = tuple(sorted(group for group, risk in risks.items() if abs(risk - boundary_risk) <= tie_tolerance))
     q = np.asarray([conditional[group] for group in ranked], dtype=float)
     tail_effective = float(1.0 / np.sum(q * q)) if np.any(q > 0.0) else 0.0
+    max_tail_atom_share = float(np.max(q)) if len(q) else 0.0
+    if tail_effective <= 1.0 + 1e-12 or max_tail_atom_share >= 1.0 - 1e-12:
+        tail_regime = "worst_slice"
+    elif tail_effective < 2.0 - 1e-12:
+        tail_regime = "near_worst_slice"
+    else:
+        tail_regime = "multi_slice_tail"
     allocation = TailAllocation(
         beta=float(beta),
         deployment_weights=tuple((group, weights[group]) for group in ranked),
@@ -135,7 +161,9 @@ def fractional_tail_allocation(
         boundary_risk=float(boundary_risk),
         boundary_tie_groups=ties,
         tail_effective_groups=tail_effective,
-        max_tail_atom_share=float(np.max(q)) if len(q) else 0.0,
+        max_tail_atom_share=max_tail_atom_share,
+        tail_regime=tail_regime,
+        tail_capacity_ratio=float(beta) / max(weights.values()),
     )
     return tail_risk, allocation
 

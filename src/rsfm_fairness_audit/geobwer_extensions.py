@@ -42,7 +42,8 @@ def _protocol(path_or_protocol: str | Path | BWERProtocol) -> BWERProtocol:
 def _derived_protocol(base: BWERProtocol, *, loss_name: str, extension: str, details: Mapping[str, Any]) -> BWERProtocol:
     metadata = dict(base.metadata)
     metadata.update({"uncertainty_extension": extension, **{str(key): str(value) for key, value in details.items()}})
-    return replace(base, loss_name=loss_name, metadata=tuple(sorted(metadata.items())))
+    risk_spec = replace(base.risk_spec, name=loss_name) if base.risk_spec is not None else None
+    return replace(base, loss_name=loss_name, risk_spec=risk_spec, metadata=tuple(sorted(metadata.items())))
 
 
 def _retag(rows: Sequence[Mapping[str, Any]], protocol: BWERProtocol) -> list[dict[str, Any]]:
