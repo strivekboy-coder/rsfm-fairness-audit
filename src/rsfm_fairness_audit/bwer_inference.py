@@ -111,6 +111,32 @@ class PairedBWERComparison:
 
 
 @dataclass(frozen=True)
+class PairedSimultaneousRiskBoxes:
+    """One joint max-t band for two models on aligned units and clusters.
+
+    The boxes are intentionally exposed separately from the non-linear
+    GeoBWER propagation so fixed-universe callers can replace unsupported
+    groups by their preregistered RiskSpec bounds without pretending that a
+    sparse group was statistically estimated.
+    """
+
+    validity: Validity
+    groups: tuple[str, ...]
+    estimates_a: tuple[tuple[str, float], ...]
+    lower_a: tuple[tuple[str, float], ...]
+    upper_a: tuple[tuple[str, float], ...]
+    estimates_b: tuple[tuple[str, float], ...]
+    lower_b: tuple[tuple[str, float], ...]
+    upper_b: tuple[tuple[str, float], ...]
+    clusters_per_group: tuple[tuple[str, int], ...]
+    cluster_count: int
+    critical_value: float
+    confidence_level: float
+    bootstrap_replicates: int
+    message: str = ""
+
+
+@dataclass(frozen=True)
 class HonestConfirmationFold:
     discovery_partition: str
     confirmation_partition: str
@@ -490,6 +516,76 @@ def certified_geobwer(
     return certify_geobwer_from_band(band, beta=beta, deployment_weights=deployment_weights)
 
 
+def paired_simultaneous_risk_boxes(
+    losses_a: Sequence[float],
+    losses_b: Sequence[float],
+    groups: Sequence[Any],
+    clusters: Sequence[Any],
+    *,
+    confidence_level: float = 0.95,
+    n_bootstrap: int = 2000,
+    seed: int = 42,
+    multiplier: str = "rademacher",
+    min_clusters_per_group: int = 2,
+    risk_bounds: tuple[float, float] = (0.0, 1.0),
+) -> PairedSimultaneousRiskBoxes:
+    """Construct a joint simultaneous group-risk band for an aligned pair."""
+
+    if not (len(losses_a) == len(losses_b) == len(groups) == len(clusters)) or len(losses_a) == 0:
+        raise ValueError("Paired inputs must be non-empty and aligned.")
+    names_a, clusters_a, estimates_a, influence_a, counts_a = _prepare_cluster_influence(losses_a, groups, clusters)
+    names_b, clusters_b, estimates_b, influence_b, counts_b = _prepare_cluster_influence(losses_b, groups, clusters)
+    if names_a != names_b or clusters_a != clusters_b:
+        raise RuntimeError("Paired influence matrices did not align.")
+    influence = np.concatenate([influence_a, influence_b], axis=1)
+    perturbations, standard_errors = _multiplier_draws(influence, n_bootstrap=n_bootstrap, seed=seed, multiplier=multiplier)
+    active = standard_errors > np.finfo(float).eps
+    critical = 0.0
+    if np.any(active):
+        max_statistics = np.max(np.abs(perturbations[:, active] / standard_errors[active]), axis=1)
+        critical = float(np.quantile(max_statistics, confidence_level, method="higher"))
+    width_a = critical * standard_errors[: len(names_a)]
+    width_b = critical * standard_errors[len(names_a) :]
+    risk_low, risk_high = map(float, risk_bounds)
+    lower_a = {
+        group: float(np.clip(estimates_a[index] - width_a[index], risk_low, risk_high))
+        for index, group in enumerate(names_a)
+    }
+    upper_a = {
+        group: float(np.clip(estimates_a[index] + width_a[index], risk_low, risk_high))
+        for index, group in enumerate(names_a)
+    }
+    lower_b = {
+        group: float(np.clip(estimates_b[index] - width_b[index], risk_low, risk_high))
+        for index, group in enumerate(names_b)
+    }
+    upper_b = {
+        group: float(np.clip(estimates_b[index] + width_b[index], risk_low, risk_high))
+        for index, group in enumerate(names_b)
+    }
+    validity = Validity.VALID
+    message = "Joint max-t band is calibrated over both aligned model-by-group risk vectors."
+    if min(int(np.min(counts_a)), int(np.min(counts_b))) < int(min_clusters_per_group):
+        validity = Validity.INSUFFICIENT_INDEPENDENT_UNITS
+        message = f"At least one group has fewer than {min_clusters_per_group} paired clusters."
+    return PairedSimultaneousRiskBoxes(
+        validity=validity,
+        groups=names_a,
+        estimates_a=tuple(zip(names_a, estimates_a.tolist())),
+        lower_a=tuple((group, lower_a[group]) for group in names_a),
+        upper_a=tuple((group, upper_a[group]) for group in names_a),
+        estimates_b=tuple(zip(names_b, estimates_b.tolist())),
+        lower_b=tuple((group, lower_b[group]) for group in names_b),
+        upper_b=tuple((group, upper_b[group]) for group in names_b),
+        clusters_per_group=tuple(zip(names_a, counts_a.tolist())),
+        cluster_count=len(clusters_a),
+        critical_value=critical,
+        confidence_level=float(confidence_level),
+        bootstrap_replicates=int(n_bootstrap),
+        message=message,
+    )
+
+
 def paired_bwer_comparison(
     losses_a: Sequence[float],
     losses_b: Sequence[float],
@@ -509,43 +605,28 @@ def paired_bwer_comparison(
     mean_harm_tolerance: float = 0.0,
     tail_harm_tolerance: float = 0.0,
 ) -> PairedBWERComparison:
-    if not (len(losses_a) == len(losses_b) == len(groups) == len(clusters)) or len(losses_a) == 0:
-        raise ValueError("Paired inputs must be non-empty and aligned.")
-    names_a, clusters_a, estimates_a, influence_a, counts_a = _prepare_cluster_influence(losses_a, groups, clusters)
-    names_b, clusters_b, estimates_b, influence_b, counts_b = _prepare_cluster_influence(losses_b, groups, clusters)
-    if names_a != names_b or clusters_a != clusters_b:
-        raise RuntimeError("Paired influence matrices did not align.")
-    influence = np.concatenate([influence_a, influence_b], axis=1)
-    perturbations, standard_errors = _multiplier_draws(influence, n_bootstrap=n_bootstrap, seed=seed, multiplier=multiplier)
-    active = standard_errors > np.finfo(float).eps
-    critical = 0.0
-    if np.any(active):
-        max_statistics = np.max(np.abs(perturbations[:, active] / standard_errors[active]), axis=1)
-        critical = float(np.quantile(max_statistics, confidence_level, method="higher"))
-    width_a = critical * standard_errors[: len(names_a)]
-    width_b = critical * standard_errors[len(names_a) :]
-    risks_a = dict(zip(names_a, estimates_a.tolist()))
-    risks_b = dict(zip(names_b, estimates_b.tolist()))
+    boxes = paired_simultaneous_risk_boxes(
+        losses_a,
+        losses_b,
+        groups,
+        clusters,
+        confidence_level=confidence_level,
+        n_bootstrap=n_bootstrap,
+        seed=seed,
+        multiplier=multiplier,
+        min_clusters_per_group=min_clusters_per_group,
+        risk_bounds=risk_bounds,
+    )
+    names_a = boxes.groups
+    risks_a = dict(boxes.estimates_a)
+    risks_b = dict(boxes.estimates_b)
+    lower_a = dict(boxes.lower_a)
+    upper_a = dict(boxes.upper_a)
+    lower_b = dict(boxes.lower_b)
+    upper_b = dict(boxes.upper_b)
     weights = normalize_deployment_weights(names_a, deployment_weights)
     point_a = compute_geobwer(risks_a, beta, weights)
     point_b = compute_geobwer(risks_b, beta, weights)
-    risk_low, risk_high = map(float, risk_bounds)
-    lower_a = {
-        group: float(np.clip(estimates_a[index] - width_a[index], risk_low, risk_high))
-        for index, group in enumerate(names_a)
-    }
-    upper_a = {
-        group: float(np.clip(estimates_a[index] + width_a[index], risk_low, risk_high))
-        for index, group in enumerate(names_a)
-    }
-    lower_b = {
-        group: float(np.clip(estimates_b[index] - width_b[index], risk_low, risk_high))
-        for index, group in enumerate(names_b)
-    }
-    upper_b = {
-        group: float(np.clip(estimates_b[index] + width_b[index], risk_low, risk_high))
-        for index, group in enumerate(names_b)
-    }
     triple = paired_risk_triple_from_boxes(
         lower_a,
         upper_a,
@@ -558,6 +639,17 @@ def paired_bwer_comparison(
         mean_harm_tolerance=mean_harm_tolerance,
         tail_harm_tolerance=tail_harm_tolerance,
     )
+    # Retain the historical direct non-smooth bootstrap interval as a
+    # sensitivity field; the joint risk box above remains the formal object.
+    _, _, estimates_a, influence_a, _ = _prepare_cluster_influence(losses_a, groups, clusters)
+    _, _, estimates_b, influence_b, _ = _prepare_cluster_influence(losses_b, groups, clusters)
+    perturbations, _ = _multiplier_draws(
+        np.concatenate([influence_a, influence_b], axis=1),
+        n_bootstrap=n_bootstrap,
+        seed=seed,
+        multiplier=multiplier,
+    )
+    risk_low, risk_high = map(float, risk_bounds)
     direct_deltas = np.empty(n_bootstrap, dtype=float)
     for replicate in range(n_bootstrap):
         perturbed_a = {
@@ -565,25 +657,19 @@ def paired_bwer_comparison(
             for index, group in enumerate(names_a)
         }
         perturbed_b = {
-            group: float(
-                np.clip(
-                    estimates_b[index] + perturbations[replicate, len(names_a) + index],
-                    risk_low,
-                    risk_high,
-                )
-            )
-            for index, group in enumerate(names_b)
+            group: float(np.clip(estimates_b[index] + perturbations[replicate, len(names_a) + index], risk_low, risk_high))
+            for index, group in enumerate(names_a)
         }
-        direct_deltas[replicate] = compute_geobwer(perturbed_a, beta, weights).bwer - compute_geobwer(perturbed_b, beta, weights).bwer
+        direct_deltas[replicate] = (
+            compute_geobwer(perturbed_a, beta, weights).bwer
+            - compute_geobwer(perturbed_b, beta, weights).bwer
+        )
     alpha = 1.0 - confidence_level
-    direct_low, direct_high = np.quantile(direct_deltas, [alpha / 2.0, 1.0 - alpha / 2.0])
-    validity = Validity.VALID
-    message = "Formal CI propagates a joint simultaneous group-risk band; direct multiplier CI is a non-smooth sensitivity interval."
-    if min(int(np.min(counts_a)), int(np.min(counts_b))) < int(min_clusters_per_group):
-        validity = Validity.INSUFFICIENT_INDEPENDENT_UNITS
-        message = f"At least one group has fewer than {min_clusters_per_group} paired clusters."
+    direct_low, direct_high = np.quantile(
+        direct_deltas, [alpha / 2.0, 1.0 - alpha / 2.0]
+    )
     return PairedBWERComparison(
-        validity=validity,
+        validity=boxes.validity,
         model_a=model_a,
         model_b=model_b,
         delta_bwer=triple.delta_bwer.point,
@@ -600,9 +686,9 @@ def paired_bwer_comparison(
         direct_multiplier_ci_high=float(direct_high),
         common_groups=names_a,
         common_units=len(losses_a),
-        cluster_count=len(clusters_a),
+        cluster_count=boxes.cluster_count,
         confidence_level=float(confidence_level),
-        message=message,
+        message=boxes.message,
     )
 
 
