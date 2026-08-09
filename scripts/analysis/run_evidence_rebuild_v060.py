@@ -13,6 +13,7 @@ from rsfm_fairness_audit.evidence_rebuild_v060 import (
     seal_evidence_output,
     run_fmow_proper_score_sensitivity,
     build_evidence_status_matrix,
+    run_reben_labelwise_sensitivity,
 )
 
 
@@ -69,6 +70,11 @@ def main() -> None:
     matrix.add_argument("--records", type=Path, required=True)
     matrix.add_argument("--output-dir", type=Path, required=True)
 
+    reben_labelwise = sub.add_parser("reben-labelwise")
+    reben_labelwise.add_argument("--probability-dir", type=Path, required=True)
+    reben_labelwise.add_argument("--unified-metrics", type=Path, required=True)
+    reben_labelwise.add_argument("--output-dir", type=Path, required=True)
+
     args = parser.parse_args()
     if args.stage == "fmow-paired":
         paths = run_fmow_same_seed_paired_v12(
@@ -120,6 +126,12 @@ def main() -> None:
     elif args.stage == "matrix":
         records = json.loads(args.records.read_text(encoding="utf-8"))
         paths = build_evidence_status_matrix(task_records=records, output_dir=args.output_dir)
+    elif args.stage == "reben-labelwise":
+        paths = run_reben_labelwise_sensitivity(
+            probability_dir=args.probability_dir,
+            unified_metrics=args.unified_metrics,
+            output_dir=args.output_dir,
+        )
     else:
         paths = {"completion": seal_evidence_output(args.output_dir)}
     for name, path in paths.items():

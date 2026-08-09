@@ -608,6 +608,140 @@ def run_fmow_proper_score_sensitivity(
     return {"results": result_path, "manifest": manifest_path}
 
 
+def run_reben_labelwise_sensitivity(
+    *, probability_dir: str | Path, unified_metrics: str | Path,
+    output_dir: str | Path, betas: Sequence[float] = DEFAULT_BETAS,
+    expected_runs: int = 27, expected_samples: int = 119825, expected_labels: int = 19,
+) -> dict[str, Path]:
+    """Re-audit frozen reBEN predictions using labelwise FNR/FPR risks.
+
+    Per-label thresholds are consumed from the frozen probability bundles and
+    are never selected on test.  The analysis is descriptive because labels
+    are outcome dimensions rather than independent geographic deployment
+    clusters; it is a risk-construct sensitivity for the primary Hamming audit.
+    """
+    output = _new_output(output_dir)
+    root = Path(probability_dir)
+    paths = sorted(root.glob("*.npz"))
+    if len(paths) != int(expected_runs):
+        raise ValueError(f"Expected exactly {expected_runs} frozen reBEN probability bundles, found {len(paths)}.")
+    metric_rows = {row["run_id"]: row for row in read_csv(unified_metrics)}
+    label_rows: list[dict[str, Any]] = []
+    profile_rows: list[dict[str, Any]] = []
+    run_rows: list[dict[str, Any]] = []
+    reference_ids: np.ndarray | None = None
+    reference_targets: np.ndarray | None = None
+    reference_classes: tuple[str, ...] | None = None
+    source_hashes: list[dict[str, Any]] = []
+    for path in paths:
+        stem = path.stem
+        match = re.fullmatch(r"(.+)__(s1|s2|s1_plus_s2)__seed_(42|73|101)", stem)
+        if not match:
+            raise ValueError(f"Unrecognized reBEN bundle identity: {path.name}")
+        family, mode, seed_text = match.groups(); seed = int(seed_text)
+        run_id = f"{family}__{mode}__seed_{seed}"
+        if run_id not in metric_rows:
+            raise ValueError(f"Missing frozen unified metric row for {run_id}.")
+        with np.load(path, allow_pickle=False) as archive:
+            required = {"sample_id", "probabilities", "targets", "class_names", "thresholds"}
+            if not required.issubset(archive.files):
+                raise ValueError(f"Missing arrays in {path.name}: {sorted(required - set(archive.files))}")
+            sample_ids = archive["sample_id"].astype(str)
+            probabilities = np.asarray(archive["probabilities"], dtype=float)
+            targets = np.asarray(archive["targets"], dtype=int)
+            class_names = tuple(map(str, archive["class_names"].tolist()))
+            thresholds = np.asarray(archive["thresholds"], dtype=float)
+            if "threshold" in archive.files and not np.array_equal(thresholds, np.asarray(archive["threshold"], dtype=float)):
+                raise ValueError(f"Duplicate threshold arrays disagree in {path.name}.")
+        if probabilities.shape != targets.shape or probabilities.shape != (int(expected_samples), int(expected_labels)):
+            raise ValueError(f"Frozen reBEN probability shape mismatch: {path.name}")
+        if thresholds.shape != (int(expected_labels),) or not np.all(np.isfinite(thresholds)) or np.any((thresholds <= 0) | (thresholds >= 1)):
+            raise ValueError(f"Invalid validation-locked thresholds: {path.name}")
+        if len(set(sample_ids.tolist())) != len(sample_ids):
+            raise ValueError(f"Duplicate reBEN sample IDs: {path.name}")
+        if not np.all(np.isfinite(probabilities)) or np.any((probabilities < 0) | (probabilities > 1)):
+            raise ValueError(f"Invalid reBEN probabilities: {path.name}")
+        if not np.all(np.isin(targets, [0, 1])):
+            raise ValueError(f"Invalid reBEN multilabel targets: {path.name}")
+        if reference_ids is None:
+            reference_ids, reference_targets, reference_classes = sample_ids.copy(), targets.copy(), class_names
+        elif not np.array_equal(sample_ids, reference_ids) or not np.array_equal(targets, reference_targets) or class_names != reference_classes:
+            raise ValueError(f"Cross-run reBEN sample/target/class alignment failed: {path.name}")
+        predicted = probabilities >= thresholds[None, :]
+        risks_by_type: dict[str, dict[str, float]] = {"fnr": {}, "fpr": {}, "balanced_error": {}}
+        for index, label in enumerate(class_names):
+            positive = targets[:, index] == 1; negative = ~positive
+            pos_n, neg_n = int(positive.sum()), int(negative.sum())
+            if pos_n == 0 or neg_n == 0:
+                raise ValueError(f"Label {label} lacks positive or negative test support in {path.name}.")
+            fn = int(np.sum(~predicted[positive, index])); fp = int(np.sum(predicted[negative, index]))
+            fnr, fpr = fn / pos_n, fp / neg_n
+            balanced = 0.5 * (fnr + fpr)
+            risks_by_type["fnr"][label] = fnr
+            risks_by_type["fpr"][label] = fpr
+            risks_by_type["balanced_error"][label] = balanced
+            label_rows.append({
+                "run_id": run_id, "family": family, "mode": mode, "seed": seed,
+                "label": label, "threshold": float(thresholds[index]),
+                "positive_support": pos_n, "negative_support": neg_n,
+                "false_negative_count": fn, "false_positive_count": fp,
+                "fnr": fnr, "fpr": fpr, "balanced_error": balanced,
+                "evidence_status": "descriptive_only",
+                "threshold_source": "frozen_validation_calibrated_per_label",
+            })
+        for risk_name, risks in risks_by_type.items():
+            primary = compute_geobwer(risks, beta=0.10)
+            run_rows.append({
+                "run_id": run_id, "family": family, "mode": mode, "seed": seed,
+                "risk": risk_name, "mean_risk": primary.mean_risk,
+                "tail_risk": primary.tail_risk, "geobwer": primary.bwer,
+                "primary_hamming_geobwer": float(metric_rows[run_id]["geobwer"]),
+                "evidence_status": "descriptive_only",
+            })
+            for beta in betas:
+                card = compute_geobwer(risks, beta=float(beta))
+                profile_rows.append({
+                    "run_id": run_id, "family": family, "mode": mode, "seed": seed,
+                    "risk": risk_name, "beta": float(beta), "mean_risk": card.mean_risk,
+                    "tail_risk": card.tail_risk, "geobwer": card.bwer,
+                    "tail_effective_labels": card.allocation.tail_effective_groups,
+                    "max_tail_atom_share": card.allocation.max_tail_atom_share,
+                    "boundary_risk": card.allocation.boundary_risk,
+                    "tail_regime": card.allocation.tail_regime,
+                    "evidence_status": "descriptive_only",
+                })
+        source_hashes.append({"file": path.name, "sha256": sha256_file(path), "read_only": True})
+    label_path = output / "labelwise_fnr_fpr.csv"; write_csv(label_path, label_rows)
+    run_path = output / "run_level_labelwise_geobwer.csv"; write_csv(run_path, run_rows)
+    profile_path = output / "labelwise_beta_profile.csv"; write_csv(profile_path, profile_rows)
+    summary_rows: list[dict[str, Any]] = []
+    for family in sorted({row["family"] for row in run_rows}):
+        for mode in sorted({row["mode"] for row in run_rows if row["family"] == family}):
+            for risk in ("fnr", "fpr", "balanced_error"):
+                selected = [row for row in run_rows if row["family"] == family and row["mode"] == mode and row["risk"] == risk]
+                values = [float(row["geobwer"]) for row in selected]
+                summary_rows.append({
+                    "family": family, "mode": mode, "risk": risk,
+                    "seed_count": len(selected), "geobwer_mean": float(np.mean(values)),
+                    "geobwer_min": min(values), "geobwer_max": max(values),
+                    "geobwer_range": max(values) - min(values),
+                })
+    summary_path = output / "three_seed_labelwise_summary.csv"; write_csv(summary_path, summary_rows)
+    manifest_path = output / "postprocess_manifest.json"
+    write_json(manifest_path, {
+        "schema": "geobwer.reben.labelwise_risk_sensitivity.v1",
+        "package_version": __version__, "status": "descriptive_complete",
+        "run_count": len(paths), "test_sample_count": expected_samples, "label_count": expected_labels,
+        "threshold_selection_data": "frozen_validation_only", "test_used_for_threshold_selection": False,
+        "primary_estimand_changed": False, "model_training_or_inference": False,
+        "source_artifacts_modified": False, "source_bundles": source_hashes,
+        "unified_metrics": _source_contract([unified_metrics])[0],
+        "interpretation": "labelwise FNR/FPR/balanced-error sensitivity; not geographic cluster inference",
+    })
+    return {"labelwise": label_path, "runs": run_path, "profile": profile_path,
+        "summary": summary_path, "manifest": manifest_path}
+
+
 def build_evidence_status_matrix(
     *, task_records: Sequence[Mapping[str, Any]], output_dir: str | Path,
 ) -> dict[str, Path]:

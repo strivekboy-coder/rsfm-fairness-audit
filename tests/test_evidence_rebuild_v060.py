@@ -10,6 +10,7 @@ from rsfm_fairness_audit.evidence_rebuild_v060 import (
     build_evidence_status_matrix,
     run_fmow_proper_score_sensitivity,
     run_fmow_same_seed_paired_v12,
+    run_reben_labelwise_sensitivity,
     run_reben_fixed_universe_v12,
     run_sen1_event_geobwer,
 )
@@ -110,3 +111,23 @@ def test_evidence_matrix_uses_explicit_status_records() -> None:
     }], output_dir=tmp_path / "out")
     rows = list(csv.DictReader(paths["matrix"].open()))
     assert rows == [{"mechanism": "m", "status": "formal_partial", "task": "x"}]
+
+
+def test_reben_labelwise_uses_frozen_thresholds_without_test_selection() -> None:
+    import numpy as np
+    tmp_path = _workspace_case(); bundles = tmp_path / "bundles"; bundles.mkdir()
+    sample_id = np.asarray(["a", "b", "c", "d"])
+    targets = np.asarray([[1, 0], [0, 1], [1, 0], [0, 1]], dtype=np.int8)
+    probabilities = np.asarray([[.8, .2], [.3, .7], [.4, .1], [.2, .6]], dtype=np.float32)
+    np.savez_compressed(bundles / "croma__s1__seed_42.npz", sample_id=sample_id,
+        probabilities=probabilities, targets=targets, class_names=np.asarray(["x", "y"]),
+        thresholds=np.asarray([.5, .5], dtype=np.float32), threshold=np.asarray([.5, .5], dtype=np.float32))
+    metrics = tmp_path / "metrics.csv"
+    _write(metrics, [{"run_id": "croma__s1__seed_42", "geobwer": "0.1"}])
+    paths = run_reben_labelwise_sensitivity(probability_dir=bundles, unified_metrics=metrics,
+        output_dir=tmp_path / "out", expected_runs=1, expected_samples=4, expected_labels=2, betas=(.1,))
+    rows = list(csv.DictReader(paths["labelwise"].open()))
+    assert len(rows) == 2
+    assert all(row["threshold_source"] == "frozen_validation_calibrated_per_label" for row in rows)
+    manifest = json.loads(paths["manifest"].read_text())
+    assert manifest["test_used_for_threshold_selection"] is False
