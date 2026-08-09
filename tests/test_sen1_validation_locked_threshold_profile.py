@@ -67,6 +67,10 @@ def test_sen1_profile_selects_on_validation_only_and_seals_outputs() -> None:
     for model_root in model_roots:
         for split, ids in split_ids.items():
             _export(model_root / split, ids)
+    # The frozen TerraMind panel pads its writer rank to three digits, unlike
+    # U-Net. Discovery must rely on the stable index_parts export contract.
+    for manifest in model_roots[1].rglob("writer_manifest_rank_0.json"):
+        manifest.rename(manifest.with_name("writer_manifest_rank_000.json"))
     output = drive / "result"
     paths = run_profile(
         drive_root=drive, output_dir=output, thresholds=(0.3, 0.5, 0.7),

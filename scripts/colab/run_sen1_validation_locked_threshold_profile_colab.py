@@ -78,10 +78,16 @@ def discover_exports(
     for family, model_prefix, root in sources:
         if not root.is_dir():
             raise FileNotFoundError(f"Missing frozen Sen1 source root: {root}")
-        manifests = sorted(root.rglob("writer_manifest_rank_0.json"))
-        print(f"[sen1:threshold:discover] family={family} writer_manifests={len(manifests)} root={root}")
-        for manifest in manifests:
-            export = manifest.parent
+        # Writer manifest names differ across the frozen families
+        # (for example rank_0 for U-Net and rank_000 for TerraMind).  The
+        # index_parts directory is the stable probability-export contract.
+        exports = sorted(
+            path.parent
+            for path in root.rglob("index_parts")
+            if path.is_dir() and any(path.glob("*.jsonl"))
+        )
+        print(f"[sen1:threshold:discover] family={family} indexed_exports={len(exports)} root={root}")
+        for export in exports:
             relative = export.relative_to(root)
             split = _canonical_split(relative.parts)
             if split is None or split not in SPLIT_COUNTS:
