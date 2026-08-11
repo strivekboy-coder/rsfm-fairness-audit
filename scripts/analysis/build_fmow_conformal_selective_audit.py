@@ -427,17 +427,18 @@ def _baseline_summary_for_test_rows(rows: Sequence[Mapping[str, Any]], run_id: s
 
 
 def discover_fmow_audit_tables() -> dict[str, Path]:
+    source_config = Path(__file__).resolve().parents[2] / "configs" / "analysis" / "fmow_asset_sources.json"
+    payload = json.loads(source_config.read_text(encoding="utf-8"))
+    configured = payload.get("audit_tables", {})
+    if not isinstance(configured, dict):
+        raise ValueError(f"Invalid audit_tables in {source_config}")
+    project_root = Path(__file__).resolve().parents[2]
     candidates = {
-        "resnet50_13band": [
-            Path("outputs/final_step3/resnet50_30k_location_disjoint_patched_metadata/fmow_sentinel_resnet50_30k_location_disjoint/audit_table.csv"),
-            Path("outputs/final_step3/resnet50_30k_location_disjoint_patched_metadata/audit_table.csv"),
-            Path("outputs/019e9c6b-cca4-7fa2-aea5-cb2a55798073/presentations/rsfm-bwer-progress-update/assets/canonical/02_fmow/fmow_sentinel_resnet50_30k_location_disjoint_audit_table.csv"),
-        ],
-        "dofa_scaled10000": [
-            Path("outputs/final_step3/dofa_scaled10000_30k_location_disjoint/fmow_sentinel_dofa_vitb_linear_probe_30k_location_disjoint_scaled10000/audit_table.csv"),
-            Path("outputs/final_step3/dofa_scaled10000_30k_location_disjoint/audit_table.csv"),
-            Path("outputs/019e9c6b-cca4-7fa2-aea5-cb2a55798073/presentations/rsfm-bwer-progress-update/assets/canonical/02_fmow/fmow_sentinel_dofa_vitb_linear_probe_30k_location_disjoint_scaled10000_audit_table.csv"),
-        ],
+        str(run_id): [
+            path if path.is_absolute() else project_root / path
+            for path in (Path(str(value)) for value in values)
+        ]
+        for run_id, values in configured.items()
     }
     found: dict[str, Path] = {}
     for run_id, paths in candidates.items():

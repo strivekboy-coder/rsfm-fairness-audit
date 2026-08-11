@@ -139,7 +139,7 @@ def _replay_linear_probe(
             "CPU replay of the frozen linear probe requires torch."
         ) from exc
     try:
-        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     except TypeError:  # pragma: no cover - compatibility with older torch.
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
     if not isinstance(checkpoint, Mapping):

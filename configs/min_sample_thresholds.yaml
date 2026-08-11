@@ -1,3 +1,12 @@
+# LEGACY CONFIGURATION — retained only for historical reproducibility.
+# Current task-aware support policy lives in configs/slice_taxonomy.yaml and
+# Certification 1.2 cluster inference uses configs/geobwer/*.yaml. New runners
+# must not load this file as a second source of truth.
+status: legacy_do_not_load
+superseded_by:
+  - configs/slice_taxonomy.yaml
+  - configs/geobwer/certification_v12.yaml
+
 defaults:
   min_samples_per_slice: 30
   min_positive_support: null

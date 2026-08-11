@@ -13,7 +13,9 @@ def test_protocol_contrast_schema_smoke() -> None:
     rows = read_csv_rows(artifacts["fmow_protocol_contrast_bwer_summary"])
     assert rows
     assert {"run_id", "model_family", "protocol", "protocol_status", "accuracy", "country_raw_bwer"}.issubset(rows[0])
-    assert {row["protocol_status"] for row in rows} == {"formal_deployment", "sanity_protocol_contrast"}
+    assert {row["protocol_status"] for row in rows} == {
+        "valid_benchmark_formal_partial", "sanity_protocol_contrast"
+    }
 
 
 def test_protocol_contrast_figure_smoke() -> None:

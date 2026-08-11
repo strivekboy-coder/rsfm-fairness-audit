@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import sys
 from pathlib import Path
@@ -14,7 +15,19 @@ from rsfm_fairness_audit.io import ensure_dir, read_csv_rows, write_csv
 
 
 DEFAULT_OUTPUT = Path("outputs/fmow_random_split_social_spatial_v1")
-CANONICAL_FMOW = Path("outputs/019e9c6b-cca4-7fa2-aea5-cb2a55798073/presentations/rsfm-bwer-progress-update/assets/canonical/02_fmow")
+ASSET_CONFIG = PROJECT_ROOT / "configs" / "analysis" / "fmow_asset_sources.json"
+
+
+def _canonical_fmow_from_config(path: Path = ASSET_CONFIG) -> Path:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    value = payload.get("canonical_fmow_dir")
+    if not value:
+        raise ValueError(f"Missing canonical_fmow_dir in {path}")
+    resolved = Path(str(value))
+    return resolved if resolved.is_absolute() else PROJECT_ROOT / resolved
+
+
+CANONICAL_FMOW = _canonical_fmow_from_config()
 DEFAULT_INDICATOR_JOIN = Path("outputs/fmow_social_spatial_interpretation_v1/fmow_social_indicator_join_v1_1.csv")
 DEFAULT_UNIFIED_V3 = Path("outputs/unified_paper_package_v3")
 

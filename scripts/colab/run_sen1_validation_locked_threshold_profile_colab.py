@@ -16,7 +16,7 @@ from rsfm_fairness_audit.bwer_core import compute_geobwer
 from rsfm_fairness_audit.sen1floods11_formal import load_sen1_probability_units
 
 
-SCHEMA = "geobwer.sen1.validation_locked_threshold_profile.v1"
+SCHEMA = "geobwer.sen1.validation_locked_threshold_profile.v2"
 DEFAULT_THRESHOLDS = tuple(round(value, 2) for value in np.arange(0.10, 0.901, 0.05))
 SPLIT_COUNTS = {"validation": 89, "standard_test": 90, "bolivia_holdout": 15}
 SPLIT_EVENTS = {"validation": 10, "standard_test": 10, "bolivia_holdout": 1}
@@ -28,6 +28,85 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _export_identity(export: Path) -> dict[str, Any]:
+    """Bind a cache to the immutable export contract without hashing multi-GB maps.
+
+    Index and manifest files are hashed cryptographically.  Probability payloads
+    are bound through a deterministic relative-path/size/mtime inventory; their
+    writer manifests already carry payload hashes for the formal exports.
+    """
+
+    if not export.is_dir():
+        raise FileNotFoundError(f"Missing frozen probability export: {export}")
+    contract_files = sorted(
+        path for path in export.rglob("*")
+        if path.is_file() and (path.suffix.lower() in {".json", ".jsonl"})
+    )
+    payload_files = sorted(
+        path for path in export.rglob("*")
+        if path.is_file() and path.suffix.lower() not in {".json", ".jsonl"}
+    )
+    contract = [
+        {
+            "path": path.relative_to(export).as_posix(),
+            "bytes": path.stat().st_size,
+            "sha256": _sha256(path),
+        }
+        for path in contract_files
+    ]
+    payload_inventory = [
+        {
+            "path": path.relative_to(export).as_posix(),
+            "bytes": path.stat().st_size,
+            "mtime_ns": path.stat().st_mtime_ns,
+        }
+        for path in payload_files
+    ]
+    encoded = json.dumps(
+        {"contract": contract, "payload_inventory": payload_inventory},
+        sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    return {
+        "path": str(export),
+        "contract_files": contract,
+        "payload_file_count": len(payload_inventory),
+        "identity_sha256": hashlib.sha256(encoded).hexdigest(),
+    }
+
+
+def _validate_completion(
+    completion: Path, *, output_dir: Path, thresholds: Sequence[float],
+    metadata_sha256: str, source_identity: Mapping[str, Any],
+    expected_counts: Mapping[str, int], expected_events: Mapping[str, int],
+) -> dict[str, Path]:
+    payload = json.loads(completion.read_text(encoding="utf-8"))
+    expected_contract = {
+        "schema": f"{SCHEMA}.completion",
+        "status": "complete",
+        "package_version": __version__,
+        "thresholds": list(thresholds),
+        "metadata_sha256": metadata_sha256,
+        "source_identity": source_identity,
+        "expected_counts": dict(expected_counts),
+        "expected_events": dict(expected_events),
+    }
+    for key, expected in expected_contract.items():
+        if payload.get(key) != expected:
+            raise RuntimeError(
+                f"Completion contract drift for {key}; use a new output directory: {completion}"
+            )
+    resolved: dict[str, Path] = {"completion": completion}
+    for artifact in payload.get("artifacts", []):
+        path = output_dir / str(artifact.get("path", ""))
+        if not path.is_file() or _sha256(path) != artifact.get("sha256"):
+            raise RuntimeError(f"Completed artifact is missing or changed: {path}")
+        role = str(artifact.get("role", path.stem))
+        resolved[role] = path
+    if len(resolved) == 1:
+        raise RuntimeError(f"Completion contract contains no verified artifacts: {completion}")
+    return resolved
 
 
 def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
@@ -157,6 +236,7 @@ def _threshold_stats(
         pooled_tp, pooled_fp, pooled_fn = pooled_by_threshold[threshold]
         event_means = {event: float(np.mean(values)) for event, values in event_risks.items()}
         card = compute_geobwer(event_means, beta=0.10)
+        event_gap_identified = len(event_means) >= 2
         pooled_union = pooled_tp + pooled_fp + pooled_fn
         output[float(threshold)] = {
             "identified_chip_count": len(identified),
@@ -170,6 +250,11 @@ def _threshold_stats(
             "event_mean_risk": card.mean_risk,
             "event_tail_risk": card.tail_risk,
             "event_geobwer": card.bwer,
+            "event_geobwer_identified": event_gap_identified,
+            "event_gap_interpretation": (
+                "identified_descriptive_event_gap" if event_gap_identified
+                else "single_event_structural_zero_not_between_event_disparity"
+            ),
             "tail_effective_events": card.allocation.tail_effective_groups,
             "max_tail_atom_share": card.allocation.max_tail_atom_share,
             "tail_regime": card.allocation.tail_regime,
@@ -198,13 +283,6 @@ def run_profile(
     if not thresholds or any(not 0.0 < value < 1.0 for value in thresholds):
         raise ValueError("Threshold grid must be non-empty and strictly inside (0,1).")
     completion = output_dir / "completion_contract.json"
-    if completion.exists():
-        payload = json.loads(completion.read_text(encoding="utf-8"))
-        if payload.get("status") == "complete" and payload.get("schema") == f"{SCHEMA}.completion":
-            print(f"[sen1:threshold] already complete: {completion}")
-            return {"completion": completion}
-        raise RuntimeError(f"Existing non-complete output requires a new directory: {output_dir}")
-    output_dir.mkdir(parents=True, exist_ok=True)
     metadata_csv = (
         drive_root / "outputs" / "geobwer_final_v3" / "sen1_19model_descriptive_v2"
         / "official_446_metadata_binding.csv"
@@ -223,6 +301,28 @@ def run_profile(
         )
     if not metadata_csv.is_file():
         raise FileNotFoundError(f"Missing official 446-chip metadata binding: {metadata_csv}")
+    metadata_sha256 = _sha256(metadata_csv)
+    source_identity = {
+        model: {
+            split: _export_identity(Path(entry["exports"][split]))
+            for split in sorted(entry["exports"])
+        }
+        for model, entry in sorted(registry.items())
+    }
+    if completion.exists():
+        verified = _validate_completion(
+            completion, output_dir=output_dir, thresholds=thresholds,
+            metadata_sha256=metadata_sha256, source_identity=source_identity,
+            expected_counts=expected_counts, expected_events=expected_events,
+        )
+        print(f"[sen1:threshold] already complete and verified: {completion}")
+        return verified
+    if output_dir.exists() and any(output_dir.iterdir()):
+        allowed = {"model_cache"}
+        unexpected = [path for path in output_dir.iterdir() if path.name not in allowed]
+        if unexpected:
+            raise RuntimeError(f"Existing non-complete output requires a new directory: {output_dir}")
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     profile_rows: list[dict[str, Any]] = []
     selection_rows: list[dict[str, Any]] = []
@@ -234,7 +334,17 @@ def run_profile(
         if cache_path.exists():
             print(f"[sen1:threshold:model] {position}/{len(registry)} reuse={cache_path.name}")
             payload = json.loads(cache_path.read_text(encoding="utf-8"))
-            if payload.get("schema") != f"{SCHEMA}.model_cache" or payload.get("thresholds") != list(thresholds):
+            cache_contract = {
+                "schema": f"{SCHEMA}.model_cache",
+                "package_version": __version__,
+                "model": model,
+                "thresholds": list(thresholds),
+                "metadata_sha256": metadata_sha256,
+                "source_identity": source_identity[model],
+                "expected_counts": dict(expected_counts),
+                "expected_events": dict(expected_events),
+            }
+            if any(payload.get(key) != value for key, value in cache_contract.items()):
                 raise RuntimeError(f"Incompatible model cache; use a new output directory: {cache_path}")
             split_stats = {
                 split: {float(key): value for key, value in values.items()}
@@ -268,7 +378,12 @@ def run_profile(
                 print(f"[sen1:threshold:load] complete model={model} split={split}")
             cache_payload = {
                 "schema": f"{SCHEMA}.model_cache", "model": model,
+                "package_version": __version__,
                 "thresholds": list(thresholds),
+                "metadata_sha256": metadata_sha256,
+                "source_identity": source_identity[model],
+                "expected_counts": dict(expected_counts),
+                "expected_events": dict(expected_events),
                 "split_stats": {
                     split: {str(key): value for key, value in values.items()}
                     for split, values in split_stats.items()
@@ -308,6 +423,8 @@ def run_profile(
                 "pooled_false_negative": pooled_fn,
                 "event_mean_risk": card.mean_risk, "event_tail_risk": card.tail_risk,
                 "event_geobwer": card.bwer,
+                "event_geobwer_identified": len(event_risks) >= 2,
+                "event_gap_interpretation": "identified_descriptive_event_gap",
                 "tail_effective_events": card.allocation.tail_effective_groups,
                 "max_tail_atom_share": card.allocation.max_tail_atom_share,
                 "tail_regime": card.allocation.tail_regime,
@@ -357,23 +474,36 @@ def run_profile(
         "model_training_or_inference": False, "source_artifacts_modified": False,
         "spatial_inference_valid": False,
         "interpretation": "Operating-point sensitivity for descriptive Event-GeoBWER; no formal spatial LCB.",
-        "metadata_csv": str(metadata_csv), "metadata_sha256": _sha256(metadata_csv),
+        "metadata_csv": str(metadata_csv), "metadata_sha256": metadata_sha256,
+        "source_identity": source_identity,
         "source_exports": {
             model: {split: str(path) for split, path in entry["exports"].items()}
             for model, entry in registry.items()
         },
     }
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    artifacts = [profile_path, selection_path, ranking_path, manifest_path]
+    artifacts = {
+        "profile": profile_path,
+        "selection": selection_path,
+        "ranking": ranking_path,
+        "manifest": manifest_path,
+    }
     completion.write_text(json.dumps({
         "schema": f"{SCHEMA}.completion", "status": "complete", "package_version": __version__,
         "model_training_or_inference": False,
-        "artifacts": [{"path": path.name, "sha256": _sha256(path)} for path in artifacts],
+        "thresholds": list(thresholds),
+        "metadata_sha256": metadata_sha256,
+        "source_identity": source_identity,
+        "expected_counts": dict(expected_counts),
+        "expected_events": dict(expected_events),
+        "artifacts": [
+            {"role": role, "path": path.name, "sha256": _sha256(path)}
+            for role, path in artifacts.items()
+        ],
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[sen1:threshold] SEN1_THRESHOLD_PROFILE_COMPLETE output={output_dir}")
     return {
-        "profile": profile_path, "selection": selection_path, "ranking": ranking_path,
-        "manifest": manifest_path, "completion": completion,
+        **artifacts, "completion": completion,
     }
 
 
@@ -388,7 +518,7 @@ def main() -> None:
     args = parser.parse_args()
     output = args.output_dir or (
         args.drive_root / "outputs" / "geobwer_final_v3" / "geobwer_evidence_rebuild_v060"
-        / "sen1_validation_locked_threshold_v12"
+        / "sen1_validation_locked_threshold_v2"
     )
     paths = run_profile(
         drive_root=args.drive_root, output_dir=output,

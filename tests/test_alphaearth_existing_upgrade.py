@@ -261,7 +261,11 @@ def test_colab_runner_absolute_path_from_external_cwd_imports_scripts_analysis()
         "print('ALPHAEARTH_ABSOLUTE_IMPORT=PASS')\n"
     )
     result = subprocess.run(
-        [sys.executable, "-I", "-c", probe],
+        # -P verifies that the runner does not depend on the external cwd while
+        # retaining the interpreter's configured package locations.  -I also
+        # hides Windows Store Python's user-site scientific packages and was
+        # testing local installation layout rather than runner portability.
+        [sys.executable, "-P", "-c", probe],
         cwd=PROJECT_ROOT.parent,
         check=False,
         capture_output=True,

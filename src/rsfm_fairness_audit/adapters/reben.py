@@ -7,7 +7,7 @@ import inspect
 import io
 import json
 import os
-import pickle
+import pickletools
 import re
 import threading
 import traceback
@@ -21,6 +21,17 @@ from rsfm_fairness_audit.adapters.base import DatasetAdapter
 
 class RebenDatasetError(RuntimeError):
     """Raised when official BigEarthNet v2.0 / reBEN loading is unavailable or inconsistent."""
+
+
+def _looks_like_pickle(value: bytes) -> bool:
+    """Validate pickle syntax without executing constructors or reducers."""
+
+    try:
+        for _opcode, _argument, _position in pickletools.genops(value):
+            pass
+        return True
+    except Exception:
+        return False
 
 
 REBEN_CONFIGILM_IMAGE_SIZES = {
@@ -198,7 +209,8 @@ def detect_lmdb_payload_format(lmdb_path: str | Path) -> str:
             else:
                 _, value = cursor.item()
                 try:
-                    pickle.loads(value)
+                    if not _looks_like_pickle(value):
+                        raise ValueError("invalid pickle opcode stream")
                     detected = "pickle_patch_interface"
                 except Exception:
                     try:
@@ -648,8 +660,9 @@ def inspect_lmdb_payload(lmdb_path: str | Path, split_csv_path: str | Path | Non
                     result["first_value_prefix_hex"] = prefix.hex()
                     result["first_value_prefix_ascii"] = prefix.decode("utf-8", errors="replace")
                     try:
-                        pickle.loads(value)
-                        result["pickle_load_status"] = "ok"
+                        if not _looks_like_pickle(value):
+                            raise ValueError("invalid pickle opcode stream")
+                        result["pickle_load_status"] = "syntax_ok_not_executed"
                     except Exception as exc:
                         result["pickle_load_status"] = f"failed: {type(exc).__name__}: {exc}"
                     try:

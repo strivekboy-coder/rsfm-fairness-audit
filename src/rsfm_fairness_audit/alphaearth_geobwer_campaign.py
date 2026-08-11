@@ -213,6 +213,19 @@ def _calibration_signature(
     ).hexdigest()
 
 
+def _formal_protocol(
+    base_protocol: BWERProtocol, *, metadata: Mapping[str, str], calibration_signature: str,
+) -> BWERProtocol:
+    """Attach task calibration without weakening the global inference gate."""
+
+    return replace(
+        base_protocol,
+        metadata=tuple(sorted(metadata.items())),
+        min_clusters_for_inference=base_protocol.min_clusters_for_inference,
+        cluster_eligibility_calibration_signature=calibration_signature,
+    )
+
+
 def run_alphaearth_geobwer_campaign(config: AlphaEarthCampaignConfig) -> dict[str, Path]:
     hydrate_output(config.output_dir, config.persistent_output_dir)
     output = ensure_dir(config.output_dir)
@@ -310,11 +323,8 @@ def run_alphaearth_geobwer_campaign(config: AlphaEarthCampaignConfig) -> dict[st
             "spatial_block_calibrated": "true",
         }
     )
-    protocol = replace(
-        base_protocol,
-        metadata=tuple(sorted(metadata.items())),
-        min_clusters_for_inference=base_protocol.min_clusters_per_slice,
-        cluster_eligibility_calibration_signature=calibration_signature,
+    protocol = _formal_protocol(
+        base_protocol, metadata=metadata, calibration_signature=calibration_signature,
     )
     bundle: FormalOutputBundle = write_multiclass_bundle(
         output / "formal_outputs",

@@ -352,7 +352,7 @@ def test_dofa_linear_probe_writes_formal_protocol_and_cache(monkeypatch) -> None
     _cleanup(root)
 
 
-def test_dofa_cache_key_ignores_manifest_path_and_split_label() -> None:
+def test_dofa_cache_key_binds_manifest_content_but_not_split_label() -> None:
     from rsfm_fairness_audit.adapters.dofa import DOFAAdapter
     from rsfm_fairness_audit.fmow_sentinel_classification import _dofa_cache_key
 
@@ -368,15 +368,21 @@ def test_dofa_cache_key_ignores_manifest_path_and_split_label() -> None:
         embedding_pooling="flatten",
         input_scale=10000,
     )
+    root = Path("work") / f"fmow_cache_identity_{uuid.uuid4().hex}"
+    root.mkdir(parents=True)
+    manifest_a = root / "manifest_a.csv"
+    manifest_b = root / "manifest_b.csv"
+    manifest_a.write_text("sample_id,category\ns1,a\n", encoding="utf-8")
+    manifest_b.write_text("sample_id,category\ns1,a\n", encoding="utf-8")
     first = FmowClassificationConfig(
-        metadata_csv=Path("random_split_manifest.csv"),
+        metadata_csv=manifest_a,
         output_dir=Path("unused-a"),
         model="dofa",
         image_size=224,
         band_profile="sentinel2_13band_fmow",
     )
     second = FmowClassificationConfig(
-        metadata_csv=Path("another_manifest_path.csv"),
+        metadata_csv=manifest_b,
         output_dir=Path("unused-b"),
         model="dofa",
         image_size=224,
@@ -384,3 +390,6 @@ def test_dofa_cache_key_ignores_manifest_path_and_split_label() -> None:
     )
 
     assert _dofa_cache_key(rows, "train", first, adapter) == _dofa_cache_key(rows, "val", second, adapter)
+    manifest_b.write_text("sample_id,category\ns1,b\n", encoding="utf-8")
+    assert _dofa_cache_key(rows, "train", first, adapter) != _dofa_cache_key(rows, "val", second, adapter)
+    _cleanup(root)

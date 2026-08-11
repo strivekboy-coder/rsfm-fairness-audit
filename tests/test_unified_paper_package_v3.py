@@ -6,6 +6,7 @@ from uuid import uuid4
 from rsfm_fairness_audit.io import read_csv_rows
 from scripts.analysis.build_fmow_protocol_contrast_v1 import build_fmow_protocol_contrast
 from scripts.analysis.build_unified_paper_package_v3 import build_unified_paper_package
+from scripts.analysis.build_unified_paper_package_v3 import _main_result_rows, _evidence_policy
 
 
 def test_unified_package_output_existence_smoke() -> None:
@@ -40,3 +41,15 @@ def test_unified_package_tables_and_figures_smoke() -> None:
     assert any(row["claim_id"] == "C2" and "protocol" in row["formal_status"] for row in claims)
     assert artifacts["figure_fmow_protocol_contrast_v3_png"].exists()
     assert artifacts["figure_claim_strength_matrix_v3_pdf"].exists()
+
+
+def test_current_evidence_policy_retains_valid_rankings_without_overclaiming() -> None:
+    rows = _main_result_rows()
+    assert rows
+    assert all(row["estimate_validity"] == "valid" for row in rows)
+    assert all(row["presentation_role"] == "main_benchmark" for row in rows)
+    policy = _evidence_policy()
+    valid = [row for row in policy if row.get("estimate_validity") == "valid"]
+    assert valid and all(row.get("retain_result") is True for row in valid)
+    alpha = [row for row in policy if row["task"] == "AlphaEarth"]
+    assert any(row["presentation_role"] == "main_benchmark" for row in alpha)

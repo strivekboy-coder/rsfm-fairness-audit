@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import sys
 from pathlib import Path
@@ -14,7 +15,19 @@ from rsfm_fairness_audit.io import ensure_dir, read_csv_rows, write_csv
 
 
 DEFAULT_OUTPUT = Path("outputs/fmow_protocol_contrast_v1")
-CANONICAL_FMOW = Path("outputs/019e9c6b-cca4-7fa2-aea5-cb2a55798073/presentations/rsfm-bwer-progress-update/assets/canonical/02_fmow")
+ASSET_CONFIG = PROJECT_ROOT / "configs" / "analysis" / "fmow_asset_sources.json"
+
+
+def _canonical_fmow_from_config(path: Path = ASSET_CONFIG) -> Path:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    value = payload.get("canonical_fmow_dir")
+    if not value:
+        raise ValueError(f"Missing canonical_fmow_dir in {path}")
+    resolved = Path(str(value))
+    return resolved if resolved.is_absolute() else PROJECT_ROOT / resolved
+
+
+CANONICAL_FMOW = _canonical_fmow_from_config()
 
 
 def _float(value: Any, default: float = float("nan")) -> float:
@@ -42,7 +55,7 @@ def _registry_rows() -> list[dict[str, Any]]:
             "run_id": "resnet50_13band",
             "model_family": "resnet",
             "protocol": "location_disjoint",
-            "protocol_status": "formal_deployment",
+            "protocol_status": "valid_benchmark_formal_partial",
             "accuracy": 0.20002233638597275,
             "balanced_accuracy": 0.18405095743992678,
             "macro_f1": 0.1724502860076166,
@@ -55,7 +68,7 @@ def _registry_rows() -> list[dict[str, Any]]:
             "run_id": "dofa_scaled10000",
             "model_family": "dofa",
             "protocol": "location_disjoint",
-            "protocol_status": "formal_deployment",
+            "protocol_status": "valid_benchmark_formal_partial",
             "accuracy": 0.17768595041322313,
             "balanced_accuracy": 0.1790738605980416,
             "macro_f1": 0.16865861362390494,
@@ -252,8 +265,9 @@ def build_fmow_protocol_contrast(output_dir: Path = DEFAULT_OUTPUT, canonical_di
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--canonical-dir", type=Path, default=CANONICAL_FMOW)
     args = parser.parse_args()
-    for name, path in build_fmow_protocol_contrast(args.out).items():
+    for name, path in build_fmow_protocol_contrast(args.out, args.canonical_dir).items():
         print(f"{name}: {path}")
 
 

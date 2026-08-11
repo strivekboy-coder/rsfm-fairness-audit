@@ -208,7 +208,7 @@ def diagnose(repo_path: Path, checkpoint_path: Path, constructor: str) -> dict[s
         except ValueError:
             pass
 
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     checkpoint_state, container = extract_state_dict(checkpoint)
     comparison = compare_state_dicts(model.state_dict(), checkpoint_state)
     return {

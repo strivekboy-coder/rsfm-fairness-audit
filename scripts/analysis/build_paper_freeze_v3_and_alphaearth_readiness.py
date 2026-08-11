@@ -85,14 +85,16 @@ def _asset_index(freeze_root: Path) -> list[dict[str, Any]]:
 
 def _formal_table() -> list[dict[str, str]]:
     return [
-        {"asset_or_analysis": "fMoW location-disjoint Step3", "status": "formal", "allowed_claim": "ResNet50 aggregate-best; DOFA scaled geography-BWER-best under location-disjoint audit", "caveat": "Uses saved final outputs only; debug/unscaled/random split excluded from formal deployment evidence."},
+        {"asset_or_analysis": "fMoW location-disjoint Step3", "status": "valid_point_estimates_formal_partial", "allowed_claim": "Retain the benchmark ranking: ResNet50 has the higher aggregate point score and DOFA scaled the lower geography-BWER point estimate in the registered panel", "caveat": "Common-support inference does not certify universal superiority or no-harm disparity reduction."},
         {"asset_or_analysis": "fMoW selective-BWER", "status": "post_hoc_formal_diagnostic", "allowed_claim": "Aggregate-vs-BWER rank divergence persists under confidence-conditioned retained sets", "caveat": "No new model inference; calibrated threshold is weaker than full conformal prediction."},
         {"asset_or_analysis": "fMoW calibrated confidence-threshold", "status": "diagnostic", "allowed_claim": "Calibration/test split threshold diagnostic from available confidence/max_probability", "caveat": "No APS/RAPS conformal claim without full probability vectors or true-class probabilities."},
         {"asset_or_analysis": "fMoW social-spatial v1.1", "status": "exploratory_diagnostic", "allowed_claim": "Country risk is spatially structured and weakly associated with simple World Bank indicators", "caveat": "Non-causal; support_count >= 20 for country interpretation."},
         {"asset_or_analysis": "fMoW random split protocol contrast", "status": "sanity", "allowed_claim": "Random split aggregate accuracy is overly optimistic relative to location-disjoint protocol", "caveat": "Not deployment evidence."},
         {"asset_or_analysis": "fMoW random split social-spatial", "status": "sanity", "allowed_claim": "Exploratory random-split country indicator associations", "caveat": "Not deployment evidence and not a substitute for location-disjoint social-spatial interpretation."},
         {"asset_or_analysis": "Drive-real audit v1", "status": "formal_contract_evidence", "allowed_claim": "Real Drive outputs support the audit contract findings", "caveat": "Raw zips are referenced/read-only, not repackaged as raw experiment data."},
-        {"asset_or_analysis": "AlphaEarth/GEE", "status": "planned_not_empirical", "allowed_claim": "Readiness plan only", "caveat": "No empirical AlphaEarth claims yet."},
+        {"asset_or_analysis": "reBEN 27-run and labelwise sensitivity", "status": "valid_point_estimates_partial_identification", "allowed_claim": "Retain model, modality, country, and labelwise benchmark patterns", "caveat": "Country-cluster inference is support-limited; labelwise sensitivity is not geographic inference."},
+        {"asset_or_analysis": "Sen1Floods11 19-model event panel", "status": "valid_protocol_aware_descriptive", "allowed_claim": "Retain test90, combined105, model/modality rankings, and event-tail findings", "caveat": "Single-event regimes have no identified between-event gap; no formal spatial guarantee."},
+        {"asset_or_analysis": "AlphaEarth/GEE", "status": "point_estimates_complete_spatial_gate_failed", "allowed_claim": "Retain raw and class-standardised reference-map agreement point/support results", "caveat": "No formal spatial certification; not ground-truth fairness."},
     ]
 
 
@@ -121,7 +123,7 @@ def _write_freeze_markdown(freeze_root: Path, source_rows: list[dict[str, Any]],
         "python scripts\\analysis\\build_paper_freeze_v3_and_alphaearth_readiness.py\n"
         "python -m pytest tests\\test_paper_freeze_and_alphaearth_readiness.py\n"
         "```\n\n"
-        "The freeze is a copy/reference package over completed outputs. It intentionally excludes raw training data, raw image arrays, and any model reruns. Random-split assets are marked sanity/protocol contrast only. Location-disjoint fMoW remains the formal geography deployment evidence.\n",
+        "The freeze is a copy/reference package over completed outputs. It intentionally excludes raw training data, raw image arrays, and any model reruns. Valid point estimates and benchmark rankings are retained even when inference is partial or descriptive. Random-split assets are marked sanity/protocol contrast only; formal certification status is recorded separately from estimate validity.\n",
         encoding="utf-8",
     )
     return {"MANIFEST": manifest, "reproducibility_notes": repro}

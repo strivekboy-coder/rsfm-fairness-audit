@@ -32,6 +32,7 @@ def _bundle(model: str, probabilities: np.ndarray):
         inference_method="none",
         group_variable="country",
         cluster_column="location_id",
+        cluster_eligibility_calibration_signature="unit-test-frozen-calibration-v1",
         task_adapter="multiclass",
         loss_name="risk",
     )

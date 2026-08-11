@@ -338,16 +338,30 @@ def _adapter_source(adapter: DOFAAdapter) -> str:
     return f"torch_hub:{adapter.torch_hub_repo}:{adapter.model_variant}:pretrained={adapter.allow_torch_hub_download}"
 
 
-def _row_hash(rows: Sequence[Mapping[str, Any]]) -> str:
+def _row_hash(rows: Sequence[Mapping[str, Any]], data_root: Path | None = None) -> str:
+    """Hash all manifest semantics plus the resolved image-file inventory."""
+
     digest = hashlib.sha256()
     for row in rows:
-        digest.update(str(row.get("sample_id", "")).encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(str(row.get("image_id", "")).encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(str(row.get("image_path", row.get("extracted_path", ""))).encode("utf-8"))
+        normalized = {str(key): str(value) for key, value in sorted(row.items())}
+        digest.update(json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+        image_value = row.get("image_path", row.get("extracted_path", ""))
+        image_path = Path(str(image_value)) if str(image_value) else None
+        if image_path is not None and not image_path.is_absolute() and data_root is not None:
+            image_path = data_root / image_path
+        if image_path is not None and image_path.is_file():
+            stat = image_path.stat()
+            digest.update(f"|{stat.st_size}|{stat.st_mtime_ns}".encode("utf-8"))
+        elif image_path is not None:
+            digest.update(b"|missing")
         digest.update(b"\n")
-    return digest.hexdigest()[:16]
+    return digest.hexdigest()[:24]
+
+
+def _manifest_hash(path: Path) -> str:
+    return file_sha256(path) if path.is_file() else hashlib.sha256(
+        f"missing:{path}".encode("utf-8")
+    ).hexdigest()
 
 
 def _dofa_cache_key(
@@ -367,8 +381,9 @@ def _dofa_cache_key(
         "embedding_layer": adapter.embedding_layer,
         "embedding_pooling": adapter.embedding_pooling,
         "input_scale": adapter.input_scale,
+        "manifest_sha256": _manifest_hash(config.metadata_csv),
         "row_count": len(rows),
-        "row_hash": _row_hash(rows),
+        "row_hash": _row_hash(rows, config.data_root),
     }
     if adapter.model_variant == "dofav2_vit_base":
         payload.update(
@@ -429,6 +444,7 @@ def _cached_dofa_embeddings(
         "cache_key": key,
         "split": split_name,
         "manifest": str(config.metadata_csv),
+        "manifest_sha256": _manifest_hash(config.metadata_csv),
         "model_variant": adapter.model_variant,
         "model_release": adapter.model_release,
         "image_size": config.image_size,
@@ -463,7 +479,7 @@ def _cached_dofa_embeddings(
         "row_count_requested": len(rows),
         "row_count_cached": len(ok_rows),
         "embedding_dim": int(embeddings.shape[1]) if embeddings.ndim == 2 else "",
-        "row_hash": _row_hash(rows),
+        "row_hash": _row_hash(rows, config.data_root),
     }
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
     print(f"[cache] wrote DOFA embeddings split={split_name} path={cache_path}")
@@ -884,7 +900,10 @@ def _train_resnet50(
                 },
                 checkpoint_path,
             )
-    state = torch.load(checkpoint_path, map_location=device)
+    try:
+        state = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    except TypeError:  # pragma: no cover - older torch runtime
+        state = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(state["model_state_dict"])
     final_predictions, final_metrics = _evaluate_resnet50(model, eval_loader, eval_rows, classes, device)
     final_metrics.update(

@@ -240,7 +240,7 @@ def _checkpoint_config_matches(
             payload = torch.load(
                 checkpoint,
                 map_location="cpu",
-                weights_only=False,
+                weights_only=True,
             )
         except TypeError:  # pragma: no cover - older torch runtime
             payload = torch.load(checkpoint, map_location="cpu")

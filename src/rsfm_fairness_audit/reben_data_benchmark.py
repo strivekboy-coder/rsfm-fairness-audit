@@ -80,7 +80,7 @@ def benchmark_reben_loader_workers(
             checkpoint_payload = torch.load(
                 checkpoint_path,
                 map_location="cpu",
-                weights_only=False,
+                weights_only=True,
             )
         except TypeError:  # pragma: no cover - older Colab torch
             checkpoint_payload = torch.load(checkpoint_path, map_location="cpu")
@@ -111,7 +111,7 @@ def benchmark_reben_loader_workers(
             checkpoint_payload = torch.load(
                 checkpoint_path,
                 map_location="cpu",
-                weights_only=False,
+                weights_only=True,
             )
         except TypeError:  # pragma: no cover - older Colab torch
             checkpoint_payload = torch.load(checkpoint_path, map_location="cpu")

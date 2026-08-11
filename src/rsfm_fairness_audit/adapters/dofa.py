@@ -384,7 +384,7 @@ class DOFAAdapter(ModelAdapter):
                 f"DOFA checkpoint SHA256 mismatch: expected {self.checkpoint_sha256}, got {self.actual_checkpoint_sha256}."
             )
         try:
-            checkpoint = torch.load(self.checkpoint_path, map_location="cpu", weights_only=False)
+            checkpoint = torch.load(self.checkpoint_path, map_location="cpu", weights_only=True)
         except TypeError:
             checkpoint = torch.load(self.checkpoint_path, map_location="cpu")
         state_dict = self._extract_state_dict(checkpoint)

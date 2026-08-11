@@ -12,7 +12,9 @@ from rsfm_fairness_audit.alphaearth_geobwer_campaign import (
     _probabilities_targets,
     _read_predictions,
     _split_rows,
+    _formal_protocol,
 )
+from rsfm_fairness_audit.bwer_protocol import BWERProtocol
 
 
 WORK = Path("work/test_alphaearth_geobwer_campaign")
@@ -83,3 +85,14 @@ def test_rejects_legacy_spatial_block_leakage() -> None:
     ]
     with pytest.raises(AlphaEarthCampaignError, match="leakage"):
         _split_rows(rows)
+
+
+def test_formal_protocol_preserves_calibrated_inference_threshold() -> None:
+    base = BWERProtocol(min_clusters_per_slice=2, min_clusters_for_inference=75)
+    protocol = _formal_protocol(
+        base, metadata={"spatial_block_calibrated": "true"},
+        calibration_signature="frozen-alpha-calibration",
+    )
+    assert protocol.min_clusters_per_slice == 2
+    assert protocol.min_clusters_for_inference == 75
+    assert protocol.cluster_eligibility_calibration_signature == "frozen-alpha-calibration"

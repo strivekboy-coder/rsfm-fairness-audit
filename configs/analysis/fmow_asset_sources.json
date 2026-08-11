@@ -1,0 +1,17 @@
+{
+  "schema": "rsfm.fmow.analysis_asset_sources.v1",
+  "canonical_fmow_dir": "outputs/019e9c6b-cca4-7fa2-aea5-cb2a55798073/presentations/rsfm-bwer-progress-update/assets/canonical/02_fmow",
+  "provenance": "Frozen historical asset snapshot retained explicitly for reproducible protocol-contrast analyses; not an implicit task-directory fallback.",
+  "audit_tables": {
+    "resnet50_13band": [
+      "outputs/final_step3/resnet50_30k_location_disjoint_patched_metadata/fmow_sentinel_resnet50_30k_location_disjoint/audit_table.csv",
+      "outputs/final_step3/resnet50_30k_location_disjoint_patched_metadata/audit_table.csv",
+      "outputs/019e9c6b-cca4-7fa2-aea5-cb2a55798073/presentations/rsfm-bwer-progress-update/assets/canonical/02_fmow/fmow_sentinel_resnet50_30k_location_disjoint_audit_table.csv"
+    ],
+    "dofa_scaled10000": [
+      "outputs/final_step3/dofa_scaled10000_30k_location_disjoint/fmow_sentinel_dofa_vitb_linear_probe_30k_location_disjoint_scaled10000/audit_table.csv",
+      "outputs/final_step3/dofa_scaled10000_30k_location_disjoint/audit_table.csv",
+      "outputs/019e9c6b-cca4-7fa2-aea5-cb2a55798073/presentations/rsfm-bwer-progress-update/assets/canonical/02_fmow/fmow_sentinel_dofa_vitb_linear_probe_30k_location_disjoint_scaled10000_audit_table.csv"
+    ]
+  }
+}

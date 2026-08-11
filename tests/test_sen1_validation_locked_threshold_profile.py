@@ -6,6 +6,7 @@ from pathlib import Path
 import uuid
 
 import numpy as np
+import pytest
 
 from rsfm_fairness_audit.sen1floods11_formal import write_sen1_probability_export
 from scripts.colab.run_sen1_validation_locked_threshold_profile_colab import run_profile
@@ -87,8 +88,30 @@ def test_sen1_profile_selects_on_validation_only_and_seals_outputs() -> None:
         "validation", "standard_test", "bolivia_holdout", "combined_held_out"
     }
     assert all(row["spatial_inference_valid"] == "False" for row in profile)
+    bolivia = [row for row in profile if row["split"] == "bolivia_holdout"]
+    assert bolivia
+    assert {row["event_geobwer_identified"] for row in bolivia} == {"False"}
+    assert {row["event_gap_interpretation"] for row in bolivia} == {
+        "single_event_structural_zero_not_between_event_disparity"
+    }
     manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
     assert manifest["test_or_bolivia_used_for_selection"] is False
     assert manifest["model_training_or_inference"] is False
     completion = json.loads(paths["completion"].read_text(encoding="utf-8"))
     assert completion["status"] == "complete"
+    reused = run_profile(
+        drive_root=drive, output_dir=output, thresholds=(0.3, 0.5, 0.7),
+        expected_models=3, expected_exports=9,
+        expected_counts={"validation": 2, "standard_test": 2, "bolivia_holdout": 1},
+        expected_events={"validation": 2, "standard_test": 2, "bolivia_holdout": 1},
+    )
+    assert reused["profile"] == paths["profile"]
+
+    paths["profile"].write_text("changed", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="missing or changed"):
+        run_profile(
+            drive_root=drive, output_dir=output, thresholds=(0.3, 0.5, 0.7),
+            expected_models=3, expected_exports=9,
+            expected_counts={"validation": 2, "standard_test": 2, "bolivia_holdout": 1},
+            expected_events={"validation": 2, "standard_test": 2, "bolivia_holdout": 1},
+        )

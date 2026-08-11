@@ -1,5 +1,12 @@
-version: unified_audit_matrix_v1
-recorded: "2026-06-05"
+version: unified_audit_matrix_v1.1
+recorded: "2026-08-11"
+registry_role: asset_locator_and_historical_point_estimate_snapshot
+current_evidence_policy: configs/analysis/evidence_status_v060.json
+policy_note: >
+  Point estimates and rankings in this registry remain available for benchmark
+  presentation when their estimate_validity is valid. Current inferential and
+  publication status must be joined from current_evidence_policy; formal-status
+  limitations do not by themselves remove valid estimates from comparison tables.
 description: >
   Registry for post-hoc paper-level synthesis across completed BWER-Audit
   evidence chains. Entries are intentionally declarative so future experiments
@@ -17,8 +24,8 @@ experiments:
     dataset: Sen1Floods11
     deployment_axis: event_disaster
     task_type: segmentation
-    formal_status: formal
-    result_level: formal_result
+    formal_status: descriptive_only
+    result_level: valid_protocol_aware_benchmark
     protocol_summary: Native flood segmentation case study; event-level TP/FP/FN/TN aggregation; BWER v2 post-hoc.
     output_dir_candidates:
       - /content/outputs/sen1floods11_closure
@@ -105,8 +112,8 @@ experiments:
     dataset: fMoW-Sentinel
     deployment_axis: geography_location
     task_type: single_label_classification
-    formal_status: formal
-    result_level: formal_result
+    formal_status: formal_partial
+    result_level: valid_point_estimates_with_partial_inference
     protocol_summary: 30k support-aware location-disjoint subset; geography metadata audit-only; 62-class scene classification.
     output_dir_candidates:
       - /content/outputs/final_step3
@@ -202,7 +209,7 @@ experiments:
     deployment_axis: sensor_modality
     task_type: multi_label_classification
     formal_status: formal_partial
-    result_level: formal_result
+    result_level: valid_point_estimates_with_partial_inference
     protocol_summary: CROMA frozen encoder plus linear multi-label probe over S1-only, S2-only, and S1+S2 sensor modes.
     output_dir_candidates:
       - /content/outputs/reben_croma_sensor_mode_audit_croma_comparison
