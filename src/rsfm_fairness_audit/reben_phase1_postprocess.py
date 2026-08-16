@@ -486,10 +486,25 @@ def build_final_optimization_evidence(
         payload = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
         item_audits[item] = {"path": str(path), "status": payload.get("status", "pending"), "gates": payload.get("gates", {})}
     base_pass = base_validation.get("passes") is True
-    complete = base_pass and all(item_audits[item]["status"] == "pass" for item in (6, 7))
+    experiment_complete = base_pass and all(item_audits[item]["status"] == "pass" for item in (6, 7))
+    paired_probability_diagnostics_complete = (
+        item_audits[7]["gates"].get("probability_diagnostics_complete") is True
+        and item_audits[7]["gates"].get("probability_diagnostic_sources_complete") is True
+    )
+    complete = experiment_complete and paired_probability_diagnostics_complete
+    finality_status = (
+        "complete" if complete
+        else "pending_no_retraining_probability_diagnostics" if experiment_complete
+        else "pending_required_results"
+    )
     base_coverage_path = base / "four_task_distribution_coverage.json"
     base_coverage = json.loads(base_coverage_path.read_text(encoding="utf-8")) if base_coverage_path.is_file() else {}
     coverage_status = base_coverage.get("status", "pass" if base_pass else "pending")
+    paired_result_status = (
+        "pass" if item_audits[7]["status"] == "pass" and paired_probability_diagnostics_complete
+        else "experiment_pass_diagnostics_pending" if item_audits[7]["status"] == "pass"
+        else item_audits[7]["status"]
+    )
     status_rows = [
         {"item": 1, "name": "evidence_freeze", "result_status": "pass" if base_pass else "pending", "evidence": str(base / "evidence_freeze_manifest.json")},
         {"item": 2, "name": "dispersion_comparator", "result_status": coverage_status, "evidence": str(base_coverage_path)},
@@ -497,7 +512,7 @@ def build_final_optimization_evidence(
         {"item": 4, "name": "terramind_cross_task", "result_status": "pass" if base_pass else "pending", "evidence": str(base / "terramind_cross_task_analysis.csv")},
         {"item": 5, "name": "compound_interactions", "result_status": "pass" if base_pass else "pending", "evidence": str(base / "compound_interaction_atlas.csv")},
         {"item": 6, "name": "nested_label_budget", "result_status": item_audits[6]["status"], "evidence": item_audits[6]["path"]},
-        {"item": 7, "name": "paired_sensor_shift", "result_status": item_audits[7]["status"], "evidence": item_audits[7]["path"]},
+        {"item": 7, "name": "paired_sensor_shift", "result_status": paired_result_status, "evidence": item_audits[7]["path"]},
     ]
     status_path = output / "optimization_1_7_result_status.csv"
     write_csv(status_path, status_rows)
@@ -527,7 +542,7 @@ def build_final_optimization_evidence(
             "evidence": str(probability_summary),
         })
     else:
-        conclusions.append({"item": 7, "status": item_audits[7]["status"], "conclusion": "Paired sensor-shift empirical conclusion remains pending the probability-level audited result.", "evidence": item_audits[7]["path"]})
+        conclusions.append({"item": 7, "status": paired_result_status, "conclusion": "The paired sensor-shift experiment passed, but mechanism attribution remains pending the probability-level no-retraining diagnostic.", "evidence": item_audits[7]["path"]})
     conclusions_path = output / "optimization_1_7_main_conclusions.json"
     conclusions_path.write_text(json.dumps({"schema": f"{FINAL_EVIDENCE_SCHEMA}.conclusions.v1", "conclusions": conclusions}, ensure_ascii=False, indent=2), encoding="utf-8")
     conclusions_report = output / "optimization_1_7_main_conclusions.md"
@@ -546,8 +561,10 @@ def build_final_optimization_evidence(
     payload = {
         "schema": FINAL_EVIDENCE_SCHEMA,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "status": "complete" if complete else "pending_required_results",
+        "status": finality_status,
         "finality": complete,
+        "formal_experiments_complete": experiment_complete,
+        "paired_probability_diagnostics_complete": paired_probability_diagnostics_complete,
         "git_head": _git_value(root, ("rev-parse", "HEAD")),
         "git_status_at_generation": _git_value(root, ("status", "--short")),
         "scope": {"included": list(range(1, 8)), "not_started": list(range(8, 18))},
@@ -572,10 +589,10 @@ def build_final_optimization_evidence(
         "## Item gates", "",
         f"- Items 1–5: `{'pass' if base_pass else 'pending'}`",
         f"- Item 6: `{item_audits[6]['status']}`", f"- Item 7: `{item_audits[7]['status']}`", "",
-        "A manifest marked `pending_required_results` is a readiness record, not final empirical evidence. It becomes final only when all three item gates pass.",
+        "A pending manifest is a readiness record, not a final evidence freeze. Completed experiments may still require the no-retraining probability diagnostic gate before finality.",
     ]) + "\n", encoding="utf-8")
     if not complete and not allow_pending:
-        raise RuntimeError("Final evidence is incomplete: items 1-5, 6, and 7 must all pass their audits.")
+        raise RuntimeError("Final evidence is incomplete: items 1-7 must pass and paired probability diagnostics must be materialized from the saved outputs.")
     return {"manifest": manifest_path, "inventory": inventory_path, "report": report_path, "status": status_path, "conclusions": conclusions_path, "conclusions_report": conclusions_report}
 
 

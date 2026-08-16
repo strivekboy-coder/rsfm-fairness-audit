@@ -1,0 +1,37 @@
+{
+  "schema": "geobwer.optimization_1_7.drive_reconciliation.v1",
+  "generated_date": "2026-08-16",
+  "training_or_experiment_started": false,
+  "scope_not_started": [8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+  "formal_experiments_complete": true,
+  "evidence_finality": "pending_no_retraining_probability_diagnostics",
+  "label_budget": {
+    "drive_folder_id": "1RjsLnJuioor9Ky5cQlmSXRV8fVucrk7z",
+    "experiment_audit_status": "pass",
+    "seed_count": 3,
+    "budget_count": 5,
+    "result_rows": 15,
+    "mean_endpoint_change_5_to_100_percent": {
+      "macro_ap": 0.01923350122972069,
+      "macro_f1": 0.0144349122143624,
+      "mean_risk": -0.00578123762827662,
+      "tail_risk_beta_0_10": -0.01136754401475792,
+      "geobwer_beta_0_10": -0.00558630638648132
+    }
+  },
+  "paired_sensor_shift": {
+    "drive_folder_id": "1VIb54N9PmIwZgNFxr4a4Ewa5vN0BmctE",
+    "experiment_audit_status": "pass",
+    "paired_test_sample_count": 119825,
+    "seed_count": 3,
+    "all_seed_mean_tail_and_geobwer_deltas_positive": true,
+    "mean_delta": {
+      "mean_risk": 0.3088348214881935,
+      "tail_risk_beta_0_10": 0.3555405901731084,
+      "geobwer_beta_0_10": 0.04670576868491492
+    },
+    "saved_probability_assets_present": true,
+    "no_retraining_probability_diagnostics_materialized": false
+  },
+  "finality_rule": "Formal experiment completion is distinct from final evidence packaging. The current-code finality gate additionally requires paired probability diagnostics generated from saved probabilities, targets, and validation-locked thresholds."
+}

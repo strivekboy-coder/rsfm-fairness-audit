@@ -242,10 +242,33 @@ def test_final_evidence_manifest_stays_nonfinal_when_results_are_pending(tmp_pat
     label.mkdir()
     paired.mkdir()
     (label / "label_budget_result_audit.json").write_text(json.dumps({"status": "pass", "gates": {"ok": True}}), encoding="utf-8")
-    (paired / "paired_shift_result_audit.json").write_text(json.dumps({"status": "pass", "gates": {"ok": True}}), encoding="utf-8")
+    (paired / "paired_shift_result_audit.json").write_text(json.dumps({"status": "pass", "gates": {
+        "ok": True, "probability_diagnostics_complete": True,
+        "probability_diagnostic_sources_complete": True,
+    }}), encoding="utf-8")
     complete = build_final_optimization_evidence(
         Path.cwd(), base, label, paired, tmp_path / "complete_final",
     )
     complete_manifest = json.loads(complete["manifest"].read_text(encoding="utf-8"))
     assert complete_manifest["status"] == "complete"
     assert complete_manifest["finality"] is True
+
+
+def test_final_evidence_distinguishes_completed_experiment_from_pending_diagnostics(tmp_path: Path) -> None:
+    base = tmp_path / "base"
+    label = tmp_path / "label"
+    paired = tmp_path / "paired"
+    for directory in (base, label, paired):
+        directory.mkdir()
+    (base / "optimization_1_7_validation.json").write_text(json.dumps({"passes": True}), encoding="utf-8")
+    (label / "label_budget_result_audit.json").write_text(json.dumps({"status": "pass", "gates": {"legacy": True}}), encoding="utf-8")
+    (paired / "paired_shift_result_audit.json").write_text(json.dumps({"status": "pass", "gates": {"legacy": True}}), encoding="utf-8")
+    artifacts = build_final_optimization_evidence(
+        Path.cwd(), base, label, paired, tmp_path / "final", allow_pending=True,
+    )
+    manifest = json.loads(artifacts["manifest"].read_text(encoding="utf-8"))
+    assert manifest["formal_experiments_complete"] is True
+    assert manifest["paired_probability_diagnostics_complete"] is False
+    assert manifest["status"] == "pending_no_retraining_probability_diagnostics"
+    assert manifest["finality"] is False
+    assert "experiment_pass_diagnostics_pending" in artifacts["status"].read_text(encoding="utf-8")

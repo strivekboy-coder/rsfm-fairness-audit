@@ -52,6 +52,15 @@ def _safe_ratio(numerator: float, denominator: float) -> float:
     return numerator / denominator if denominator > 1e-12 else float("nan")
 
 
+def _binary_confusion(target: np.ndarray, prediction: np.ndarray) -> dict[str, int | float]:
+    tp = int(np.sum((target == 1) & prediction))
+    fp = int(np.sum((target == 0) & prediction))
+    fn = int(np.sum((target == 1) & (~prediction)))
+    tn = int(np.sum((target == 0) & (~prediction)))
+    denominator = (2 * tp) + fp + fn
+    return {"tp": tp, "fp": fp, "fn": fn, "tn": tn, "f1": (2 * tp / denominator) if denominator else 0.0}
+
+
 def paired_label_probability_diagnostics(
     targets: np.ndarray,
     id_probabilities: np.ndarray,
@@ -85,6 +94,8 @@ def paired_label_probability_diagnostics(
         threshold = float(cutoffs[index])
         id_pred = id_score >= threshold
         ood_pred = ood_score >= threshold
+        id_confusion = _binary_confusion(target, id_pred)
+        ood_confusion = _binary_confusion(target, ood_pred)
         positive = target == 1
         negative = ~positive
         id_auroc = binary_auroc(target, id_score)
@@ -125,9 +136,19 @@ def paired_label_probability_diagnostics(
             "id_predicted_positive_rate": float(np.mean(id_pred)),
             "ood_predicted_positive_rate": float(np.mean(ood_pred)),
             "delta_predicted_positive_rate": delta_positive_rate,
+            "id_f1_at_locked_threshold": id_confusion["f1"],
+            "ood_f1_at_locked_threshold": ood_confusion["f1"],
+            "delta_f1_at_locked_threshold": float(ood_confusion["f1"]) - float(id_confusion["f1"]),
+            **{f"id_{key}": value for key, value in id_confusion.items() if key != "f1"},
+            **{f"ood_{key}": value for key, value in ood_confusion.items() if key != "f1"},
+            "ood_all_negative_prediction_flag": bool(not np.any(ood_pred)),
+            "ood_all_positive_prediction_flag": bool(np.all(ood_pred)),
             "id_mean_probability": float(np.mean(id_score)),
             "ood_mean_probability": float(np.mean(ood_score)),
             "delta_mean_probability": float(np.mean(ood_score - id_score)),
+            "id_mean_threshold_margin": float(np.mean(id_score - threshold)),
+            "ood_mean_threshold_margin": float(np.mean(ood_score - threshold)),
+            "delta_mean_threshold_margin": float(np.mean(ood_score - id_score)),
             "mean_absolute_paired_probability_shift": float(np.mean(np.abs(ood_score - id_score))),
             "probability_wasserstein_1": float(np.mean(np.abs(np.sort(ood_score) - np.sort(id_score)))),
             "id_score_std": float(np.std(id_score)), "ood_score_std": float(np.std(ood_score)),
@@ -167,6 +188,7 @@ def aggregate_paired_probability_diagnostics(
         "delta_predicted_positive_rate", "delta_mean_probability",
         "mean_absolute_paired_probability_shift", "probability_wasserstein_1",
         "threshold_crossing_rate", "delta_score_separation",
+        "id_f1_at_locked_threshold", "ood_f1_at_locked_threshold", "delta_f1_at_locked_threshold",
     )
     seed_rows = []
     for seed, group in sorted(by_seed.items(), key=lambda pair: int(pair[0])):

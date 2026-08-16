@@ -56,7 +56,7 @@ The formal preflight requires all six split-level embedding-cache lineage manife
 
 The runner uses seeds 42/73/101 by default. Within each seed, the head is trained only on S2 train, thresholds are selected only on S2 validation, and that unchanged head is evaluated on paired S2 and S1 test embeddings. Probe hyperparameters match the frozen 27-run panel (100 epochs, learning rate 0.01, weight decay 0.0001, batch size 512). The output deliberately uses “OOD degradation”; it does not claim EarthShift effective robustness.
 
-The completed runner automatically writes per-label and per-country paired risk changes, seed aggregates, levelling-down and tail-acceleration diagnostics, PNG/PDF figures, and `paired_shift_result_audit.json`. The postprocessor also reads the saved paired probabilities, test targets, and validation-locked thresholds to write per-seed/per-label AUROC, AP, predicted-positive rates, score shifts, and threshold-crossing rates. It labels operational `threshold_shift_dominant`, `representation_collapse_signature`, mixed, or stable patterns; these signatures are descriptive and are not causal encoder attributions. To audit a completed directory without training:
+The completed runner automatically writes per-label and per-country paired risk changes, seed aggregates, levelling-down and tail-acceleration diagnostics, PNG/PDF figures, and `paired_shift_result_audit.json`. The postprocessor also reads the saved paired probabilities, test targets, and validation-locked thresholds to write per-seed/per-label AUROC, AP, predicted-positive rates, locked-threshold confusion counts/F1, all-negative/all-positive flags, score shifts, and threshold-crossing rates. It labels operational `threshold_shift_dominant`, `representation_collapse_signature`, mixed, or stable patterns; these signatures are descriptive and are not causal encoder attributions. To audit a completed directory without training:
 
 ```bash
 python scripts/run_reben_terramind_paired_shift_colab.py \
@@ -76,7 +76,7 @@ python scripts/analysis/finalize_optimization_1_7.py \
   --output-dir /content/drive/MyDrive/rsfm_fairness_audit/outputs/geobwer_final_v3/optimization_1_7_final_evidence_v1
 ```
 
-Without both passing result audits, the finalizer fails rather than labelling incomplete evidence as final. `--allow-pending` may be used only to write a readiness manifest with `finality=false`. The freeze includes a unified inventory, `optimization_1_7_result_status.csv`, and JSON/Markdown main-conclusion summaries.
+Without both passing result audits, the finalizer fails rather than labelling incomplete evidence as final. A paired result audit produced before the probability diagnostic gate proves experiment completion but does not by itself satisfy current evidence-package finality; run `--postprocess-only` on the saved outputs first. `--allow-pending` may be used only to write a readiness manifest with `finality=false`. The freeze includes a unified inventory, `optimization_1_7_result_status.csv`, and JSON/Markdown main-conclusion summaries.
 
 ## Scope boundary
 
