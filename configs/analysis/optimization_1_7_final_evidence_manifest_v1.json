@@ -1,0 +1,68 @@
+{
+  "schema": "geobwer.optimization_1_7.final_evidence.v1",
+  "freeze_date": "2026-08-16",
+  "status": "complete",
+  "finality": true,
+  "formal_experiments_complete": true,
+  "paired_probability_diagnostics_complete": true,
+  "scope": {
+    "included": [1, 2, 3, 4, 5, 6, 7],
+    "not_started": [8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+  },
+  "scope_guard": "No experiment, training, new data engineering, preflight, result audit, or figure for items 8-17 is included in this freeze.",
+  "items": {
+    "1-5": {
+      "status": "pass",
+      "local_validation": "outputs/optimization_1_7_v1/optimization_1_7_validation.json",
+      "coverage": "outputs/optimization_1_7_v1/four_task_distribution_coverage.json"
+    },
+    "6": {
+      "name": "reBEN nested label-budget sensitivity",
+      "status": "pass",
+      "drive_folder_id": "1RjsLnJuioor9Ky5cQlmSXRV8fVucrk7z",
+      "seed_count": 3,
+      "budget_count": 5,
+      "result_rows": 15
+    },
+    "7": {
+      "name": "reBEN TerraMind paired S2-ID to S1-OOD sensor shift",
+      "status": "pass",
+      "drive_folder_id": "1VIb54N9PmIwZgNFxr4a4Ewa5vN0BmctE",
+      "paired_test_sample_count": 119825,
+      "seed_count": 3,
+      "result_audit_drive_id": "1o7rgvVvAA8OrruuDRrjsMfUtiL_703q6",
+      "probability_label_summary_drive_id": "1Iqw2aRbDf5oJSu6AWaRBhT3ICBcsoP7e",
+      "probability_seed_summary_drive_id": "119ILnJ1r3GuWd0pJma9QHzzHext7IQdn",
+      "probability_by_seed_label_drive_id": "1jWntVz7II4hnWNSWX0m03QK7omtK2lu0",
+      "result_report_drive_id": "1d1Z5FMBGgM-Qe8gPyd3twu2bdPKoXiq9",
+      "gates": {
+        "experiment_audit": true,
+        "probability_diagnostic_sources_complete": true,
+        "probability_diagnostics_complete": true
+      }
+    }
+  },
+  "headline_results": {
+    "label_budget_5_to_100_percent": {
+      "delta_macro_ap": 0.01923350122972069,
+      "delta_macro_f1": 0.0144349122143624,
+      "delta_mean_risk": -0.00578123762827662,
+      "delta_tail_risk_beta_0_10": -0.01136754401475792,
+      "delta_geobwer_beta_0_10": -0.00558630638648132
+    },
+    "paired_shift_s1_ood_minus_s2_id": {
+      "delta_mean_risk": 0.3088348214881935,
+      "delta_tail_risk_beta_0_10": 0.3555405901731084,
+      "delta_geobwer_beta_0_10": 0.04670576868491492,
+      "all_three_seed_deltas_positive": true,
+      "modal_label_signatures": {
+        "representation_collapse_signature": 11,
+        "mixed_or_partial_degradation": 8,
+        "threshold_shift_dominant": 0,
+        "stable": 0
+      }
+    }
+  },
+  "interpretation_boundary": "The paired estimand is compatibility of an unchanged S2-trained frozen head with paired S2 and S1 TerraMind representations. Representation-collapse signature is operational evidence of rank/separation failure, not causal proof of encoder collapse. EarthShift effective robustness is not claimed.",
+  "scientific_review": "reports/optimization_1_7_scientific_review_2026_08_16.md"
+}

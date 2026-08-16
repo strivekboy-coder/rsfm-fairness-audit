@@ -4,7 +4,8 @@
   "training_or_experiment_started": false,
   "scope_not_started": [8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
   "formal_experiments_complete": true,
-  "evidence_finality": "pending_no_retraining_probability_diagnostics",
+  "evidence_finality": "complete",
+  "finality": true,
   "label_budget": {
     "drive_folder_id": "1RjsLnJuioor9Ky5cQlmSXRV8fVucrk7z",
     "experiment_audit_status": "pass",
@@ -31,7 +32,23 @@
       "geobwer_beta_0_10": 0.04670576868491492
     },
     "saved_probability_assets_present": true,
-    "no_retraining_probability_diagnostics_materialized": false
+    "no_retraining_probability_diagnostics_materialized": true,
+    "probability_diagnostics_complete": true,
+    "probability_diagnostic_sources_complete": true,
+    "probability_diagnostic_drive_files": {
+      "result_audit": "1o7rgvVvAA8OrruuDRrjsMfUtiL_703q6",
+      "label_summary": "1Iqw2aRbDf5oJSu6AWaRBhT3ICBcsoP7e",
+      "seed_summary": "119ILnJ1r3GuWd0pJma9QHzzHext7IQdn",
+      "by_seed_label": "1jWntVz7II4hnWNSWX0m03QK7omtK2lu0",
+      "result_report": "1d1Z5FMBGgM-Qe8gPyd3twu2bdPKoXiq9"
+    },
+    "modal_diagnostic_signature_counts": {
+      "representation_collapse_signature": 11,
+      "mixed_or_partial_degradation": 8,
+      "threshold_shift_dominant": 0,
+      "stable": 0
+    }
   },
-  "finality_rule": "Formal experiment completion is distinct from final evidence packaging. The current-code finality gate additionally requires paired probability diagnostics generated from saved probabilities, targets, and validation-locked thresholds."
+  "finality_rule": "Formal experiment completion and all final evidence gates are satisfied, including paired probability diagnostics generated from saved probabilities, targets, and validation-locked thresholds.",
+  "finality_basis": "Items 1-5 validation passes; item 6 and item 7 audited results pass; paired probability source and diagnostic gates pass; items 8-17 remain outside the frozen scope."
 }

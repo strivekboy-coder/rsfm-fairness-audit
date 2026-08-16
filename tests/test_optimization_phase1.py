@@ -252,6 +252,9 @@ def test_final_evidence_manifest_stays_nonfinal_when_results_are_pending(tmp_pat
     complete_manifest = json.loads(complete["manifest"].read_text(encoding="utf-8"))
     assert complete_manifest["status"] == "complete"
     assert complete_manifest["finality"] is True
+    complete_report = complete["report"].read_text(encoding="utf-8")
+    assert "Verification Status: `VERIFIED`" in complete_report
+    assert "final evidence freeze for items 1–7" in complete_report
 
 
 def test_final_evidence_distinguishes_completed_experiment_from_pending_diagnostics(tmp_path: Path) -> None:

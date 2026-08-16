@@ -581,6 +581,11 @@ def build_final_optimization_evidence(
     manifest_path = output / "optimization_1_7_final_evidence_manifest.json"
     manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     report_path = output / "optimization_1_7_final_evidence_report.md"
+    finality_note = (
+        "This manifest is the final evidence freeze for items 1–7."
+        if complete else
+        "A pending manifest is a readiness record, not a final evidence freeze. Completed experiments may still require the no-retraining probability diagnostic gate before finality."
+    )
     report_path.write_text("\n".join([
         "# Optimization 1–7 final evidence status", "", "## Material Passport", "",
         f"- Verification Status: `{'VERIFIED' if complete else 'PENDING'}`",
@@ -589,7 +594,7 @@ def build_final_optimization_evidence(
         "## Item gates", "",
         f"- Items 1–5: `{'pass' if base_pass else 'pending'}`",
         f"- Item 6: `{item_audits[6]['status']}`", f"- Item 7: `{item_audits[7]['status']}`", "",
-        "A pending manifest is a readiness record, not a final evidence freeze. Completed experiments may still require the no-retraining probability diagnostic gate before finality.",
+        finality_note,
     ]) + "\n", encoding="utf-8")
     if not complete and not allow_pending:
         raise RuntimeError("Final evidence is incomplete: items 1-7 must pass and paired probability diagnostics must be materialized from the saved outputs.")
