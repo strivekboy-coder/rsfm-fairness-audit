@@ -39,10 +39,10 @@ def test_reben_country_label_delta_is_aggregated_within_seed(tmp_path: Path) -> 
     for seed, ood in ((42, [.8, .6]), (73, [.7, .5])):
         folder = tmp_path / f"seed_{seed}"
         base = [
-            {"country": "DEU", "class_label": "urban", "risk": .2},
-            {"country": "DEU", "class_label": "urban", "risk": .4},
+            {"country": "DEU", "class_label": "urban", "risk_binary_error": .2},
+            {"country": "DEU", "class_label": "urban", "risk_binary_error": .4},
         ]
-        shifted = [dict(row, risk=value) for row, value in zip(base, ood)]
+        shifted = [dict(row, risk_binary_error=value) for row, value in zip(base, ood)]
         _write(folder / "id_label_audit.csv", base)
         _write(folder / "ood_label_audit.csv", shifted)
     rows, status = aggregate_reben_country_label_burden(tmp_path)
@@ -50,6 +50,7 @@ def test_reben_country_label_delta_is_aggregated_within_seed(tmp_path: Path) -> 
     assert len(rows) == 1
     assert abs(rows[0]["mean_delta_risk"] - .35) < 1e-12
     assert rows[0]["positive_seed_count"] == 2
+    assert status["risk_contract"].startswith("risk_binary_error")
     manifest = build_geographic_risk_atlas(
         tmp_path / "atlas", reben_paired_dir=tmp_path,
     )
@@ -91,3 +92,15 @@ def test_alphaearth_discovery_rejects_aggregate_only_root(tmp_path: Path) -> Non
     ])
     with pytest.raises(ValueError, match="aggregate_only_tables"):
         discover_alphaearth_atlas_asset(root)
+
+
+def test_reben_country_label_accepts_correct_as_binary_error_fallback(tmp_path: Path) -> None:
+    folder = tmp_path / "seed_42"
+    _write(folder / "id_label_audit.csv", [
+        {"country": "DEU", "class_label": "urban", "correct": 1},
+    ])
+    _write(folder / "ood_label_audit.csv", [
+        {"country": "DEU", "class_label": "urban", "correct": 0},
+    ])
+    rows, _ = aggregate_reben_country_label_burden(tmp_path)
+    assert rows[0]["mean_delta_risk"] == 1.0

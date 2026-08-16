@@ -13,7 +13,8 @@ tasks:
     risk_role: descriptive_scene_classification_error
   reben:
     representation: country_x_label_burden_matrix
-    risk_role: paired_s1_ood_minus_s2_id_label_risk
+    risk_role: paired_s1_ood_minus_s2_id_risk_binary_error
+    forbidden_risk_substitution: risk_bce
     forbid: [invented_coordinates, country_centroid_as_sample_location]
 visual_contract:
   mean_risk: viridis

@@ -172,7 +172,24 @@ def _aggregate_country_label(path: Path) -> dict[tuple[str, str], tuple[float, i
     for row in _iter_csv(path):
         country = _first(row, ("country", "country_iso3", "country_code"))
         label = _first(row, ("class_label", "label", "label_name"))
-        risk = float(_first(row, ("risk", "label_risk", "error")))
+        # Paired reBEN label audits use the registered 0-1 label error field.
+        # Do not silently substitute risk_bce: that would change the atlas
+        # estimand relative to the paired GeoBWER result.
+        if row.get("risk_binary_error") not in (None, ""):
+            risk = float(row["risk_binary_error"])
+        elif row.get("risk") not in (None, ""):
+            risk = float(row["risk"])
+        elif row.get("label_risk") not in (None, ""):
+            risk = float(row["label_risk"])
+        elif row.get("error") not in (None, ""):
+            risk = float(row["error"])
+        elif row.get("correct") not in (None, ""):
+            risk = 1.0 - float(row["correct"])
+        else:
+            raise ValueError(
+                "reBEN label audit lacks registered binary-error risk fields; "
+                f"available columns={sorted(row)}"
+            )
         if math.isfinite(risk):
             values[(country, label)][0] += risk
             values[(country, label)][1] += 1
@@ -207,6 +224,7 @@ def aggregate_reben_country_label_burden(root: str | Path) -> tuple[list[dict[st
         "path": str(root), "status": "ready", "representation": "country_x_label_burden_matrix",
         "seed_count": len(seeds), "country_count": len({row["country"] for row in rows}),
         "label_count": len({row["class_label"] for row in rows}), "cell_count": len(rows),
+        "risk_contract": "risk_binary_error (registered 0-1 label error; correct fallback only)",
         "limitation": "country is an administrative slice; no within-country coordinates are inferred",
     }
 
