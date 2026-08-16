@@ -365,6 +365,10 @@ def train_streaming_multilabel_probe(
         raise RebenTerraMindError("train_indices must select at least one training row.")
     if np.any(selected_indices < 0) or np.any(selected_indices >= len(x_train)):
         raise RebenTerraMindError("train_indices contain an out-of-range row.")
+    print(
+        f"[reben:terramind:probe] computing train normalization "
+        f"selected_rows={len(selected_indices)} embedding_dim={x_train.shape[1]}"
+    )
     count = 0
     total = np.zeros(x_train.shape[1], dtype=np.float64)
     square = np.zeros(x_train.shape[1], dtype=np.float64)
@@ -386,6 +390,16 @@ def train_streaming_multilabel_probe(
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     model = nn.Linear(x_train.shape[1], 19).to(torch_device)
+    device_probe = torch.as_tensor(
+        (np.asarray(x_train[selected_indices[:1]], dtype=np.float32) - mean) / std,
+        device=torch_device,
+    )
+    gpu_name = torch.cuda.get_device_name(torch_device) if torch_device.type == "cuda" else "none"
+    print(
+        f"[reben:terramind:probe] resolved_device={torch_device} gpu_name={gpu_name} "
+        f"model_parameter_device={next(model.parameters()).device} input_tensor_device={device_probe.device}"
+    )
+    del device_probe
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     history: list[dict[str, float | int]] = []
     indices = selected_indices.copy()

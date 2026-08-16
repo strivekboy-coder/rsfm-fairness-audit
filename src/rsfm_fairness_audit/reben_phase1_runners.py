@@ -9,6 +9,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from rsfm_fairness_audit.io import ensure_dir, write_csv
+from rsfm_fairness_audit.formal_outputs import file_sha256
 from rsfm_fairness_audit.optimization_phase1 import distribution_metrics
 from rsfm_fairness_audit.reben_sensor_audit import (
     RebenRunLabels,
@@ -40,7 +41,23 @@ def _cache(root: Path, split: str) -> dict[str, Any]:
     metadata = _metadata(directory / "metadata.jsonl")
     if embeddings.ndim != 2 or labels.shape != (len(embeddings), 19) or len(metadata) != len(embeddings):
         raise ValueError(f"Invalid or misaligned embedding cache: {directory}")
-    return {"dir": directory, "embeddings": embeddings, "labels": labels, "metadata": metadata}
+    if len({str(row["sample_id"]) for row in metadata}) != len(metadata):
+        raise ValueError(f"Duplicate sample_id values in embedding cache: {directory}")
+    if not np.all(np.isin(np.asarray(labels), (0, 1))):
+        raise ValueError(f"Labels must be binary in embedding cache: {directory}")
+    manifest_path = directory / "embedding_cache_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else None
+    if manifest is not None:
+        if manifest.get("schema") != "geobwer.reben.embedding_cache.v1":
+            raise ValueError(f"Unexpected embedding-cache manifest schema: {manifest_path}")
+        if list(manifest.get("embedding_shape", [])) != list(embeddings.shape):
+            raise ValueError(f"Manifest embedding shape mismatch: {manifest_path}")
+        if list(manifest.get("labels_shape", [])) != list(labels.shape):
+            raise ValueError(f"Manifest label shape mismatch: {manifest_path}")
+    return {
+        "dir": directory, "embeddings": embeddings, "labels": labels, "metadata": metadata,
+        "manifest": manifest, "manifest_path": manifest_path,
+    }
 
 
 def _sample_hash(rows: Sequence[Mapping[str, Any]]) -> str:
@@ -51,9 +68,7 @@ def _sample_hash(rows: Sequence[Mapping[str, Any]]) -> str:
     return digest.hexdigest()
 
 
-def validate_cache_contract(root: str | Path) -> dict[str, Any]:
-    root = Path(root)
-    caches = {split: _cache(root, split) for split in ("train", "val", "test")}
+def _loaded_cache_contract(root: Path, caches: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     ids = {split: {str(row["sample_id"]) for row in cache["metadata"]} for split, cache in caches.items()}
     overlap = {
         f"{left}__{right}": len(ids[left] & ids[right])
@@ -61,18 +76,63 @@ def validate_cache_contract(root: str | Path) -> dict[str, Any]:
     }
     if any(overlap.values()):
         raise ValueError(f"Sample leakage across reBEN splits: {overlap}")
+    source_tiles = {
+        split: {str(row["source_tile_id"]) for row in cache["metadata"]}
+        for split, cache in caches.items()
+    }
+    source_tile_overlap = {
+        f"{left}__{right}": len(source_tiles[left] & source_tiles[right])
+        for left, right in (("train", "val"), ("train", "test"), ("val", "test"))
+    }
+    independent_units = {
+        split: {str(row["independent_unit_id"]) for row in cache["metadata"]}
+        for split, cache in caches.items()
+    }
+    independent_unit_overlap = {
+        f"{left}__{right}": len(independent_units[left] & independent_units[right])
+        for left, right in (("train", "val"), ("train", "test"), ("val", "test"))
+    }
     dimensions = {int(cache["embeddings"].shape[1]) for cache in caches.values()}
     if len(dimensions) != 1:
         raise ValueError(f"Embedding dimensions differ across splits: {sorted(dimensions)}")
+    manifests_present = {split: cache["manifest"] is not None for split, cache in caches.items()}
     return {
         "schema": "geobwer.reben.embedding_cache_contract.v1",
         "root": str(root),
         "split_counts": {split: len(cache["metadata"]) for split, cache in caches.items()},
         "sample_id_hashes": {split: _sample_hash(cache["metadata"]) for split, cache in caches.items()},
         "sample_overlap_counts": overlap,
+        "source_tile_overlap_counts": source_tile_overlap,
+        "independent_unit_overlap_counts": independent_unit_overlap,
         "embedding_dimension": dimensions.pop(),
+        "embedding_cache_manifests_present": manifests_present,
+        "all_embedding_cache_manifests_present": all(manifests_present.values()),
         "source_tile_overlap_is_reported_not_failed": True,
     }
+
+
+def _load_cache_panel(root: Path) -> dict[str, dict[str, Any]]:
+    caches = {}
+    for split in ("train", "val", "test"):
+        print(f"[reben:cache-preflight] inspecting split={split} root={root}")
+        caches[split] = _cache(root, split)
+    return caches
+
+
+def validate_cache_contract(root: str | Path) -> dict[str, Any]:
+    root = Path(root)
+    return _loaded_cache_contract(root, _load_cache_panel(root))
+
+
+def _adapter_invariant(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    adapter = dict(manifest.get("lineage", {}).get("adapter", {}))
+    for key in ("sensor_mode", "modalities", "input_profile", "s1_unit_policy", "preprocessing_report"):
+        adapter.pop(key, None)
+    return adapter
+
+
+def _manifest_sensor_mode(manifest: Mapping[str, Any]) -> str:
+    return str(manifest.get("lineage", {}).get("adapter", {}).get("sensor_mode", "")).upper()
 
 
 def _nested_unit_order(metadata: Sequence[Mapping[str, Any]], labels: np.ndarray, seed: int) -> list[str]:
@@ -89,8 +149,9 @@ def _nested_unit_order(metadata: Sequence[Mapping[str, Any]], labels: np.ndarray
     uncovered = np.any(np.asarray(labels, dtype=bool), axis=0)
     cover: list[str] = []
     remaining = set(unit_ids)
-    # Greedy set cover adds at most a small number of units and prevents a 5%
-    # budget from accidentally omitting a rare label. The rest stays seeded-random.
+    # Greedy set cover prioritizes rare-label coverage at the front of the seeded
+    # order. It does not enlarge a nominal budget; observed label coverage is
+    # recorded for every subset so an under-covered 5% point remains visible.
     while np.any(uncovered):
         candidates = [unit for unit in shuffled if unit in remaining]
         best = max(candidates, key=lambda unit: int(np.sum(unit_labels[unit] & uncovered)))
@@ -105,19 +166,49 @@ def _nested_unit_order(metadata: Sequence[Mapping[str, Any]], labels: np.ndarray
 
 def validate_paired_cache_contract(s2_cache_root: str | Path, s1_cache_root: str | Path) -> dict[str, Any]:
     s2_root, s1_root = Path(s2_cache_root), Path(s1_cache_root)
-    s2_contract = validate_cache_contract(s2_root)
-    s1_contract = validate_cache_contract(s1_root)
-    s2_test = _cache(s2_root, "test")
-    s1_test = _cache(s1_root, "test")
+    print(f"[reben:paired-preflight] validating S2 root={s2_root}")
+    s2_caches = _load_cache_panel(s2_root)
+    s2_contract = _loaded_cache_contract(s2_root, s2_caches)
+    print(f"[reben:paired-preflight] validating S1 root={s1_root}")
+    s1_caches = _load_cache_panel(s1_root)
+    s1_contract = _loaded_cache_contract(s1_root, s1_caches)
+    all_manifests = [cache["manifest"] for cache in (*s2_caches.values(), *s1_caches.values())]
+    if any(manifest is None for manifest in all_manifests):
+        missing = [
+            str(cache["manifest_path"])
+            for cache in (*s2_caches.values(), *s1_caches.values())
+            if cache["manifest"] is None
+        ]
+        raise ValueError(
+            "Formal paired sensor shift requires embedding-cache lineage manifests; missing: "
+            + ", ".join(missing)
+        )
+    typed_manifests = [manifest for manifest in all_manifests if manifest is not None]
+    invariants = [_adapter_invariant(manifest) for manifest in typed_manifests]
+    if any(value != invariants[0] for value in invariants[1:]):
+        raise ValueError("S1 and S2 caches do not share the same TerraMind model/checkpoint/encoder protocol.")
+    s2_modes = {_manifest_sensor_mode(cache["manifest"]) for cache in s2_caches.values()}
+    s1_modes = {_manifest_sensor_mode(cache["manifest"]) for cache in s1_caches.values()}
+    if s2_modes != {"S2"} or s1_modes != {"S1"}:
+        raise ValueError(f"Paired cache sensor modes must be S2 versus S1; observed S2={s2_modes}, S1={s1_modes}")
+    s2_test = s2_caches["test"]
+    s1_test = s1_caches["test"]
     if int(s2_test["embeddings"].shape[1]) != int(s1_test["embeddings"].shape[1]):
         raise ValueError("S1 and S2 embeddings must share the same feature dimension for one unchanged head.")
     order, _ = _align_test_caches(s2_test, s1_test)
+    test_order_identical = [str(row["sample_id"]) for row in s2_test["metadata"]] == [
+        str(row["sample_id"]) for row in s1_test["metadata"]
+    ]
     return {
         "schema": "geobwer.reben.paired_sensor_shift.preflight.v1",
-        "status": "ready",
+        "status": "formal_ready",
         "same_embedding_dimension": True,
         "paired_test_sample_count": len(order),
         "paired_sample_ids_targets_and_metadata": True,
+        "paired_test_order_identical": test_order_identical,
+        "all_embedding_cache_manifests_present": True,
+        "same_model_checkpoint_and_encoder_protocol": True,
+        "sensor_profiles": {"id": "S2", "ood": "S1"},
         "s2_train_only_for_probe": True,
         "s2_validation_only_for_thresholds": True,
         "same_head_required": True,
@@ -152,6 +243,18 @@ def _group_distribution(audit_rows: Sequence[Mapping[str, Any]], axis: str = "co
         if key:
             grouped.setdefault(key, []).append(float(row["risk_binary_error"]))
     return distribution_metrics({key: float(np.mean(values)) for key, values in grouped.items()})
+
+
+def _slice_risks(audit_rows: Sequence[Mapping[str, Any]], axis: str) -> dict[str, dict[str, float | int]]:
+    grouped: dict[str, list[float]] = {}
+    for row in audit_rows:
+        value = str(row.get(axis, "")).strip()
+        if value:
+            grouped.setdefault(value, []).append(float(row["risk_binary_error"]))
+    return {
+        value: {"risk": float(np.mean(risks)), "support": len(risks)}
+        for value, risks in grouped.items()
+    }
 
 
 def run_label_budget_campaign(
@@ -194,6 +297,7 @@ def run_label_budget_campaign(
             previous = selected
             tag = f"seed_{seed}/budget_{int(round(100 * budget)):03d}"
             train_indices, selected_rows = _materialize_budget(train, selected, output / "subsets" / tag)
+            selected_label_support = np.sum(np.asarray(train["labels"][train_indices], dtype=np.int64), axis=0)
             probabilities, checkpoint = train_streaming_multilabel_probe(
                 train["dir"] / "embeddings.npy", train["dir"] / "labels.npy",
                 {"validation": val["dir"] / "embeddings.npy", "test": test["dir"] / "embeddings.npy"},
@@ -228,7 +332,10 @@ def run_label_budget_campaign(
             summaries.append({
                 "seed": seed, "budget_fraction": budget,
                 "selected_independent_units": len(selected), "total_independent_units": len(unique_units),
+                "realized_unit_fraction": len(selected) / len(unique_units),
                 "selected_samples": len(selected_rows), "test_samples": len(test["metadata"]),
+                "selected_positive_labels": int(np.sum(selected_label_support > 0)),
+                "minimum_selected_label_positive_support": int(np.min(selected_label_support)),
                 "checkpoint": str(checkpoint), **aggregate, **dist,
             })
             selections.extend(
@@ -246,7 +353,10 @@ def run_label_budget_campaign(
         "validation_and_test_fixed": True, "nested_by_independent_unit": True,
         "test_used_for_selection": False,
     }, indent=2), encoding="utf-8")
-    return {"summary": summary_path, "selections": selection_path, "manifest": manifest}
+    from rsfm_fairness_audit.reben_phase1_postprocess import postprocess_label_budget
+
+    postprocess = postprocess_label_budget(output, expected_budgets=budgets, expected_seeds=seeds)
+    return {"summary": summary_path, "selections": selection_path, "manifest": manifest, **postprocess}
 
 
 def _align_test_caches(s2: Mapping[str, Any], s1: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray]:
@@ -276,21 +386,42 @@ def run_paired_sensor_shift(
     batch_size: int = 512,
     device: str = "auto",
     aligned_s1_embeddings_path: str | Path | None = None,
+    preflight_contract: Mapping[str, Any] | None = None,
+    loaded_s2_caches: Mapping[str, Mapping[str, Any]] | None = None,
+    loaded_s1_test: Mapping[str, Any] | None = None,
 ) -> dict[str, Path]:
     s2_root, s1_root = Path(s2_cache_root), Path(s1_cache_root)
     output = ensure_dir(output_dir)
-    paired_preflight = validate_paired_cache_contract(s2_root, s1_root)
+    paired_preflight = dict(preflight_contract) if preflight_contract is not None else validate_paired_cache_contract(s2_root, s1_root)
     s2_contract = paired_preflight["s2_contract"]
     s1_contract = paired_preflight["s1_contract"]
-    s2 = {split: _cache(s2_root, split) for split in ("train", "val", "test")}
-    s1_test = _cache(s1_root, "test")
+    s2 = dict(loaded_s2_caches) if loaded_s2_caches is not None else {
+        split: _cache(s2_root, split) for split in ("train", "val", "test")
+    }
+    s1_test = dict(loaded_s1_test) if loaded_s1_test is not None else _cache(s1_root, "test")
     if int(s2["train"]["embeddings"].shape[1]) != int(s1_test["embeddings"].shape[1]):
         raise ValueError("S1 and S2 embeddings must share the same feature dimension for one unchanged head.")
     s1_order, targets = _align_test_caches(s2["test"], s1_test)
-    aligned_s1_path = Path(aligned_s1_embeddings_path) if aligned_s1_embeddings_path else output / "aligned_s1_test_embeddings.npy"
+    identity_order = np.array_equal(s1_order, np.arange(len(s1_order), dtype=np.int64))
+    aligned_s1_path = (
+        Path(aligned_s1_embeddings_path)
+        if aligned_s1_embeddings_path
+        else s1_test["dir"] / "embeddings.npy"
+        if identity_order
+        else output / "aligned_s1_test_embeddings.npy"
+    )
     if not aligned_s1_path.exists():
         aligned_s1_path.parent.mkdir(parents=True, exist_ok=True)
-        np.save(aligned_s1_path, np.asarray(s1_test["embeddings"][s1_order], dtype=np.float32))
+        target = np.lib.format.open_memmap(
+            aligned_s1_path, mode="w+", dtype=np.float32,
+            shape=(len(s1_order), int(s1_test["embeddings"].shape[1])),
+        )
+        for start in range(0, len(s1_order), 8192):
+            end = min(start + 8192, len(s1_order))
+            target[start:end] = np.asarray(s1_test["embeddings"][s1_order[start:end]], dtype=np.float32)
+            print(f"[reben:paired-shift] aligned S1 rows {end}/{len(s1_order)}")
+        target.flush()
+        del target
     aligned_shape = np.load(aligned_s1_path, mmap_mode="r").shape
     if aligned_shape != (len(s1_order), int(s2["test"]["embeddings"].shape[1])):
         raise ValueError(f"Aligned S1 cache shape mismatch: {aligned_shape}")
@@ -308,11 +439,22 @@ def run_paired_sensor_shift(
     validation_prob = np.load(probabilities["s2_validation"], mmap_mode="r")
     thresholds = select_thresholds_from_validation(s2["val"]["labels"], validation_prob)
     class_names = default_reben_class_names()
+    metadata_names = s2["train"]["metadata"][0].get("class_names") if s2["train"]["metadata"] else None
+    if isinstance(metadata_names, list) and len(metadata_names) == 19:
+        class_names = [str(value) for value in metadata_names]
+    thresholds_path = output / "s2_validation_locked_thresholds.csv"
+    write_csv(thresholds_path, [
+        {"class_index": index, "class_label": class_names[index], "threshold": float(value),
+         "calibration_domain": "S2_validation", "test_used_for_selection": False}
+        for index, value in enumerate(thresholds)
+    ])
     rows_by_domain: dict[str, list[dict[str, Any]]] = {}
+    per_class_by_domain: dict[str, list[dict[str, Any]]] = {}
     summary_rows: list[dict[str, Any]] = []
     for domain, key, sensor in (("ID", "s2_id_test", "S2"), ("OOD", "s1_ood_test", "S1")):
         probability = np.load(probabilities[key], mmap_mode="r")
-        aggregate, _ = compute_multilabel_metrics(targets, probability, thresholds, class_names)
+        aggregate, per_class = compute_multilabel_metrics(targets, probability, thresholds, class_names)
+        per_class_by_domain[domain] = per_class
         labels = RebenRunLabels(
             model_family="terramind", model_variant="TerraMind-1.0-base",
             sensor_mode=sensor, input_mode="same_s2_trained_head",
@@ -336,16 +478,49 @@ def run_paired_sensor_shift(
     by_domain = {row["domain"]: row for row in summary_rows}
     delta = {
         "comparison": "S1_OOD_minus_S2_ID",
+        "absolute_ood_drop_macro_ap": by_domain["ID"]["macro_ap"] - by_domain["OOD"]["macro_ap"],
+        "absolute_ood_drop_macro_f1": by_domain["ID"]["macro_f1"] - by_domain["OOD"]["macro_f1"],
+        "delta_mean_bce_risk": by_domain["OOD"]["mean_bce_risk"] - by_domain["ID"]["mean_bce_risk"],
         "delta_mean_risk": by_domain["OOD"]["mean_risk"] - by_domain["ID"]["mean_risk"],
         "delta_tail_risk": by_domain["OOD"]["tail_risk_beta_0_10"] - by_domain["ID"]["tail_risk_beta_0_10"],
         "delta_geobwer": by_domain["OOD"]["geobwer_beta_0_10"] - by_domain["ID"]["geobwer_beta_0_10"],
     }
     delta["tail_acceleration_minus_mean"] = delta["delta_tail_risk"] - delta["delta_mean_risk"]
     delta["levelling_down_flag"] = bool(delta["delta_mean_risk"] > 0 and delta["delta_geobwer"] < 0)
+    label_delta_rows: list[dict[str, Any]] = []
+    for id_row, ood_row in zip(per_class_by_domain["ID"], per_class_by_domain["OOD"]):
+        if id_row["class_label"] != ood_row["class_label"]:
+            raise RuntimeError("ID/OOD per-label metric order changed under the paired protocol.")
+        id_risk = 1.0 - float(id_row["f1"])
+        ood_risk = 1.0 - float(ood_row["f1"])
+        label_delta_rows.append({
+            "slice_axis": "label", "slice_value": id_row["class_label"],
+            "class_index": id_row["class_index"], "id_risk": id_risk, "ood_risk": ood_risk,
+            "delta_risk": ood_risk - id_risk,
+            "positive_support": id_row["positive_support"],
+            "risk_definition": "1_minus_label_f1",
+        })
+    country_id = _slice_risks(rows_by_domain["ID"], "country")
+    country_ood = _slice_risks(rows_by_domain["OOD"], "country")
+    if set(country_id) != set(country_ood):
+        raise RuntimeError("Paired ID/OOD country support differs after sample alignment.")
+    country_delta_rows = [
+        {
+            "slice_axis": "country", "slice_value": country,
+            "id_risk": country_id[country]["risk"], "ood_risk": country_ood[country]["risk"],
+            "delta_risk": float(country_ood[country]["risk"]) - float(country_id[country]["risk"]),
+            "support": country_id[country]["support"], "risk_definition": "mean_labelwise_binary_error",
+        }
+        for country in sorted(country_id)
+    ]
     summary_path = output / "paired_shift_summary.csv"
     delta_path = output / "paired_shift_delta.csv"
     write_csv(summary_path, summary_rows)
     write_csv(delta_path, [delta])
+    label_delta_path = output / "paired_shift_label_deltas.csv"
+    country_delta_path = output / "paired_shift_country_deltas.csv"
+    write_csv(label_delta_path, label_delta_rows)
+    write_csv(country_delta_path, country_delta_rows)
     contract = output / "paired_shift_contract.json"
     contract.write_text(json.dumps({
         "schema": "geobwer.reben.paired_sensor_shift.v1", "status": "complete",
@@ -353,9 +528,15 @@ def run_paired_sensor_shift(
         "id_domain": "S2_test", "ood_domain": "S1_test", "same_head": True,
         "paired_common_support": True, "test_used_for_selection": False,
         "effective_robustness_claimed": False,
-        "checkpoint": str(checkpoint), "preflight": paired_preflight,
+        "checkpoint": str(checkpoint), "checkpoint_sha256": file_sha256(checkpoint),
+        "thresholds": str(thresholds_path), "thresholds_sha256": file_sha256(thresholds_path),
+        "preflight": paired_preflight,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {"summary": summary_path, "delta": delta_path, "contract": contract}
+    return {
+        "summary": summary_path, "delta": delta_path, "contract": contract,
+        "label_deltas": label_delta_path, "country_deltas": country_delta_path,
+        "thresholds": thresholds_path,
+    }
 
 
 def run_paired_sensor_shift_panel(
@@ -375,36 +556,68 @@ def run_paired_sensor_shift_panel(
     output = ensure_dir(output_dir)
     preflight = validate_paired_cache_contract(s2_cache_root, s1_cache_root)
     (output / "paired_shift_preflight.json").write_text(json.dumps(preflight, indent=2), encoding="utf-8")
-    s2_test = _cache(Path(s2_cache_root), "test")
+    s2_caches = {split: _cache(Path(s2_cache_root), split) for split in ("train", "val", "test")}
+    s2_test = s2_caches["test"]
     s1_test = _cache(Path(s1_cache_root), "test")
     order, _ = _align_test_caches(s2_test, s1_test)
-    shared = output / "shared/aligned_s1_test_embeddings.npy"
-    shared.parent.mkdir(parents=True, exist_ok=True)
-    if not shared.exists():
-        np.save(shared, np.asarray(s1_test["embeddings"][order], dtype=np.float32))
+    identity_order = np.array_equal(order, np.arange(len(order), dtype=np.int64))
+    shared = s1_test["dir"] / "embeddings.npy" if identity_order else output / "shared/aligned_s1_test_embeddings.npy"
+    if not identity_order:
+        shared.parent.mkdir(parents=True, exist_ok=True)
+        if not shared.exists():
+            print(f"[reben:paired-shift] materializing aligned S1 test cache rows={len(order)}")
+            target = np.lib.format.open_memmap(
+                shared, mode="w+", dtype=np.float32,
+                shape=(len(order), int(s1_test["embeddings"].shape[1])),
+            )
+            for start in range(0, len(order), 8192):
+                end = min(start + 8192, len(order))
+                target[start:end] = np.asarray(s1_test["embeddings"][order[start:end]], dtype=np.float32)
+                print(f"[reben:paired-shift] aligned S1 rows {end}/{len(order)}")
+            target.flush()
+            del target
     summaries: list[dict[str, Any]] = []
     deltas: list[dict[str, Any]] = []
+    label_deltas: list[dict[str, Any]] = []
+    country_deltas: list[dict[str, Any]] = []
     for seed in seeds:
         artifacts = run_paired_sensor_shift(
             s2_cache_root, s1_cache_root, output / f"seed_{int(seed)}", seed=int(seed),
             epochs=epochs, learning_rate=learning_rate, weight_decay=weight_decay,
             batch_size=batch_size, device=device, aligned_s1_embeddings_path=shared,
+            preflight_contract=preflight, loaded_s2_caches=s2_caches, loaded_s1_test=s1_test,
         )
         with artifacts["summary"].open("r", encoding="utf-8-sig", newline="") as handle:
             summaries.extend({"seed": int(seed), **row} for row in csv.DictReader(handle))
         with artifacts["delta"].open("r", encoding="utf-8-sig", newline="") as handle:
             deltas.extend({"seed": int(seed), **row} for row in csv.DictReader(handle))
+        with artifacts["label_deltas"].open("r", encoding="utf-8-sig", newline="") as handle:
+            label_deltas.extend({"seed": int(seed), **row} for row in csv.DictReader(handle))
+        with artifacts["country_deltas"].open("r", encoding="utf-8-sig", newline="") as handle:
+            country_deltas.extend({"seed": int(seed), **row} for row in csv.DictReader(handle))
     summary_path = output / "paired_shift_seed_panel.csv"
     delta_path = output / "paired_shift_delta_seed_panel.csv"
     write_csv(summary_path, summaries)
     write_csv(delta_path, deltas)
+    label_delta_path = output / "paired_shift_label_deltas.csv"
+    country_delta_path = output / "paired_shift_country_deltas.csv"
+    write_csv(label_delta_path, label_deltas)
+    write_csv(country_delta_path, country_deltas)
     manifest = output / "paired_shift_panel_manifest.json"
     manifest.write_text(json.dumps({
         "schema": "geobwer.reben.paired_sensor_shift_panel.v1", "status": "complete",
         "seeds": [int(seed) for seed in seeds], "same_s2_trained_head_within_seed": True,
         "shared_aligned_s1_cache": str(shared), "test_used_for_selection": False,
+        "effective_robustness_claimed": False,
+        "preflight_status": preflight["status"],
     }, indent=2), encoding="utf-8")
-    return {"summary": summary_path, "delta": delta_path, "manifest": manifest}
+    from rsfm_fairness_audit.reben_phase1_postprocess import postprocess_paired_sensor_shift
+
+    postprocess = postprocess_paired_sensor_shift(output, expected_seeds=seeds)
+    return {
+        "summary": summary_path, "delta": delta_path, "label_deltas": label_delta_path,
+        "country_deltas": country_delta_path, "manifest": manifest, **postprocess,
+    }
 
 
 __all__ = [

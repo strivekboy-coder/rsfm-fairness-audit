@@ -35,6 +35,13 @@ label_budget:
   test_fixed: true
   test_used_for_selection: false
   reuse_frozen_embeddings: true
+  result_audit:
+    require_complete_seed_budget_grid: true
+    require_nested_unit_selections: true
+    require_fixed_test_support: true
+    report_endpoint_change: 0.05_to_1.00
+    inference_role: descriptive_seed_sensitivity
+  figures: [macro_ap_curve, macro_f1_curve, mean_risk_curve, geobwer_curve]
 
 paired_sensor_shift:
   model: TerraMind-1.0-base
@@ -53,3 +60,20 @@ paired_sensor_shift:
   paired_country_and_source_tile: required
   report: [absolute_ood_drop, delta_mean_risk, delta_tail_risk, delta_geobwer, tail_acceleration, levelling_down]
   effective_robustness_term: forbidden_without_earthshift_reference_regression
+  preflight:
+    embedding_cache_lineage_manifests: required
+    same_checkpoint_and_encoder_protocol: required
+    expected_sensor_profiles: {id: S2, ood: S1}
+    exact_test_pairing: [sample_id, targets, country, source_tile_id, independent_unit_id]
+  result_audit:
+    require_complete_seed_domain_grid: true
+    slice_burden_axes: [label, country]
+    inference_role: paired_external_validity_descriptive_seed_panel
+  figures: [id_ood_metrics, risk_deltas, burden_carriers]
+
+final_evidence:
+  required_item_gates: [items_1_5_validation, item_6_result_audit, item_7_result_audit]
+  incomplete_status: pending_required_results
+  finality_requires_all_gates: true
+  artifact_types: [csv, json, md, png, pdf, yaml]
+  exclude_large_intermediates: [embeddings, probabilities, checkpoints, raw_data]

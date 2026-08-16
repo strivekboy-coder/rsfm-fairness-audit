@@ -571,7 +571,9 @@ def run_optimization_1_7(
         Path("configs/analysis/optimization_1_7_v1.yaml"),
         Path("src/rsfm_fairness_audit/optimization_phase1.py"),
         Path("src/rsfm_fairness_audit/reben_phase1_runners.py"),
+        Path("src/rsfm_fairness_audit/reben_phase1_postprocess.py"),
         Path("src/rsfm_fairness_audit/reben_terramind_campaign.py"),
+        Path("scripts/analysis/finalize_optimization_1_7.py"),
         Path(snapshot_v050) / "sen1/unified_19model_metrics.csv",
         Path(snapshot_v050) / "sen1/event_level_metrics.csv",
         Path(snapshot_v050) / "sen1/source_contract.json",
@@ -615,8 +617,8 @@ def run_optimization_1_7(
         {"item": 3, "name": "full_slice_visualization", "code_status": "implemented", "execution_status": "completed_local"},
         {"item": 4, "name": "terramind_cross_task", "code_status": "implemented", "execution_status": "completed_local"},
         {"item": 5, "name": "compound_interaction_atlas", "code_status": "implemented", "execution_status": "completed_local_with_reben_country_label_pending_metadata"},
-        {"item": 6, "name": "nested_label_budget", "code_status": "runner_ready", "execution_status": "pending_large_embedding_cache"},
-        {"item": 7, "name": "paired_sensor_shift", "code_status": "runner_ready", "execution_status": "pending_aligned_s1_s2_embedding_cache"},
+        {"item": 6, "name": "nested_label_budget", "code_status": "runner_postprocess_audit_figures_ready", "execution_status": "pending_or_running_large_embedding_cache"},
+        {"item": 7, "name": "paired_sensor_shift", "code_status": "formal_preflight_runner_postprocess_audit_figures_ready", "execution_status": "pending_aligned_s1_s2_embedding_cache"},
     ]
     write_csv(artifact_paths["execution_status"], status)
     figures = _plots(slices, output)
