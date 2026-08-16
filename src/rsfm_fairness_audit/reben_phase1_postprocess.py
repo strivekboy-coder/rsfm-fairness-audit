@@ -417,6 +417,11 @@ def postprocess_paired_sensor_shift(
         "primary_metrics_finite": _finite_rows(summaries, primary),
         "delta_metrics_finite": _finite_rows(deltas, delta_columns),
         "paired_common_support": bool(preflight.get("paired_sample_ids_targets_and_metadata")),
+        "model_profile_consistent": (
+            str(manifest.get("model_family", preflight.get("model_family", "terramind")))
+            == str(preflight.get("model_family", manifest.get("model_family", "terramind")))
+        ),
+        "same_latent_dimension_preflight": preflight.get("same_embedding_dimension") is not False,
         "effective_robustness_not_claimed": manifest.get("effective_robustness_claimed", False) is False,
         "slice_burden_tables_present": bool(slice_rows),
         "probability_diagnostic_sources_complete": diagnostic_sources_complete,

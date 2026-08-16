@@ -109,6 +109,32 @@ Phase 2A and Phase 2B must remain separate: lc-col BigEarthNet is S2-only and is
 
 The 64-sample BEN-GE-800 run is a smoke validation only. Extreme worst-group or gap values from this run should not be interpreted as paper-grade fairness conclusions.
 
+## reBEN Paired S2 to S1 Same-Head Sensitivity
+
+This sensitivity reuses the formal full-panel CROMA caches at
+`outputs/geobwer_final_v3/reben_full_panel/croma/{s2,s1}/shared_embedding_cache`.
+It does not reuse the independently fitted S1 and S2 heads as paired evidence.
+The locked estimand fits one 19-label linear head on `S2/train` optical-GAP
+embeddings, selects thresholds only on `S2/val`, and evaluates that unchanged
+head on paired `S2/test` optical-GAP and `S1/test` SAR-GAP embeddings. Preflight
+requires the same CROMA-base checkpoint, 768-dimensional latent interface,
+train-frozen normalization, preprocessing, targets, sample IDs, and geographic
+metadata. Probability diagnostics, result audit, tables, and figures are emitted
+by the shared paired-shift postprocessor.
+
+Run this single Colab cell after cloning the repository:
+
+```python
+%cd /content/rsfm-fairness-audit
+!git pull --ff-only
+!python scripts/colab/run_reben_croma_paired_shift_sensitivity_colab.py --device cpu
+```
+
+The entrypoint stages the existing Drive caches to `/content`, runs seeds
+42/73/101, then publishes audited results to
+`/content/drive/MyDrive/rsfm_fairness_audit/outputs/reben_croma_paired_shift_v1`.
+No CROMA encoder inference or embedding extraction occurs.
+
 ## Open Items
 
 - Exact BigEarthNet v2 S2 band conversion to CROMA's 12-channel expectation: to_verify.

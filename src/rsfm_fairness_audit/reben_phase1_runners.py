@@ -24,6 +24,23 @@ from rsfm_fairness_audit.reben_terramind_campaign import train_streaming_multila
 
 DEFAULT_BUDGETS = (0.05, 0.10, 0.25, 0.50, 1.00)
 
+PAIRED_MODEL_PROFILES: dict[str, dict[str, str]] = {
+    "terramind": {
+        "model_variant": "TerraMind-1.0-base",
+        "s2_input_mode": "same_s2_trained_head",
+        "s1_input_mode": "same_s2_trained_head",
+        "s2_band_profile": "reben_s2_l2a",
+        "s1_band_profile": "reben_s1_vv_vh",
+    },
+    "croma": {
+        "model_variant": "CROMA_base",
+        "s2_input_mode": "optical_GAP_same_s2_trained_head",
+        "s1_input_mode": "SAR_GAP_same_s2_trained_head",
+        "s2_band_profile": "reben_croma_optical",
+        "s1_band_profile": "reben_croma_sar",
+    },
+}
+
 
 def _metadata(path: Path) -> list[dict[str, Any]]:
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -124,15 +141,45 @@ def validate_cache_contract(root: str | Path) -> dict[str, Any]:
     return _loaded_cache_contract(root, _load_cache_panel(root))
 
 
-def _adapter_invariant(manifest: Mapping[str, Any]) -> dict[str, Any]:
+def _adapter_invariant(manifest: Mapping[str, Any], model_family: str) -> dict[str, Any]:
     adapter = dict(manifest.get("lineage", {}).get("adapter", {}))
     for key in ("sensor_mode", "modalities", "input_profile", "s1_unit_policy", "preprocessing_report"):
         adapter.pop(key, None)
+    if model_family == "croma":
+        # CROMA exposes its aligned sensor branches through different forward
+        # keys. Those two fields are the intended treatment; checkpoint,
+        # architecture, preprocessing, and train-frozen normalization remain
+        # invariant and are compared exactly below.
+        adapter.pop("input_modality", None)
+        adapter.pop("embedding_key", None)
     return adapter
 
 
 def _manifest_sensor_mode(manifest: Mapping[str, Any]) -> str:
-    return str(manifest.get("lineage", {}).get("adapter", {}).get("sensor_mode", "")).upper()
+    lineage = manifest.get("lineage", {})
+    adapter = lineage.get("adapter", {})
+    explicit = adapter.get("sensor_mode") or lineage.get("dataset", {}).get("sensor_mode")
+    if explicit:
+        return str(explicit).upper()
+    modality = str(adapter.get("input_modality", "")).strip().lower()
+    return {"optical": "S2", "sar": "S1", "both": "S1+S2"}.get(modality, "")
+
+
+def _validate_profile_specific_adapter(manifest: Mapping[str, Any], model_family: str, sensor: str) -> None:
+    adapter = manifest.get("lineage", {}).get("adapter", {})
+    if model_family == "croma":
+        expected = {
+            "S2": ("optical", "optical_GAP"),
+            "S1": ("SAR", "SAR_GAP"),
+        }[sensor]
+        observed = (str(adapter.get("input_modality", "")), str(adapter.get("embedding_key", "")))
+        if observed != expected:
+            raise ValueError(
+                f"CROMA {sensor} cache must use input_modality={expected[0]} and "
+                f"embedding_key={expected[1]}; observed={observed}."
+            )
+        if str(adapter.get("model", "")) != "CROMA_base":
+            raise ValueError(f"CROMA paired sensitivity requires CROMA_base; observed={adapter.get('model')!r}")
 
 
 def _nested_unit_order(metadata: Sequence[Mapping[str, Any]], labels: np.ndarray, seed: int) -> list[str]:
@@ -164,7 +211,15 @@ def _nested_unit_order(metadata: Sequence[Mapping[str, Any]], labels: np.ndarray
     return cover + [unit for unit in shuffled if unit in remaining]
 
 
-def validate_paired_cache_contract(s2_cache_root: str | Path, s1_cache_root: str | Path) -> dict[str, Any]:
+def validate_paired_cache_contract(
+    s2_cache_root: str | Path,
+    s1_cache_root: str | Path,
+    *,
+    model_family: str = "terramind",
+) -> dict[str, Any]:
+    model_family = str(model_family).strip().lower()
+    if model_family not in PAIRED_MODEL_PROFILES:
+        raise ValueError(f"Unsupported paired model family: {model_family}")
     s2_root, s1_root = Path(s2_cache_root), Path(s1_cache_root)
     print(f"[reben:paired-preflight] validating S2 root={s2_root}")
     s2_caches = _load_cache_panel(s2_root)
@@ -184,9 +239,15 @@ def validate_paired_cache_contract(s2_cache_root: str | Path, s1_cache_root: str
             + ", ".join(missing)
         )
     typed_manifests = [manifest for manifest in all_manifests if manifest is not None]
-    invariants = [_adapter_invariant(manifest) for manifest in typed_manifests]
+    for cache in s2_caches.values():
+        _validate_profile_specific_adapter(cache["manifest"], model_family, "S2")
+    for cache in s1_caches.values():
+        _validate_profile_specific_adapter(cache["manifest"], model_family, "S1")
+    invariants = [_adapter_invariant(manifest, model_family) for manifest in typed_manifests]
     if any(value != invariants[0] for value in invariants[1:]):
-        raise ValueError("S1 and S2 caches do not share the same TerraMind model/checkpoint/encoder protocol.")
+        raise ValueError(
+            f"S1 and S2 caches do not share the same {model_family} model/checkpoint/encoder protocol."
+        )
     s2_modes = {_manifest_sensor_mode(cache["manifest"]) for cache in s2_caches.values()}
     s1_modes = {_manifest_sensor_mode(cache["manifest"]) for cache in s1_caches.values()}
     if s2_modes != {"S2"} or s1_modes != {"S1"}:
@@ -208,6 +269,12 @@ def validate_paired_cache_contract(s2_cache_root: str | Path, s1_cache_root: str
         "paired_test_order_identical": test_order_identical,
         "all_embedding_cache_manifests_present": True,
         "same_model_checkpoint_and_encoder_protocol": True,
+        "model_family": model_family,
+        "model_variant": PAIRED_MODEL_PROFILES[model_family]["model_variant"],
+        "sensor_specific_encoder_branches": (
+            {"id": "optical_GAP", "ood": "SAR_GAP"} if model_family == "croma" else None
+        ),
+        "shared_latent_dimension_required_for_same_head": True,
         "sensor_profiles": {"id": "S2", "ood": "S1"},
         "s2_train_only_for_probe": True,
         "s2_validation_only_for_thresholds": True,
@@ -389,10 +456,19 @@ def run_paired_sensor_shift(
     preflight_contract: Mapping[str, Any] | None = None,
     loaded_s2_caches: Mapping[str, Mapping[str, Any]] | None = None,
     loaded_s1_test: Mapping[str, Any] | None = None,
+    model_family: str = "terramind",
 ) -> dict[str, Path]:
     s2_root, s1_root = Path(s2_cache_root), Path(s1_cache_root)
     output = ensure_dir(output_dir)
-    paired_preflight = dict(preflight_contract) if preflight_contract is not None else validate_paired_cache_contract(s2_root, s1_root)
+    model_family = str(model_family).strip().lower()
+    if model_family not in PAIRED_MODEL_PROFILES:
+        raise ValueError(f"Unsupported paired model family: {model_family}")
+    profile = PAIRED_MODEL_PROFILES[model_family]
+    paired_preflight = dict(preflight_contract) if preflight_contract is not None else validate_paired_cache_contract(
+        s2_root, s1_root, model_family=model_family
+    )
+    if paired_preflight.get("model_family", "terramind") != model_family:
+        raise ValueError("Paired preflight model family does not match the requested runner profile.")
     s2_contract = paired_preflight["s2_contract"]
     s1_contract = paired_preflight["s1_contract"]
     s2 = dict(loaded_s2_caches) if loaded_s2_caches is not None else {
@@ -456,11 +532,11 @@ def run_paired_sensor_shift(
         aggregate, per_class = compute_multilabel_metrics(targets, probability, thresholds, class_names)
         per_class_by_domain[domain] = per_class
         labels = RebenRunLabels(
-            model_family="terramind", model_variant="TerraMind-1.0-base",
-            sensor_mode=sensor, input_mode="same_s2_trained_head",
+            model_family=model_family, model_variant=profile["model_variant"],
+            sensor_mode=sensor, input_mode=profile[f"{sensor.lower()}_input_mode"],
             adaptation_protocol="s2_train_s2_validation_locked_same_head_paired_sensor_shift",
             split_protocol="official_paired_test_common_support", eval_scope="test",
-            band_profile=f"reben_{sensor.lower()}",
+            band_profile=profile[f"{sensor.lower()}_band_profile"],
         )
         audit = expand_predictions_to_label_audit_rows(
             s2["test"]["metadata"], targets, probability, thresholds, labels, class_names
@@ -472,7 +548,7 @@ def run_paired_sensor_shift(
         summary_rows.append({"domain": domain, "sensor": sensor, **aggregate, **dist})
         write_csv(output / f"{domain.lower()}_label_audit.csv", audit)
         run_reben_multilabel_bwer(
-            audit, output / f"{domain.lower()}_bwer", model_name=f"terramind_same_head_{domain.lower()}",
+            audit, output / f"{domain.lower()}_bwer", model_name=f"{model_family}_same_head_{domain.lower()}",
             split="test", risk_column="risk_binary_error", min_support=20,
         )
     by_domain = {row["domain"]: row for row in summary_rows}
@@ -526,6 +602,7 @@ def run_paired_sensor_shift(
         "schema": "geobwer.reben.paired_sensor_shift.v1", "status": "complete",
         "train_domain": "S2", "threshold_calibration_domain": "S2_validation",
         "id_domain": "S2_test", "ood_domain": "S1_test", "same_head": True,
+        "model_family": model_family, "model_variant": profile["model_variant"],
         "paired_common_support": True, "test_used_for_selection": False,
         "effective_robustness_claimed": False,
         "checkpoint": str(checkpoint), "checkpoint_sha256": file_sha256(checkpoint),
@@ -550,11 +627,13 @@ def run_paired_sensor_shift_panel(
     weight_decay: float = 1e-4,
     batch_size: int = 512,
     device: str = "auto",
+    model_family: str = "terramind",
 ) -> dict[str, Path]:
     import csv
 
     output = ensure_dir(output_dir)
-    preflight = validate_paired_cache_contract(s2_cache_root, s1_cache_root)
+    model_family = str(model_family).strip().lower()
+    preflight = validate_paired_cache_contract(s2_cache_root, s1_cache_root, model_family=model_family)
     (output / "paired_shift_preflight.json").write_text(json.dumps(preflight, indent=2), encoding="utf-8")
     s2_caches = {split: _cache(Path(s2_cache_root), split) for split in ("train", "val", "test")}
     s2_test = s2_caches["test"]
@@ -586,6 +665,7 @@ def run_paired_sensor_shift_panel(
             epochs=epochs, learning_rate=learning_rate, weight_decay=weight_decay,
             batch_size=batch_size, device=device, aligned_s1_embeddings_path=shared,
             preflight_contract=preflight, loaded_s2_caches=s2_caches, loaded_s1_test=s1_test,
+            model_family=model_family,
         )
         with artifacts["summary"].open("r", encoding="utf-8-sig", newline="") as handle:
             summaries.extend({"seed": int(seed), **row} for row in csv.DictReader(handle))
@@ -606,6 +686,8 @@ def run_paired_sensor_shift_panel(
     manifest = output / "paired_shift_panel_manifest.json"
     manifest.write_text(json.dumps({
         "schema": "geobwer.reben.paired_sensor_shift_panel.v1", "status": "complete",
+        "model_family": model_family,
+        "model_variant": PAIRED_MODEL_PROFILES[model_family]["model_variant"],
         "seeds": [int(seed) for seed in seeds], "same_s2_trained_head_within_seed": True,
         "s2_cache_root": str(Path(s2_cache_root)), "s1_cache_root": str(Path(s1_cache_root)),
         "shared_aligned_s1_cache": str(shared), "test_used_for_selection": False,

@@ -111,6 +111,72 @@ def test_paired_cache_contract_accepts_aligned_test_samples() -> None:
     assert contract["paired_test_sample_count"] == 2
 
 
+def _write_croma_split(root: Path, split: str, ids: list[str], sensor: str) -> None:
+    target = root / split
+    target.mkdir(parents=True, exist_ok=True)
+    np.save(target / "embeddings.npy", np.zeros((len(ids), 768), dtype=np.float32))
+    np.save(target / "labels.npy", np.zeros((len(ids), 19), dtype=np.int8))
+    rows = [
+        {
+            "sample_id": sample_id,
+            "country": "DEU",
+            "source_tile_id": f"tile_{sample_id}",
+            "independent_unit_id": f"unit_{sample_id}",
+        }
+        for sample_id in ids
+    ]
+    (target / "metadata.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+    modality, key = ("optical", "optical_GAP") if sensor == "S2" else ("SAR", "SAR_GAP")
+    (target / "embedding_cache_manifest.json").write_text(json.dumps({
+        "schema": "geobwer.reben.embedding_cache.v1",
+        "cache_signature": f"CROMA:{sensor}:{split}",
+        "lineage": {
+            "adapter": {
+                "model": "CROMA_base", "model_size": "base",
+                "checkpoint_actual_sha256": "c" * 64,
+                "official_repo_revision": "r1", "official_hf_revision": "h1",
+                "input_modality": modality, "embedding_key": key,
+                "image_size": 120, "preprocessing": "train_split_fixed_channel_2sigma_uint8_0_1",
+                "normalization_stats": {"S1": {"mean": [1, 2]}, "S2": {"mean": [3, 4]}},
+                "normalization_stats_source": "/portable/source/croma_train_normalization.json",
+                "strict_reproducibility": True,
+            },
+            "dataset": {"sensor_mode": sensor, "split": split, "channel_profile": "croma"},
+        },
+        "embedding_shape": [len(ids), 768], "labels_shape": [len(ids), 19],
+    }), encoding="utf-8")
+
+
+def test_croma_paired_cache_contract_accepts_aligned_latent_branches() -> None:
+    root = Path("work/test_croma_paired_contract")
+    s2, s1 = root / "s2", root / "s1"
+    for cache_root, sensor in ((s2, "S2"), (s1, "S1")):
+        _write_croma_split(cache_root, "train", [f"{sensor}_train"], sensor)
+        _write_croma_split(cache_root, "val", [f"{sensor}_val"], sensor)
+        _write_croma_split(cache_root, "test", ["paired_a", "paired_b"], sensor)
+    contract = validate_paired_cache_contract(s2, s1, model_family="croma")
+    assert contract["status"] == "formal_ready"
+    assert contract["model_family"] == "croma"
+    assert contract["sensor_specific_encoder_branches"] == {"id": "optical_GAP", "ood": "SAR_GAP"}
+
+
+def test_croma_paired_cache_contract_rejects_wrong_branch() -> None:
+    root = Path("work/test_croma_paired_wrong_branch")
+    s2, s1 = root / "s2", root / "s1"
+    for cache_root, sensor in ((s2, "S2"), (s1, "S1")):
+        _write_croma_split(cache_root, "train", [f"{sensor}_train"], sensor)
+        _write_croma_split(cache_root, "val", [f"{sensor}_val"], sensor)
+        _write_croma_split(cache_root, "test", ["paired"], sensor)
+    manifest_path = s1 / "test" / "embedding_cache_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["lineage"]["adapter"]["embedding_key"] = "optical_GAP"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="SAR_GAP"):
+        validate_paired_cache_contract(s2, s1, model_family="croma")
+
+
 def test_indexed_probe_reuses_full_embedding_cache() -> None:
     pytest.importorskip("torch")
     root = Path("work/test_optimization_phase1_indexed_probe")
