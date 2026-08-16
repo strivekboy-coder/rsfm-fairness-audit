@@ -9,6 +9,7 @@ from rsfm_fairness_audit.geographic_risk_atlas import (
     aggregate_reben_country_label_burden,
     aggregate_reben_country_model_comparison,
     build_geographic_risk_atlas,
+    discover_canonical_fmow_seed_tables,
     discover_alphaearth_atlas_asset,
     plot_reben_burden,
 )
@@ -19,6 +20,57 @@ def _write(path: Path, rows: list[dict[str, object]]) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader(); writer.writerows(rows)
+
+
+def _write_formal_seed(root: Path, seed: int, *, protocol_hash: str = "same") -> Path:
+    import json
+
+    formal = root / f"seed_{seed}" / "formal_outputs"
+    table = formal / "formal_audit_table.csv"
+    _write(table, [{
+        "sample_id": f"{seed}-a", "location_id": "site-a", "latitude": 10,
+        "longitude": 20, "risk": 0, "split": "test",
+    }])
+    manifest = {
+        "protocol_hash": protocol_hash,
+        "model_lineage": {"seed": seed, "architecture": "torchvision_resnet50"},
+        "dataset_lineage": {
+            "dataset": "fMoW-Sentinel", "metadata_sha256": "metadata",
+            "geography_contract_hash": "geography",
+        },
+        "artifacts": {"formal_audit_table": "formal_audit_table.csv"},
+    }
+    (formal / "formal_output_manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8",
+    )
+    return table
+
+
+def test_fmow_seed_discovery_uses_real_manifest_validated_seed_ids(tmp_path: Path) -> None:
+    root = tmp_path / "fmow_resnet50_common9_v1"
+    expected = [_write_formal_seed(root, seed) for seed in (101, 42, 73)]
+    _write(root / "seed_202" / "formal_outputs" / "formal_audit_table.csv", [{
+        "location_id": "site-a", "latitude": 10, "longitude": 20, "risk": 0,
+    }])
+    paths, status = discover_canonical_fmow_seed_tables(root)
+    assert status["seeds"] == [42, 73, 101]
+    assert paths == [expected[1], expected[2], expected[0]]
+    assert status["scientific_role"] == "multi_seed_aggregate"
+    assert status["rejected_seed_directories"][0]["seed"] == "202"
+
+
+def test_fmow_single_seed_discovery_is_explicitly_descriptive(tmp_path: Path) -> None:
+    root = tmp_path / "fmow_resnet50_common9_v1"
+    table = _write_formal_seed(root, 101)
+    paths, discovery = discover_canonical_fmow_seed_tables(root)
+    assert paths == [table]
+    assert discovery["scientific_role"] == "single_seed_descriptive"
+    rows, aggregation = aggregate_coordinate_risk_across_seeds(
+        paths, expected_seed_count=1,
+    )
+    assert rows[0]["seed_count"] == 1
+    assert aggregation["scientific_role"] == "single_seed_descriptive"
+    assert aggregation["uncertainty_role"] == "unavailable_single_seed"
 
 
 def test_coordinate_asset_uses_real_units_and_test_split(tmp_path: Path) -> None:

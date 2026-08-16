@@ -11,10 +11,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
-SEEDS = (101, 202, 303)
-
-
 def _require(path: Path, label: str) -> Path:
     if not path.is_file():
         raise FileNotFoundError(f"Missing {label}: {path}")
@@ -46,6 +42,11 @@ def main() -> None:
     parser.add_argument("--project-root", type=Path, default=Path("/content/drive/MyDrive/rsfm_fairness_audit"))
     args = parser.parse_args()
     repo = args.repo.resolve()
+    sys.path.insert(0, str(repo / "src"))
+    from rsfm_fairness_audit.geographic_risk_atlas import (
+        discover_canonical_fmow_seed_tables,
+    )
+
     env = dict(os.environ)
     env["PYTHONPATH"] = str(repo / "src") + os.pathsep + env.get("PYTHONPATH", "")
     output_root = args.project_root / "outputs" / "geobwer_final_v3"
@@ -53,10 +54,17 @@ def main() -> None:
     alpha_csv = _require(alpha_root / "formal_outputs" / "formal_audit_table.csv", "AlphaEarth sample audit")
     dofa = _require(output_root / "fmow_dofav2_geo_clean_v1" / "formal_outputs" / "formal_audit_table.csv", "fMoW DOFAv2")
     resnet_root = output_root / "fmow_resnet50_common9_v1"
-    resnet = [
-        _require(resnet_root / f"seed_{seed}" / "formal_outputs" / "formal_audit_table.csv", f"fMoW ResNet50 seed {seed}")
-        for seed in SEEDS
-    ]
+    resnet, resnet_discovery = discover_canonical_fmow_seed_tables(resnet_root)
+    print(
+        "[discovered] fMoW ResNet50 canonical seeds: "
+        + ", ".join(map(str, resnet_discovery["seeds"])),
+        flush=True,
+    )
+    print(f"[scientific role] {resnet_discovery['scientific_role']}", flush=True)
+    for path in resnet:
+        print(f"[selected] fMoW ResNet50 canonical formal table: {path}", flush=True)
+    for rejected in resnet_discovery["rejected_seed_directories"]:
+        print(f"[rejected incomplete/noncanonical seed] {rejected}", flush=True)
     reben = output_root / "reben_terramind_paired_shift_v1"
     if not reben.is_dir():
         raise FileNotFoundError(f"Missing reBEN paired root: {reben}")
@@ -75,7 +83,7 @@ def main() -> None:
     for path in resnet:
         atlas_command += ["--fmow-csv", f"ResNet50={path}"]
     atlas_command += [
-        "--fmow-seed-count", "ResNet50=3", "--reben-paired-dir", str(reben),
+        "--fmow-seed-count", f"ResNet50={len(resnet)}", "--reben-paired-dir", str(reben),
         "--reben-model-paired-dir", f"TerraMind={reben}",
         "--reben-model-paired-dir", f"CROMA={croma}",
         "--output-dir", str(atlas_dir),
@@ -91,7 +99,7 @@ def main() -> None:
         "--atlas-dir", str(atlas_dir), "--output-dir", str(association_dir),
         "--alphaearth-sample-csv", str(alpha_csv),
         "--fmow-sample-csv", f"DOFAv2={dofa}",
-        "--fmow-sample-csv", f"ResNet50={resnet[0]}",
+        "--fmow-sample-csv", f"ResNet50={next((path for path in resnet if 'seed_101' in path.parts), resnet[0])}",
     ]
     if alpha_external:
         association_command += ["--alphaearth-external-csv", str(alpha_external)]

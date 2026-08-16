@@ -6,7 +6,7 @@ This is CPU-only postprocessing of frozen audit tables. It does not retrain a mo
 
 ## Atlas finality
 
-- fMoW ResNet50 is aggregated across seeds 101/202/303 after within-seed location aggregation. The three inputs must have exactly the same unit universe, support, and coordinates.
+- fMoW ResNet50 seeds are discovered only from direct `seed_*` children that contain both the canonical `formal_outputs/formal_audit_table.csv` and its `formal_output_manifest.json`. Drive inspection on 2026-08-16 found seeds 42/73/101; all three manifests report the same protocol hash (`f51e772730ce48a8a203e9768112419e396e96a7fd88bb299342896456a31a16`), dataset metadata hash, and geography-contract hash. The atlas aggregates those real seeds after within-seed location aggregation; it does not assume 101/202/303 or fabricate missing seeds. Inputs must have exactly the same unit universe, support, and coordinates. If a future canonical root contains only one valid seed, the atlas completes but explicitly marks ResNet50 as `single_seed_descriptive` and does not present across-seed uncertainty.
 - DOFAv2 remains the existing single-run localization asset and is labelled as such.
 - reBEN uses constrained layout, dynamic figure dimensions, anchored label rotation, and vector/raster export.
 - reBEN retains the TerraMind country × label burden matrix and adds a country-level TerraMind-versus-CROMA paired Δrisk view from each model's frozen `paired_shift_country_deltas.csv`. The comparison requires the same three seeds, countries, support, and `mean_labelwise_binary_error` definition; it does not recompute predictions or alter the paired protocol.

@@ -28,6 +28,100 @@ ALPHAEARTH_SAMPLE_TABLES = (
 )
 
 
+def discover_canonical_fmow_seed_tables(
+    root: str | Path, *, architecture: str = "torchvision_resnet50",
+) -> tuple[list[Path], dict[str, Any]]:
+    """Discover manifest-validated formal fMoW seed tables below one run root.
+
+    Seed identifiers are read from the directory and independently checked
+    against ``formal_output_manifest.json``. Incomplete seed directories are
+    reported but never filled, copied, or inferred from a requested seed list.
+    """
+    root = Path(root)
+    accepted: list[tuple[int, Path, dict[str, Any]]] = []
+    rejected: list[dict[str, str]] = []
+    for seed_dir in sorted(root.glob("seed_*")):
+        match = re.fullmatch(r"seed_(\d+)", seed_dir.name)
+        if not seed_dir.is_dir() or match is None:
+            continue
+        directory_seed = int(match.group(1))
+        formal_dir = seed_dir / "formal_outputs"
+        table = formal_dir / "formal_audit_table.csv"
+        manifest_path = formal_dir / "formal_output_manifest.json"
+        missing = [str(path.name) for path in (table, manifest_path) if not path.is_file()]
+        if missing:
+            rejected.append({
+                "seed": str(directory_seed), "path": str(seed_dir),
+                "reason": "missing canonical formal asset(s): " + ", ".join(missing),
+            })
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            rejected.append({
+                "seed": str(directory_seed), "path": str(seed_dir),
+                "reason": f"unreadable formal manifest: {exc}",
+            })
+            continue
+        lineage = manifest.get("model_lineage") or {}
+        dataset = manifest.get("dataset_lineage") or {}
+        reasons: list[str] = []
+        if lineage.get("seed") != directory_seed:
+            reasons.append(
+                f"manifest seed {lineage.get('seed')!r} != directory seed {directory_seed}"
+            )
+        if lineage.get("architecture") != architecture:
+            reasons.append(f"architecture {lineage.get('architecture')!r} != {architecture!r}")
+        if dataset.get("dataset") != "fMoW-Sentinel":
+            reasons.append(f"dataset {dataset.get('dataset')!r} != 'fMoW-Sentinel'")
+        if not manifest.get("protocol_hash"):
+            reasons.append("missing protocol_hash")
+        if manifest.get("artifacts", {}).get("formal_audit_table") != table.name:
+            reasons.append("manifest does not canonically name formal_audit_table.csv")
+        if reasons:
+            rejected.append({
+                "seed": str(directory_seed), "path": str(seed_dir),
+                "reason": "; ".join(reasons),
+            })
+            continue
+        accepted.append((directory_seed, table, manifest))
+    if not accepted:
+        raise FileNotFoundError(
+            f"No manifest-validated canonical fMoW seed table below {root}; rejected={rejected}"
+        )
+    protocol_hashes = {str(item[2]["protocol_hash"]) for item in accepted}
+    metadata_hashes = {
+        str(item[2].get("dataset_lineage", {}).get("metadata_sha256", ""))
+        for item in accepted
+    }
+    geography_hashes = {
+        str(item[2].get("dataset_lineage", {}).get("geography_contract_hash", ""))
+        for item in accepted
+    }
+    if len(protocol_hashes) != 1 or len(metadata_hashes) != 1 or len(geography_hashes) != 1:
+        raise ValueError(
+            "Discovered fMoW seeds do not share one canonical protocol/dataset/geography "
+            f"contract: protocol={protocol_hashes}, metadata={metadata_hashes}, "
+            f"geography={geography_hashes}"
+        )
+    accepted.sort(key=lambda item: item[0])
+    seeds = [item[0] for item in accepted]
+    role = "multi_seed_aggregate" if len(seeds) > 1 else "single_seed_descriptive"
+    return [item[1] for item in accepted], {
+        "status": "ready", "root": str(root), "seeds": seeds,
+        "seed_count": len(seeds), "scientific_role": role,
+        "uncertainty_role": (
+            "across_seed_sd_available" if len(seeds) > 1 else "unavailable_single_seed"
+        ),
+        "protocol_hash": next(iter(protocol_hashes)),
+        "dataset_metadata_sha256": next(iter(metadata_hashes)),
+        "geography_contract_hash": next(iter(geography_hashes)),
+        "accepted_tables": [str(item[1]) for item in accepted],
+        "rejected_seed_directories": rejected,
+        "selection_rule": "direct seed_* child + canonical formal table + validated formal manifest",
+    }
+
+
 def _first(row: Mapping[str, Any], fields: Sequence[str], *, required: bool = True) -> str:
     for field in fields:
         value = row.get(field)
@@ -229,6 +323,8 @@ def aggregate_coordinate_risk_across_seeds(
         "status": "ready", "paths": [str(path) for path in source_paths],
         "seeds": seeds, "seed_count": len(seeds),
         "expected_seed_count": expected_seed_count or len(seeds),
+        "scientific_role": "multi_seed_aggregate" if len(seeds) > 1 else "single_seed_descriptive",
+        "uncertainty_role": "across_seed_sd_available" if len(seeds) > 1 else "unavailable_single_seed",
         "aggregation": "within_seed_unit_risk_then_equal_seed_mean_on_exact_common_units",
         "unit_support_contract": "identical_unit_universe_support_and_coordinates_required",
         "usable_spatial_unit_count": len(output), "unit_risk_q90": q90,

@@ -13,7 +13,11 @@ tasks:
     risk_role: descriptive_scene_classification_error
     model_seed_policy:
       DOFAv2: {expected_seed_count: 1, role: existing_single_run_localization}
-      ResNet50: {expected_seed_count: 3, aggregation: within_seed_unit_risk_then_equal_seed_mean}
+      ResNet50:
+        discovery: manifest_validated_direct_seed_children
+        observed_canonical_seeds_2026_08_16: [42, 73, 101]
+        aggregation: within_seed_unit_risk_then_equal_seed_mean
+        single_seed_fallback_role: single_seed_descriptive
     common_unit_contract: exact_unit_universe_support_and_coordinates_across_seeds
   reben:
     representation: country_x_label_burden_matrix
