@@ -1,0 +1,38 @@
+schema: geobwer.geographic_risk_association.preregistered.v1
+execution: {cpu_only: true, training: false, large_external_downloads: false}
+analysis_population:
+  alphaearth: frozen_test_spatial_blocks
+  fmow: frozen_test_location_or_site_units
+  reben: burden_reproduction_only
+confirmatory:
+  alphaearth:
+    - land_cover_heterogeneity
+    - reference_confidence
+    - reference_disagreement
+    - ghsl_urbanization
+  fmow:
+    - ghsl_urbanization
+  variable_definitions:
+    land_cover_heterogeneity: Shannon entropy of WorldCover classes within spatial block divided by log(11)
+    reference_confidence: mean Dynamic World top-class probability within spatial block
+    reference_disagreement: mean WorldCover-vs-Dynamic-World mapped-class mismatch within spatial block
+    ghsl_urbanization: externally supplied GHSL degree-of-urbanisation value matched to observed unit
+exploratory_exposure:
+  alphaearth: [population_density, nightlights]
+  fmow: [population_density, nightlights]
+primary_estimand:
+  statistic: partial Spearman rho
+  controls: [latitude, sin_longitude, cos_longitude, log1p_unit_support]
+  direction: two_sided
+  reporting: effect_size_and_spatial_cluster_bootstrap_95CI
+spatial_sensitivity:
+  bootstrap_clusters: 15_degree_latitude_cells_with_latitude_adjusted_longitude_width
+  bootstrap_repetitions: 500
+  random_seed: 1907
+readiness_gate: {minimum_units: 20, minimum_coverage: 0.80, missing_proxy_substitution: forbidden}
+effect_plot: {bins: prespecified_equal_frequency_quartiles, uncertainty: bootstrap_95CI}
+claim_boundaries:
+  confirmatory: fixed variables and estimands before association results are viewed; association is not causal
+  exploratory: population density and nightlights cannot support confirmatory claims
+  fmow: scene categories cannot substitute for land-cover heterogeneity or reference-map diagnostics
+  reben: no socioeconomic regression on 10 countries

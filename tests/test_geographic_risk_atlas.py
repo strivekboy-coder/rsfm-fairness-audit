@@ -5,9 +5,11 @@ from pathlib import Path
 
 from rsfm_fairness_audit.geographic_risk_atlas import (
     aggregate_coordinate_risk,
+    aggregate_coordinate_risk_across_seeds,
     aggregate_reben_country_label_burden,
     build_geographic_risk_atlas,
     discover_alphaearth_atlas_asset,
+    plot_reben_burden,
 )
 
 
@@ -104,3 +106,57 @@ def test_reben_country_label_accepts_correct_as_binary_error_fallback(tmp_path: 
     ])
     rows, _ = aggregate_reben_country_label_burden(tmp_path)
     assert rows[0]["mean_delta_risk"] == 1.0
+
+
+def test_fmow_three_seed_aggregation_is_strict_and_seed_first(tmp_path: Path) -> None:
+    paths = []
+    for seed, risks in ((101, (0, 1)), (202, (1, 1)), (303, (0, 0))):
+        path = tmp_path / f"seed_{seed}" / "formal_audit_table.csv"
+        _write(path, [
+            {"sample_id": f"{seed}-a", "location_id": "site-a", "latitude": 10,
+             "longitude": 20, "risk": risks[0], "split": "test"},
+            {"sample_id": f"{seed}-b", "location_id": "site-b", "latitude": 30,
+             "longitude": 40, "risk": risks[1], "split": "test"},
+        ])
+        paths.append(path)
+    rows, status = aggregate_coordinate_risk_across_seeds(paths, expected_seed_count=3)
+    assert status["seed_count"] == 3
+    assert status["seeds"] == ["101", "202", "303"]
+    assert len(rows) == 2
+    assert rows[0]["mean_risk"] == 1 / 3
+    assert rows[0]["seed_count"] == 3
+    manifest = build_geographic_risk_atlas(
+        tmp_path / "three_seed_atlas", fmow_csvs={"ResNet50": paths},
+        fmow_expected_seed_counts={"ResNet50": 3},
+    )
+    fmow = manifest["readiness"][0]
+    assert fmow["seed_count"] == 3
+    assert (tmp_path / "three_seed_atlas" / "fmow_ResNet50_coordinate_risk.png").is_file()
+    assert all(row["status"] == "pass" for row in manifest["visual_qa"])
+
+
+def test_fmow_three_seed_aggregation_rejects_unit_drift(tmp_path: Path) -> None:
+    import pytest
+
+    paths = []
+    for seed, unit in ((101, "site-a"), (202, "site-a"), (303, "site-b")):
+        path = tmp_path / f"seed_{seed}" / "formal_audit_table.csv"
+        _write(path, [{"location_id": unit, "latitude": 10, "longitude": 20, "risk": 0}])
+        paths.append(path)
+    with pytest.raises(ValueError, match="universe differs"):
+        aggregate_coordinate_risk_across_seeds(paths, expected_seed_count=3)
+
+
+def test_reben_full_panel_layout_emits_no_margin_warning(tmp_path: Path) -> None:
+    import warnings
+
+    rows = [
+        {"country": f"C{country:02d}", "class_label": f"long_label_{label:02d}",
+         "mean_delta_risk": (country - label) / 100}
+        for country in range(10) for label in range(19)
+    ]
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        paths = plot_reben_burden(rows, tmp_path)
+    assert not [item for item in caught if issubclass(item.category, UserWarning)]
+    assert all(path.is_file() for path in paths)

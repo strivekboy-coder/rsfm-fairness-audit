@@ -11,6 +11,10 @@ tasks:
     representation: observed_coordinate_site_or_location_unit
     preferred_unit: location_id
     risk_role: descriptive_scene_classification_error
+    model_seed_policy:
+      DOFAv2: {expected_seed_count: 1, role: existing_single_run_localization}
+      ResNet50: {expected_seed_count: 3, aggregation: within_seed_unit_risk_then_equal_seed_mean}
+    common_unit_contract: exact_unit_universe_support_and_coordinates_across_seeds
   reben:
     representation: country_x_label_burden_matrix
     risk_role: paired_s1_ood_minus_s2_id_risk_binary_error
@@ -21,6 +25,8 @@ visual_contract:
   tail_burden: magma
   signed_delta: PuOr_r_centered_zero
   output: [png_300dpi, pdf]
+  layout: constrained_layout
+  automated_qa: [file_size, pixel_dimensions, nonwhite_content]
 anti_p_hacking:
   primary_views: [mean_risk, tail_excess, paired_delta]
   tail_definition: unit_risk_q90_excess_exploratory
