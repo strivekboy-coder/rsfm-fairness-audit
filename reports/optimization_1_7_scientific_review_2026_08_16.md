@@ -11,7 +11,8 @@ Training or experiment execution in this review: none
 - reBEN label-budget Drive folder: `1RjsLnJuioor9Ky5cQlmSXRV8fVucrk7z`
 - reBEN TerraMind paired-shift Drive folder: `1VIb54N9PmIwZgNFxr4a4Ewa5vN0BmctE`
 - Label-budget audit: `pass`; 15/15 seed-budget rows, nested selection, fixed validation/test panels, validation-locked thresholds, and no test-set selection.
-- Paired-shift audit: `pass`; 119,825 paired test samples, identical sample ordering/targets/metadata, the same S2-trained head within seed, and no test-set selection.
+- TerraMind paired-shift audit: `pass`; 119,825 paired test samples, identical sample ordering/targets/metadata, the same S2-trained head within seed, and no test-set selection.
+- CROMA confirmatory paired-shift audit: `pass`; the same S2-ID → S1-OOD estimand, seed labels, paired panel, locked-head logic, and 19-label universe passed the registered gates.
 - Paired probability diagnostic audit: `pass`; both source-completeness and diagnostic-completeness gates are true.
 - Final evidence status: `complete`; `finality=true` for items 1–7. Items 8–17 were not started.
 
@@ -69,16 +70,22 @@ Values are three-seed means. `ΔPPR` is the S1-OOD minus S2-ID predicted-positiv
 
 1. The paired estimand is cross-modal compatibility of an unchanged S2-trained head with paired S1 representations. It is not conventional retrained S1 robustness, a causal sensor effect, or EarthShift effective robustness.
 2. Mechanism evidence is diagnostic rather than causal: frozen-head rank/separation failure can arise from feature-space misalignment, encoder preprocessing incompatibility, or other representation changes.
-3. The paired result currently uses TerraMind only. Three seeds establish directional repeatability for this model/protocol but not cross-model generality.
+3. The paired result now has same-task replication in CROMA, but only one task and one paired sensor shift. This supports model-dependent failure geometry for this shift, not universal cross-model or cross-task generality.
 4. Label and country comparisons are descriptive. With only three seeds, do not make formal label-order or country-order significance claims; multiplicity correction would be required for inferential slice testing.
 5. The 5% label budget still contains 11,894 samples and the stored independent-unit key is effectively sample-level. This is label-efficiency sensitivity, not few-shot or multi-chip location-budget evidence.
 6. Source-tile overlap exists across train/validation/test while declared independent-unit overlap is zero. This does not invalidate the paired within-test contrast, but out-of-location claims must follow and disclose the independent-unit definition.
 
-## Extension decision
+## Confirmatory CROMA cross-model update
 
-A single CROMA paired-shift sensitivity remains recommended as the highest-value confirmatory extension, but it does not block this freeze. CROMA is the cleanest comparator because it is explicitly SAR–optical and aligned S1/S2 frozen assets already exist. It directly tests whether the TerraMind cross-modal failure signature is model-specific or persists in a model designed for SAR–optical alignment.
+CROMA confirms a large common rank/separation failure but a different tail and label geometry. Its three-seed means are Δmean=0.2686, Δtail=0.2727, ΔGeoBWER=0.0041, ΔAUROC=-0.3790, and ΔAP=-0.4440. TerraMind gives Δmean=0.3088, Δtail=0.3555, ΔGeoBWER=0.0467, ΔAUROC=-0.3861, and ΔAP=-0.4882. Thus AUROC degradation is nearly the same, but CROMA has materially less AP/F1 loss and almost no systematic excess tail acceleration. One CROMA seed has negative ΔGeoBWER; all TerraMind seeds are positive.
 
-A model×task 2×2 is not recommended before that targeted replication. It costs more, introduces task/input/protocol interactions, and only becomes necessary if the paper elevates a cross-model-by-task interaction claim or reviewers demand it. The decision order is therefore: freeze 1–7 now; optionally run one CROMA paired-shift sensitivity; consider a balanced 2×2 only after its result changes the scientific question.
+The label diagnostics also differ. CROMA has 19/19 modal mixed/partial signatures and no modal collapse label, whereas TerraMind has 11/19 collapse and 8/19 mixed. Neither model has threshold-only or stable labels. Several score-transport directions reverse: urban fabric is approximately -0.047 in CROMA versus +0.901 in TerraMind; pastures +0.328 versus -0.212; natural grass/sparse vegetation +0.430 versus -0.012; and marine waters +0.411 versus -0.099. These observations support the bounded statement that the same paired sensor shift has different **frozen-head failure geometry** across models: a shared rank-collapse phenomenon, but model-specific operating-point displacement and geographic tail allocation. They do not identify encoder causality.
+
+## Revised extension decision
+
+Item #8 adaptation is now the higher-priority mechanistic experiment. Both models lose approximately 0.38 mean AUROC, while neither shows a threshold-only signature; threshold recalibration alone is therefore unlikely to recover the failure. A locked adaptation ladder—threshold recalibration, frozen-encoder S1 head refit, then representation adaptation only if needed—would quantify recoverability without confusing mechanisms.
+
+Item #9 model×task 2×2 remains conditional and moves below #8. The completed two-model, one-task comparison already supports model-dependent geometry for reBEN S2→S1. A second task is valuable only if the manuscript claims that model×shift geometry generalizes across tasks, or if review requires that interaction. It should not precede the cheaper and more diagnostic adaptation ladder.
 
 ## Finality decision
 

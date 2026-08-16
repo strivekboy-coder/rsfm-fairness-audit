@@ -1,0 +1,23 @@
+{
+  "schema": "geobwer.paired_cross_model_review.v1",
+  "date": "2026-08-16",
+  "status": "pass",
+  "inputs": {
+    "TerraMind": {"drive_folder_id": "1VIb54N9PmIwZgNFxr4a4Ewa5vN0BmctE", "audit_status": "pass"},
+    "CROMA": {"drive_folder_id": "1U-ntx0FKwHEwc3cTgMmbwJhC04RR0ZZ7", "audit_status": "pass"}
+  },
+  "same_shift_protocol": "S2-trained same head; S2 test ID versus paired S1 test OOD; validation-locked thresholds",
+  "model_summary": [
+    {"model": "TerraMind", "delta_mean_risk": 0.3088348215, "delta_tail_risk": 0.3555405902, "delta_geobwer": 0.0467057687, "tail_acceleration": 0.0467057687, "delta_auroc": -0.3860775, "delta_ap": -0.4882212919, "delta_f1": -0.5324508696, "collapse_labels": 11, "mixed_labels": 8},
+    {"model": "CROMA", "delta_mean_risk": 0.2685985878, "delta_tail_risk": 0.2726838157, "delta_geobwer": 0.0040852278, "tail_acceleration": 0.0040852278, "delta_auroc": -0.3790207076, "delta_ap": -0.4439606280, "delta_f1": -0.4003530289, "collapse_labels": 0, "mixed_labels": 19}
+  ],
+  "assessment": {
+    "same_shift_different_failure_geometry": "supported",
+    "common_component": "large AUROC/rank degradation in both models",
+    "different_components": ["tail acceleration", "GeoBWER amplification", "label diagnostic signature mix", "semantic direction of score transport", "locked-threshold F1 loss"],
+    "threshold_only_explanation": "not_supported_for_either_model",
+    "scope": "same task and shift, frozen-head operational diagnostics; not causal encoder proof"
+  },
+  "priority_update": {"8_adaptation": "next_mechanistic_priority", "9_model_x_task_2x2": "conditional_after_8_or_reviewer_request"},
+  "experiments_started": false
+}

@@ -1,0 +1,25 @@
+schema: geobwer.geographic_risk_atlas.protocol.v1
+execution: {cpu_only: true, training: false, external_bulk_downloads: false}
+tasks:
+  alphaearth:
+    representation: observed_coordinate_or_spatial_block_centroid
+    preferred_unit: spatial_block_id
+    risk_role: descriptive_reference_map_agreement
+  fmow:
+    representation: observed_coordinate_site_or_location_unit
+    preferred_unit: location_id
+    risk_role: descriptive_scene_classification_error
+  reben:
+    representation: country_x_label_burden_matrix
+    risk_role: paired_s1_ood_minus_s2_id_label_risk
+    forbid: [invented_coordinates, country_centroid_as_sample_location]
+visual_contract:
+  mean_risk: viridis
+  tail_burden: magma
+  signed_delta: PuOr_r_centered_zero
+  output: [png_300dpi, pdf]
+anti_p_hacking:
+  primary_views: [mean_risk, tail_excess, paired_delta]
+  tail_definition: unit_risk_q90_excess_exploratory
+  subgroup_search: fixed_existing_axes_only
+  inference: descriptive_unless_separately_preregistered_and_multiplicity_adjusted

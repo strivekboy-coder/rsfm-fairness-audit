@@ -63,6 +63,28 @@
       }
     }
   },
-  "interpretation_boundary": "The paired estimand is compatibility of an unchanged S2-trained frozen head with paired S2 and S1 TerraMind representations. Representation-collapse signature is operational evidence of rank/separation failure, not causal proof of encoder collapse. EarthShift effective robustness is not claimed.",
-  "scientific_review": "reports/optimization_1_7_scientific_review_2026_08_16.md"
+  "confirmatory_extensions": {
+    "croma_paired_s2_to_s1_sensitivity": {
+      "status": "pass",
+      "changes_items_1_7_finality": false,
+      "drive_folder_id": "1U-ntx0FKwHEwc3cTgMmbwJhC04RR0ZZ7",
+      "result_audit_drive_id": "11HsyS8ITgoIiN7aOJBHSu4IV4yJlsI6g",
+      "seed_count": 3,
+      "delta_mean_risk": 0.2685985878333333,
+      "delta_tail_risk_beta_0_10": 0.27268381566666666,
+      "delta_geobwer_beta_0_10": 0.004085227833333333,
+      "mean_delta_auroc": -0.3790207076,
+      "mean_delta_ap": -0.44396062799999997,
+      "modal_label_signatures": {
+        "representation_collapse_signature": 0,
+        "mixed_or_partial_degradation": 19,
+        "threshold_shift_dominant": 0,
+        "stable": 0
+      },
+      "scientific_role": "same-task same-shift cross-model sensitivity"
+    }
+  },
+  "interpretation_boundary": "The paired estimand is compatibility of an unchanged S2-trained frozen head with paired S2 and S1 representations. TerraMind is the frozen item-7 result and CROMA is a confirmatory same-task sensitivity. Representation-collapse signature is operational evidence of rank/separation failure, not causal proof of encoder collapse. EarthShift effective robustness is not claimed.",
+  "scientific_review": "reports/optimization_1_7_scientific_review_2026_08_16.md",
+  "cross_model_review": "reports/reben_paired_cross_model_review_2026_08_16.md"
 }
