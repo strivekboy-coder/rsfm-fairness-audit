@@ -7,6 +7,7 @@ from rsfm_fairness_audit.geographic_risk_atlas import (
     aggregate_coordinate_risk,
     aggregate_coordinate_risk_across_seeds,
     aggregate_reben_country_label_burden,
+    aggregate_reben_country_model_comparison,
     build_geographic_risk_atlas,
     discover_alphaearth_atlas_asset,
     plot_reben_burden,
@@ -34,7 +35,7 @@ def test_coordinate_asset_uses_real_units_and_test_split(tmp_path: Path) -> None
     assert rows[0]["latitude"] == 11
     manifest = build_geographic_risk_atlas(tmp_path / "coordinate_atlas", alphaearth_csv=source)
     assert manifest["status"] == "complete"
-    assert (tmp_path / "coordinate_atlas" / "alphaearth_coordinate_risk.png").is_file()
+    assert (tmp_path / "coordinate_atlas" / "atlas_alphaearth_spatial_risk.png").is_file()
 
 
 def test_reben_country_label_delta_is_aggregated_within_seed(tmp_path: Path) -> None:
@@ -57,7 +58,7 @@ def test_reben_country_label_delta_is_aggregated_within_seed(tmp_path: Path) -> 
         tmp_path / "atlas", reben_paired_dir=tmp_path,
     )
     assert manifest["status"] == "complete"
-    assert (tmp_path / "atlas" / "reben_country_label_burden.png").is_file()
+    assert (tmp_path / "atlas" / "atlas_reben_terramind_country_label_burden.png").is_file()
 
 
 def test_alphaearth_discovery_selects_formal_sample_table_not_geobwer_aggregates(tmp_path: Path) -> None:
@@ -131,7 +132,7 @@ def test_fmow_three_seed_aggregation_is_strict_and_seed_first(tmp_path: Path) ->
     )
     fmow = manifest["readiness"][0]
     assert fmow["seed_count"] == 3
-    assert (tmp_path / "three_seed_atlas" / "fmow_ResNet50_coordinate_risk.png").is_file()
+    assert (tmp_path / "three_seed_atlas" / "atlas_fmow_resnet50_spatial_risk.png").is_file()
     assert all(row["status"] == "pass" for row in manifest["visual_qa"])
 
 
@@ -160,3 +161,48 @@ def test_reben_full_panel_layout_emits_no_margin_warning(tmp_path: Path) -> None
         paths = plot_reben_burden(rows, tmp_path)
     assert not [item for item in caught if issubclass(item.category, UserWarning)]
     assert all(path.is_file() for path in paths)
+
+
+def test_reben_country_model_comparison_is_strict_and_visualized(tmp_path: Path) -> None:
+    roots = {}
+    for model, shift in (("TerraMind", .3), ("CROMA", .2)):
+        root = tmp_path / model
+        rows = []
+        for seed in (42, 73, 101):
+            for country_index, country in enumerate(("BRA", "DEU", "IND")):
+                rows.append({
+                    "seed": seed, "slice_axis": "country", "slice_value": country,
+                    "id_risk": .2, "ood_risk": .2 + shift + country_index / 100,
+                    "delta_risk": shift + country_index / 100, "support": 100,
+                    "risk_definition": "mean_labelwise_binary_error",
+                })
+        _write(root / "paired_shift_country_deltas.csv", rows)
+        roots[model] = root
+    summary, raw, status = aggregate_reben_country_model_comparison(roots)
+    assert status["models"] == ["TerraMind", "CROMA"]
+    assert status["seed_count"] == 3
+    assert len(summary) == 6 and len(raw) == 18
+    assert [row["model"] for row in summary[:3]] == ["TerraMind"] * 3
+    manifest = build_geographic_risk_atlas(
+        tmp_path / "cross_model_atlas", reben_model_paired_dirs=roots,
+    )
+    assert manifest["schema"].endswith(".v2")
+    assert (tmp_path / "cross_model_atlas" / "atlas_reben_country_delta_model_comparison.png").is_file()
+    assert all(row["status"] == "pass" for row in manifest["visual_qa"])
+
+
+def test_reben_country_model_comparison_rejects_support_drift(tmp_path: Path) -> None:
+    import pytest
+
+    roots = {}
+    for model, support in (("TerraMind", 100), ("CROMA", 99)):
+        root = tmp_path / model
+        _write(root / "paired_shift_country_deltas.csv", [
+            {"seed": seed, "slice_axis": "country", "slice_value": "DEU",
+             "delta_risk": .2, "support": support,
+             "risk_definition": "mean_labelwise_binary_error"}
+            for seed in (42, 73, 101)
+        ])
+        roots[model] = root
+    with pytest.raises(ValueError, match="support differs"):
+        aggregate_reben_country_model_comparison(roots)

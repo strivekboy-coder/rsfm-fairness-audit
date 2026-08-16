@@ -14,6 +14,7 @@ def main() -> None:
     parser.add_argument("--fmow-csv", action="append", default=[], metavar="NAME=CSV")
     parser.add_argument("--fmow-seed-count", action="append", default=[], metavar="NAME=N")
     parser.add_argument("--reben-paired-dir", type=Path)
+    parser.add_argument("--reben-model-paired-dir", action="append", default=[], metavar="MODEL=DIR")
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     fmow: dict[str, list[Path]] = {}
@@ -30,10 +31,17 @@ def main() -> None:
             expected[name] = int(count)
         except ValueError:
             parser.error("--fmow-seed-count N must be an integer")
+    reben_models = {}
+    for value in args.reben_model_paired_dir:
+        if "=" not in value:
+            parser.error("--reben-model-paired-dir must be MODEL=DIR")
+        name, path = value.split("=", 1)
+        reben_models[name] = Path(path)
     result = build_geographic_risk_atlas(
         args.output_dir, alphaearth_csv=args.alphaearth_csv, alphaearth_root=args.alphaearth_root,
         fmow_csvs=fmow, fmow_expected_seed_counts=expected,
         reben_paired_dir=args.reben_paired_dir,
+        reben_model_paired_dirs=reben_models,
     )
     print(f"status={result['status']}")
     print(f"asset_count={len(result['readiness'])}")

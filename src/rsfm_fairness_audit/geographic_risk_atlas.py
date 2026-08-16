@@ -13,7 +13,9 @@ import numpy as np
 from rsfm_fairness_audit.io import ensure_dir, write_csv
 
 
-SCHEMA = "geobwer.geographic_risk_atlas.v1"
+SCHEMA = "geobwer.geographic_risk_atlas.v2"
+FIGURE_PREFIX = "atlas"
+OKABE_ITO = ("#0072B2", "#E69F00", "#009E73", "#CC79A7")
 LATITUDE_FIELDS = ("latitude", "lat", "center_lat", "centroid_lat")
 LONGITUDE_FIELDS = ("longitude", "lon", "lng", "center_lon", "centroid_lon")
 UNIT_FIELDS = ("spatial_block_id", "location_id", "site_id", "independent_unit_id", "sample_id")
@@ -303,10 +305,92 @@ def aggregate_reben_country_label_burden(root: str | Path) -> tuple[list[dict[st
     }
 
 
+def aggregate_reben_country_model_comparison(
+    model_roots: Mapping[str, str | Path], *, expected_seed_count: int = 3,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Aggregate frozen paired country deltas without changing their estimand."""
+    if len(model_roots) < 2:
+        raise ValueError("Country comparison requires at least two model roots")
+    raw: list[dict[str, Any]] = []
+    model_keys: dict[str, set[tuple[str, str]]] = {}
+    supports: dict[tuple[str, str, str], int] = {}
+    risk_definitions: set[str] = set()
+    for model, value in model_roots.items():
+        path = Path(value) / "paired_shift_country_deltas.csv"
+        if not path.is_file():
+            raise FileNotFoundError(f"Missing frozen paired country deltas for {model}: {path}")
+        keys: set[tuple[str, str]] = set()
+        for row in _iter_csv(path):
+            if row.get("slice_axis") not in (None, "", "country"):
+                continue
+            country = _first(row, ("slice_value", "country", "country_iso3"))
+            seed = _first(row, ("seed",))
+            delta = float(_first(row, ("delta_risk",)))
+            support = int(float(_first(row, ("support",))))
+            definition = _first(row, ("risk_definition",))
+            if not math.isfinite(delta):
+                raise ValueError(f"Non-finite country delta for {model}/{seed}/{country}")
+            key = (seed, country)
+            if key in keys:
+                raise ValueError(f"Duplicate country delta for {model}/{seed}/{country}")
+            keys.add(key); supports[(model, seed, country)] = support
+            risk_definitions.add(definition)
+            raw.append({
+                "model": model, "seed": seed, "country": country,
+                "delta_risk": delta, "support": support,
+                "risk_definition": definition,
+            })
+        model_keys[model] = keys
+    reference_model = next(iter(model_keys))
+    reference_keys = model_keys[reference_model]
+    for model, keys in model_keys.items():
+        if keys != reference_keys:
+            raise ValueError(
+                f"Country/seed support differs between {reference_model} and {model}; "
+                f"missing={sorted(reference_keys - keys)[:5]}, extra={sorted(keys - reference_keys)[:5]}"
+            )
+    seeds = sorted({seed for seed, _ in reference_keys}, key=lambda value: int(value) if value.isdigit() else value)
+    countries = sorted({country for _, country in reference_keys})
+    if len(seeds) != expected_seed_count:
+        raise ValueError(f"Expected {expected_seed_count} paired seeds, found {seeds}")
+    if risk_definitions != {"mean_labelwise_binary_error"}:
+        raise ValueError(f"Unexpected or mixed country risk definitions: {sorted(risk_definitions)}")
+    for seed, country in reference_keys:
+        observed = {supports[(model, seed, country)] for model in model_roots}
+        if len(observed) != 1:
+            raise ValueError(f"Country support differs across models for seed={seed}, country={country}: {observed}")
+    grouped: dict[tuple[str, str], list[float]] = defaultdict(list)
+    for row in raw:
+        grouped[(str(row["model"]), str(row["country"]))].append(float(row["delta_risk"]))
+    summary = []
+    for model in model_roots:
+        for country in countries:
+            values = grouped[(model, country)]
+            summary.append({
+                "model": model, "country": country, "seed_count": len(values),
+                "mean_delta_risk": float(np.mean(values)),
+                "delta_risk_sd": float(np.std(values, ddof=0)),
+                "positive_seed_count": int(sum(value > 0 for value in values)),
+                "support": supports[(model, seeds[0], country)],
+                "risk_definition": "mean_labelwise_binary_error",
+            })
+    return summary, raw, {
+        "status": "ready", "representation": "country_level_cross_model_paired_delta",
+        "models": list(model_roots), "seeds": seeds, "seed_count": len(seeds),
+        "countries": countries, "country_count": len(countries),
+        "risk_contract": "S1_OOD_minus_S2_ID mean_labelwise_binary_error",
+        "support_contract": "identical country x seed universe and support across models",
+        "scientific_role": "same_task_same_shift_cross_model_sensitivity",
+    }
+
+
 def _style() -> None:
     import matplotlib.pyplot as plt
     plt.rcParams.update({
-        "font.family": "sans-serif", "font.size": 8, "pdf.fonttype": 42,
+        "font.family": "sans-serif", "font.sans-serif": ["DejaVu Sans", "Arial", "Helvetica"],
+        "font.size": 8, "axes.titlesize": 9, "axes.labelsize": 8,
+        "xtick.labelsize": 7, "ytick.labelsize": 7, "legend.fontsize": 7,
+        "axes.linewidth": .65, "lines.linewidth": 1.2, "pdf.fonttype": 42,
         "axes.spines.top": False, "axes.spines.right": False,
         "savefig.facecolor": "white",
     })
@@ -325,7 +409,16 @@ def _save_figure(fig: Any, output: Path, stem: str) -> list[Path]:
     return paths
 
 
-def plot_coordinate_atlas(rows: Sequence[Mapping[str, Any]], title: str, stem: str, output: Path) -> list[Path]:
+def _panel_label(ax: Any, label: str) -> None:
+    ax.text(-.08, 1.04, label, transform=ax.transAxes, fontsize=10,
+            fontweight="bold", va="bottom", ha="right")
+
+
+def _atlas_header(fig: Any, task: str, view: str) -> None:
+    fig.suptitle(f"{task} | {view}", fontsize=11, fontweight="bold", x=.02, ha="left")
+
+
+def plot_coordinate_atlas(rows: Sequence[Mapping[str, Any]], task: str, model: str | None, output: Path) -> list[Path]:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -348,17 +441,23 @@ def plot_coordinate_atlas(rows: Sequence[Mapping[str, Any]], title: str, stem: s
     if has_seed_sd:
         seed_sd = np.asarray([float(row.get("seed_sd", 0.0)) for row in rows])
         panels.append((seed_sd, "cividis", "Across-seed SD", None))
-    for ax, (color, cmap, label, vmax) in zip(axes, panels):
+    for index, (ax, (color, cmap, label, vmax)) in enumerate(zip(axes, panels)):
         artist = ax.scatter(
             lon, lat, c=color, s=size, cmap=cmap, vmin=0.0, vmax=vmax,
             alpha=.78, linewidth=0, rasterized=True,
         )
         ax.set(xlim=(-180, 180), ylim=(-90, 90), xlabel="Longitude", ylabel="Latitude")
         ax.set_xticks([-180, -90, 0, 90, 180]); ax.set_yticks([-60, -30, 0, 30, 60])
-        ax.grid(alpha=.18); ax.set_title(label)
-        fig.colorbar(artist, ax=ax, shrink=.82, label=label)
-    fig.suptitle(title + " — observed coordinate units (no interpolation)", fontweight="bold")
-    paths = _save_figure(fig, output, stem)
+        ax.grid(alpha=.14, linewidth=.5); ax.set_title(label, loc="left")
+        fig.colorbar(artist, ax=ax, shrink=.82, pad=.025, label=label)
+        _panel_label(ax, chr(ord("A") + index))
+    view = "Spatial risk (observed units; no interpolation)"
+    display = task if model is None else f"{task} — {model}"
+    _atlas_header(fig, display, view)
+    stem = f"{FIGURE_PREFIX}_{_safe_stem(task.lower())}"
+    if model:
+        stem += f"_{_safe_stem(model.lower())}"
+    paths = _save_figure(fig, output, stem + "_spatial_risk")
     plt.close(fig)
     return paths
 
@@ -381,9 +480,53 @@ def plot_reben_burden(rows: Sequence[Mapping[str, Any]], output: Path) -> list[P
     ax.set_xticks(range(len(labels)), labels, rotation=48, ha="right", rotation_mode="anchor")
     ax.set_yticks(range(len(countries)), countries)
     ax.set(xlabel="Label", ylabel="Country")
-    ax.set_title("reBEN paired S2→S1 country × label burden", fontweight="bold")
-    fig.colorbar(image, ax=ax, label="Mean Δ risk (S1 OOD − S2 ID)", shrink=.86, pad=.025)
-    paths = _save_figure(fig, output, "reben_country_label_burden")
+    ax.set_title("A  Country × label burden", loc="left", fontweight="bold")
+    fig.colorbar(image, ax=ax, label="Mean Δrisk (S1 OOD − S2 ID)", shrink=.86, pad=.025)
+    _atlas_header(fig, "reBEN — TerraMind", "Paired sensor-shift burden")
+    paths = _save_figure(fig, output, f"{FIGURE_PREFIX}_reben_terramind_country_label_burden")
+    plt.close(fig)
+    return paths
+
+
+def plot_reben_country_model_comparison(
+    summary: Sequence[Mapping[str, Any]], raw: Sequence[Mapping[str, Any]], output: Path,
+) -> list[Path]:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    _style()
+    models = list(dict.fromkeys(str(row["model"]) for row in summary))
+    countries = sorted({str(row["country"]) for row in summary})
+    if len(models) > len(OKABE_ITO):
+        raise ValueError("Too many models for the registered categorical palette")
+    lookup = {(str(row["model"]), str(row["country"])): row for row in summary}
+    raw_lookup: dict[tuple[str, str], list[float]] = defaultdict(list)
+    for row in raw:
+        raw_lookup[(str(row["model"]), str(row["country"]))].append(float(row["delta_risk"]))
+    x = np.arange(len(countries), dtype=float)
+    width = .20
+    offsets = (np.arange(len(models)) - (len(models) - 1) / 2) * (width * 1.65)
+    fig, ax = plt.subplots(figsize=(7.1, 4.15), constrained_layout=True)
+    markers = ("o", "s", "^", "D")
+    for index, (model, offset) in enumerate(zip(models, offsets)):
+        means = np.asarray([float(lookup[(model, country)]["mean_delta_risk"]) for country in countries])
+        sd = np.asarray([float(lookup[(model, country)]["delta_risk_sd"]) for country in countries])
+        positions = x + offset
+        for position, country in zip(positions, countries):
+            seed_values = raw_lookup[(model, country)]
+            jitter = np.linspace(-.045, .045, len(seed_values))
+            ax.scatter(position + jitter, seed_values, s=13, marker=markers[index],
+                       facecolors="none", edgecolors=OKABE_ITO[index], alpha=.65, linewidth=.65)
+        ax.errorbar(positions, means, yerr=sd, fmt=markers[index], markersize=5,
+                    color=OKABE_ITO[index], capsize=2.5, label=f"{model} mean ± seed SD")
+    ax.axhline(0, color="#555555", linewidth=.8, linestyle="--")
+    ax.set_xticks(x, countries)
+    ax.set(xlabel="Country", ylabel="Δrisk (S1 OOD − S2 ID)")
+    ax.set_title("A  Country-level paired degradation", loc="left", fontweight="bold")
+    ax.grid(axis="y", alpha=.14, linewidth=.5)
+    ax.legend(frameon=False, ncol=min(2, len(models)), loc="upper left")
+    _atlas_header(fig, "reBEN — TerraMind vs CROMA", "Paired sensor-shift comparison")
+    paths = _save_figure(fig, output, f"{FIGURE_PREFIX}_reben_country_delta_model_comparison")
     plt.close(fig)
     return paths
 
@@ -394,6 +537,7 @@ def build_geographic_risk_atlas(
     fmow_csvs: Mapping[str, str | Path | Sequence[str | Path]] | None = None,
     fmow_expected_seed_counts: Mapping[str, int] | None = None,
     reben_paired_dir: str | Path | None = None,
+    reben_model_paired_dirs: Mapping[str, str | Path] | None = None,
 ) -> dict[str, Any]:
     output = ensure_dir(output_dir)
     readiness: list[dict[str, Any]] = []
@@ -411,7 +555,7 @@ def build_geographic_risk_atlas(
         if alpha_discovery:
             status["automatic_discovery"] = alpha_discovery
         readiness.append(status); write_csv(output / "alphaearth_spatial_unit_risk.csv", rows)
-        artifacts += [path.name for path in plot_coordinate_atlas(rows, "AlphaEarth", "alphaearth_coordinate_risk", output)]
+        artifacts += [path.name for path in plot_coordinate_atlas(rows, "AlphaEarth", None, output)]
     unknown_seed_contracts = set(fmow_expected_seed_counts or {}) - set(fmow_csvs or {})
     if unknown_seed_contracts:
         raise ValueError(f"Seed-count contracts have no matching fMoW input: {sorted(unknown_seed_contracts)}")
@@ -424,12 +568,19 @@ def build_geographic_risk_atlas(
         status.update({"task": "fMoW", "model": name, "scientific_role": "exploratory_spatial_localization"})
         stem = _safe_stem(name)
         readiness.append(status); write_csv(output / f"fmow_{stem}_spatial_unit_risk.csv", rows)
-        artifacts += [item.name for item in plot_coordinate_atlas(rows, f"fMoW — {name}", f"fmow_{stem}_coordinate_risk", output)]
+        artifacts += [item.name for item in plot_coordinate_atlas(rows, "fMoW", name, output)]
     if reben_paired_dir:
         rows, status = aggregate_reben_country_label_burden(reben_paired_dir)
         status.update({"task": "reBEN", "scientific_role": "descriptive_paired_burden_localization"})
         readiness.append(status); write_csv(output / "reben_country_label_burden.csv", rows)
         artifacts += [path.name for path in plot_reben_burden(rows, output)]
+    if reben_model_paired_dirs:
+        summary, raw, status = aggregate_reben_country_model_comparison(reben_model_paired_dirs)
+        status.update({"task": "reBEN", "scientific_role": "same_task_same_shift_cross_model_sensitivity"})
+        readiness.append(status)
+        write_csv(output / "reben_country_delta_model_comparison.csv", summary)
+        write_csv(output / "reben_country_delta_model_comparison_by_seed.csv", raw)
+        artifacts += [path.name for path in plot_reben_country_model_comparison(summary, raw, output)]
     qa_rows = run_visual_qa([output / name for name in artifacts])
     write_csv(output / "visual_qa.csv", qa_rows)
     if any(row["status"] != "pass" for row in qa_rows):
@@ -442,6 +593,7 @@ def build_geographic_risk_atlas(
             "coordinate_risk_cmap": "viridis", "tail_burden_cmap": "magma",
             "signed_delta_cmap": "PuOr_r centered at zero", "formats": ["png_300dpi", "pdf_vector_text"],
             "coordinate_policy": "observed points or spatial-unit centroids only; never infer missing geography",
+            "figure_system": "shared typography, panel labels, colorbar geometry, legend style, and atlas_* naming",
         },
         "claim_boundary": "Atlas outputs localize descriptive risk; they do not create causal or multiplicity-adjusted geographic inference.",
     }

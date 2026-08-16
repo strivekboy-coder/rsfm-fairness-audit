@@ -20,6 +20,12 @@ tasks:
     risk_role: paired_s1_ood_minus_s2_id_risk_binary_error
     forbidden_risk_substitution: risk_bce
     forbid: [invented_coordinates, country_centroid_as_sample_location]
+    cross_model_country_comparison:
+      models: [TerraMind, CROMA]
+      source: paired_shift_country_deltas.csv
+      estimand: S1_OOD_minus_S2_ID_mean_labelwise_binary_error
+      seed_aggregation: equal_seed_mean_with_seed_sd
+      support_contract: identical_country_seed_universe_and_support
 visual_contract:
   mean_risk: viridis
   tail_burden: magma
@@ -27,6 +33,12 @@ visual_contract:
   output: [png_300dpi, pdf]
   layout: constrained_layout
   automated_qa: [file_size, pixel_dimensions, nonwhite_content]
+  figure_system:
+    filename_prefix: atlas_
+    typography: DejaVu_Sans_8pt_base
+    panel_labels: uppercase_bold
+    categorical_palette: Okabe_Ito
+    signed_delta: PuOr_r_centered_zero
 anti_p_hacking:
   primary_views: [mean_risk, tail_excess, paired_delta]
   tail_definition: unit_risk_q90_excess_exploratory

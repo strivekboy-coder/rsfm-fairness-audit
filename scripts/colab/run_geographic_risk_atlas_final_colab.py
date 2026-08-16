@@ -30,6 +30,16 @@ def _optional(path: Path, label: str) -> Path | None:
     return None
 
 
+def _require_result_root(candidates: list[Path], label: str, filename: str) -> Path:
+    for root in candidates:
+        if (root / filename).is_file():
+            print(f"[selected] {label}: {root}", flush=True)
+            return root
+    raise FileNotFoundError(
+        f"Missing {label} ({filename}); checked: {', '.join(map(str, candidates))}"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, default=Path("/content/rsfm-fairness-audit"))
@@ -50,8 +60,13 @@ def main() -> None:
     reben = output_root / "reben_terramind_paired_shift_v1"
     if not reben.is_dir():
         raise FileNotFoundError(f"Missing reBEN paired root: {reben}")
-    atlas_dir = output_root / "geographic_risk_atlas_v2"
-    association_dir = output_root / "geographic_risk_association_v1"
+    croma = _require_result_root([
+        args.project_root / "outputs" / "reben_croma_paired_shift_v1",
+        output_root / "reben_croma_paired_shift_v1",
+    ], "reBEN CROMA paired result", "paired_shift_country_deltas.csv")
+    _require_result_root([reben], "reBEN TerraMind paired result", "paired_shift_country_deltas.csv")
+    atlas_dir = output_root / "geographic_risk_atlas_v2_1"
+    association_dir = output_root / "geographic_risk_association_v1_1"
     atlas_command = [
         sys.executable, str(repo / "scripts/analysis/build_geographic_risk_atlas.py"),
         "--alphaearth-root", str(alpha_root),
@@ -61,6 +76,8 @@ def main() -> None:
         atlas_command += ["--fmow-csv", f"ResNet50={path}"]
     atlas_command += [
         "--fmow-seed-count", "ResNet50=3", "--reben-paired-dir", str(reben),
+        "--reben-model-paired-dir", f"TerraMind={reben}",
+        "--reben-model-paired-dir", f"CROMA={croma}",
         "--output-dir", str(atlas_dir),
     ]
     print("[atlas]", " ".join(map(str, atlas_command)), flush=True)

@@ -9,7 +9,12 @@ This is CPU-only postprocessing of frozen audit tables. It does not retrain a mo
 - fMoW ResNet50 is aggregated across seeds 101/202/303 after within-seed location aggregation. The three inputs must have exactly the same unit universe, support, and coordinates.
 - DOFAv2 remains the existing single-run localization asset and is labelled as such.
 - reBEN uses constrained layout, dynamic figure dimensions, anchored label rotation, and vector/raster export.
+- reBEN retains the TerraMind country × label burden matrix and adds a country-level TerraMind-versus-CROMA paired Δrisk view from each model's frozen `paired_shift_country_deltas.csv`. The comparison requires the same three seeds, countries, support, and `mean_labelwise_binary_error` definition; it does not recompute predictions or alter the paired protocol.
 - Every PNG/PDF is subject to fail-closed visual QA: existence/size, PNG dimensions, and non-white content. Manual synthetic-data review covers map overlay, effect plot, and burden heatmap layouts.
+
+All Atlas figures share the `atlas_*` filename prefix, DejaVu Sans typography, uppercase panel labels, left-aligned task/view headers, consistent colorbar geometry, frameless legends, and the same semantic palette: viridis for risk, magma for tail excess, cividis for across-seed variability, PuOr centred at zero for signed burden, and Okabe–Ito colors plus distinct markers for model identity.
+
+The enhanced artifact is written to `geographic_risk_atlas_v2_1` rather than mixed into the prior v2 directory. This is an output/visual-version increment only; the scientific estimands and frozen inputs are unchanged.
 
 ## Association preregistration
 
