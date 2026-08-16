@@ -4,6 +4,8 @@ tasks:
   alphaearth:
     representation: observed_coordinate_or_spatial_block_centroid
     preferred_unit: spatial_block_id
+    canonical_source: formal_outputs/formal_audit_table.csv
+    rejected_as_coordinate_sources: [geobwer_raw/geobwer_by_group.csv, geobwer_raw/geobwer_profile.csv, geobwer_raw/geobwer_summary.csv]
     risk_role: descriptive_reference_map_agreement
   fmow:
     representation: observed_coordinate_site_or_location_unit

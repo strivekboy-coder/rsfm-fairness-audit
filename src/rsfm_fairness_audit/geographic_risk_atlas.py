@@ -16,6 +16,13 @@ SCHEMA = "geobwer.geographic_risk_atlas.v1"
 LATITUDE_FIELDS = ("latitude", "lat", "center_lat", "centroid_lat")
 LONGITUDE_FIELDS = ("longitude", "lon", "lng", "center_lon", "centroid_lon")
 UNIT_FIELDS = ("spatial_block_id", "location_id", "site_id", "independent_unit_id", "sample_id")
+ALPHAEARTH_AGGREGATE_TABLES = (
+    "geobwer_by_group.csv", "geobwer_profile.csv", "geobwer_summary.csv",
+)
+ALPHAEARTH_SAMPLE_TABLES = (
+    "formal_audit_table.csv", "alphaearth_full_eval_predictions.csv",
+    "alphaearth_full_predictions.csv", "audit_table.csv",
+)
 
 
 def _first(row: Mapping[str, Any], fields: Sequence[str], *, required: bool = True) -> str:
@@ -33,7 +40,9 @@ def _iter_csv(path: Path) -> Iterable[dict[str, str]]:
         yield from csv.DictReader(handle)
 
 
-def inspect_coordinate_asset(path: str | Path) -> dict[str, Any]:
+def inspect_coordinate_asset(
+    path: str | Path, *, required_unit_fields: Sequence[str] | None = None,
+) -> dict[str, Any]:
     path = Path(path)
     iterator = _iter_csv(path)
     try:
@@ -42,18 +51,74 @@ def inspect_coordinate_asset(path: str | Path) -> dict[str, Any]:
         return {"path": str(path), "status": "empty", "columns": []}
     lat_field = next((name for name in LATITUDE_FIELDS if name in first), None)
     lon_field = next((name for name in LONGITUDE_FIELDS if name in first), None)
-    unit_field = next((name for name in UNIT_FIELDS if name in first), None)
+    accepted_units = tuple(required_unit_fields or UNIT_FIELDS)
+    unit_field = next((name for name in accepted_units if name in first), None)
     risk_field = next((name for name in ("risk", "error", "correct") if name in first), None)
+    ready = bool(lat_field and lon_field and risk_field and unit_field)
     return {
-        "path": str(path), "status": "ready" if lat_field and lon_field and risk_field else "blocked_missing_fields",
+        "path": str(path), "status": "ready" if ready else "blocked_missing_fields",
         "columns": list(first), "latitude_field": lat_field, "longitude_field": lon_field,
         "unit_field": unit_field, "risk_field": risk_field,
+        "required_unit_fields": list(accepted_units),
     }
 
 
-def aggregate_coordinate_risk(path: str | Path, *, split: str | None = "test") -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def discover_alphaearth_atlas_asset(root: str | Path) -> tuple[Path, dict[str, Any]]:
+    """Find a sample-level AlphaEarth coordinate/risk table and reject aggregates.
+
+    The canonical v2 package stores its valid atlas source under
+    ``formal_outputs/formal_audit_table.csv``. GeoBWER tables under
+    ``geobwer_raw`` are slice/axis aggregates and cannot be mapped without
+    inventing coordinates.
+    """
+    root = Path(root)
+    preferred = root / "formal_outputs" / "formal_audit_table.csv"
+    candidates = [preferred] if preferred.is_file() else []
+    for name in ALPHAEARTH_SAMPLE_TABLES:
+        candidates.extend(sorted(root.rglob(name)))
+    seen: set[Path] = set()
+    inspected: list[dict[str, Any]] = []
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        status = inspect_coordinate_asset(
+            candidate, required_unit_fields=("spatial_block_id",),
+        )
+        inspected.append(status)
+        if status["status"] == "ready":
+            ignored = [
+                {
+                    "path": str(path),
+                    "reason": "aggregate GeoBWER evidence has no real coordinates or sample-level spatial_block/risk contract",
+                }
+                for name in ALPHAEARTH_AGGREGATE_TABLES
+                for path in sorted(root.rglob(name))
+            ]
+            return candidate, {
+                "discovery_root": str(root), "selected_path": str(candidate),
+                "selection_rule": "validated real coordinates + spatial_block_id + sample risk",
+                "inspected_candidates": inspected,
+                "ignored_aggregate_tables": ignored,
+            }
+    aggregates = [
+        str(path) for name in ALPHAEARTH_AGGREGATE_TABLES
+        for path in sorted(root.rglob(name))
+    ]
+    raise ValueError(
+        "No AlphaEarth sample-level atlas asset satisfies latitude/longitude + "
+        f"spatial_block_id + risk below {root}. Inspected={inspected}; "
+        f"aggregate_only_tables={aggregates}"
+    )
+
+
+def aggregate_coordinate_risk(
+    path: str | Path, *, split: str | None = "test",
+    required_unit_fields: Sequence[str] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     path = Path(path)
-    readiness = inspect_coordinate_asset(path)
+    readiness = inspect_coordinate_asset(path, required_unit_fields=required_unit_fields)
     if readiness["status"] != "ready":
         raise ValueError(f"Coordinate asset is not atlas-ready: {readiness}")
     lat_field, lon_field = readiness["latitude_field"], readiness["longitude_field"]
@@ -211,14 +276,24 @@ def plot_reben_burden(rows: Sequence[Mapping[str, Any]], output: Path) -> list[P
 
 def build_geographic_risk_atlas(
     output_dir: str | Path, *, alphaearth_csv: str | Path | None = None,
+    alphaearth_root: str | Path | None = None,
     fmow_csvs: Mapping[str, str | Path] | None = None, reben_paired_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     output = ensure_dir(output_dir)
     readiness: list[dict[str, Any]] = []
     artifacts: list[str] = []
+    if alphaearth_csv and alphaearth_root:
+        raise ValueError("Use only one of alphaearth_csv or alphaearth_root")
+    alpha_discovery: dict[str, Any] | None = None
+    if alphaearth_root:
+        alphaearth_csv, alpha_discovery = discover_alphaearth_atlas_asset(alphaearth_root)
     if alphaearth_csv:
-        rows, status = aggregate_coordinate_risk(alphaearth_csv)
+        rows, status = aggregate_coordinate_risk(
+            alphaearth_csv, required_unit_fields=("spatial_block_id",),
+        )
         status.update({"task": "AlphaEarth", "scientific_role": "exploratory_spatial_localization"})
+        if alpha_discovery:
+            status["automatic_discovery"] = alpha_discovery
         readiness.append(status); write_csv(output / "alphaearth_spatial_unit_risk.csv", rows)
         artifacts += [path.name for path in plot_coordinate_atlas(rows, "AlphaEarth", "alphaearth_coordinate_risk", output)]
     for name, path in (fmow_csvs or {}).items():

@@ -7,6 +7,7 @@ from rsfm_fairness_audit.geographic_risk_atlas import (
     aggregate_coordinate_risk,
     aggregate_reben_country_label_burden,
     build_geographic_risk_atlas,
+    discover_alphaearth_atlas_asset,
 )
 
 
@@ -54,3 +55,39 @@ def test_reben_country_label_delta_is_aggregated_within_seed(tmp_path: Path) -> 
     )
     assert manifest["status"] == "complete"
     assert (tmp_path / "atlas" / "reben_country_label_burden.png").is_file()
+
+
+def test_alphaearth_discovery_selects_formal_sample_table_not_geobwer_aggregates(tmp_path: Path) -> None:
+    root = tmp_path / "alphaearth_geobwer_spatial_v2"
+    _write(root / "geobwer_raw" / "geobwer_by_group.csv", [
+        {"axis": "spatial_block_id", "group": "block_a", "risk": .4, "support": 20},
+    ])
+    _write(root / "geobwer_raw" / "geobwer_profile.csv", [
+        {"axis": "spatial_block_id", "mean_risk": .2, "tail_risk": .4, "bwer": .2},
+    ])
+    _write(root / "geobwer_raw" / "geobwer_summary.csv", [
+        {"axis": "spatial_block_id", "mean_risk": .2, "tail_risk": .4, "bwer": .2},
+    ])
+    formal = root / "formal_outputs" / "formal_audit_table.csv"
+    _write(formal, [{
+        "sample_id": "a", "spatial_block_id": "block_a", "latitude": 12,
+        "longitude": 34, "risk": 1, "split": "test",
+    }])
+    selected, evidence = discover_alphaearth_atlas_asset(root)
+    assert selected == formal
+    assert len(evidence["ignored_aggregate_tables"]) == 3
+    manifest = build_geographic_risk_atlas(tmp_path / "auto_atlas", alphaearth_root=root)
+    alpha = manifest["readiness"][0]
+    assert alpha["unit_field"] == "spatial_block_id"
+    assert alpha["automatic_discovery"]["selected_path"] == str(formal)
+
+
+def test_alphaearth_discovery_rejects_aggregate_only_root(tmp_path: Path) -> None:
+    import pytest
+
+    root = tmp_path / "aggregates_only"
+    _write(root / "geobwer_raw" / "geobwer_by_group.csv", [
+        {"axis": "spatial_block_id", "group": "block_a", "risk": .4, "support": 20},
+    ])
+    with pytest.raises(ValueError, match="aggregate_only_tables"):
+        discover_alphaearth_atlas_asset(root)
