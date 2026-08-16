@@ -6,6 +6,7 @@ training, or large external download is performed.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -35,6 +36,8 @@ def main() -> None:
     parser.add_argument("--project-root", type=Path, default=Path("/content/drive/MyDrive/rsfm_fairness_audit"))
     args = parser.parse_args()
     repo = args.repo.resolve()
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(repo / "src") + os.pathsep + env.get("PYTHONPATH", "")
     output_root = args.project_root / "outputs" / "geobwer_final_v3"
     alpha_root = output_root / "alphaearth_geobwer_spatial_v2"
     alpha_csv = _require(alpha_root / "formal_outputs" / "formal_audit_table.csv", "AlphaEarth sample audit")
@@ -61,7 +64,7 @@ def main() -> None:
         "--output-dir", str(atlas_dir),
     ]
     print("[atlas]", " ".join(map(str, atlas_command)), flush=True)
-    subprocess.run(atlas_command, cwd=repo, check=True)
+    subprocess.run(atlas_command, cwd=repo, env=env, check=True)
 
     covariate_root = args.project_root / "covariates" / "geographic_risk_v1"
     alpha_external = _optional(covariate_root / "alphaearth_covariates.csv", "AlphaEarth GHSL/population/nightlights")
@@ -79,7 +82,7 @@ def main() -> None:
         association_command += ["--fmow-external-csv", f"DOFAv2={fmow_external}",
                                 "--fmow-external-csv", f"ResNet50={fmow_external}"]
     print("[association]", " ".join(map(str, association_command)), flush=True)
-    subprocess.run(association_command, cwd=repo, check=True)
+    subprocess.run(association_command, cwd=repo, env=env, check=True)
     print(f"Atlas complete: {atlas_dir}")
     print(f"Association complete: {association_dir}")
     print("GPU required: no")
