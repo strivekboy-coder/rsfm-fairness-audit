@@ -26,7 +26,7 @@ primary_estimand:
   direction: two_sided
   reporting: effect_size_and_spatial_cluster_bootstrap_95CI
 spatial_sensitivity:
-  bootstrap_clusters: 15_degree_latitude_cells_with_latitude_adjusted_longitude_width
+  bootstrap_clusters: 15_degree_fixed_latitude_bands_with_band_centre_adjusted_longitude_width
   bootstrap_repetitions: 500
   random_seed: 1907
 readiness_gate: {minimum_units: 20, minimum_coverage: 0.80, missing_proxy_substitution: forbidden}

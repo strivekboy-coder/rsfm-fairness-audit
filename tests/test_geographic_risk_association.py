@@ -4,9 +4,13 @@ import csv
 from pathlib import Path
 
 from rsfm_fairness_audit.geographic_risk_association import (
+    _maximum_spatial_cell_count,
+    _spatial_cell,
+    _spatial_cluster_qa,
     build_geographic_risk_association,
     derive_alphaearth_covariates,
 )
+from rsfm_fairness_audit.io import read_csv_rows
 
 
 def _write(path: Path, rows: list[dict[str, object]]) -> None:
@@ -30,6 +34,16 @@ def test_alphaearth_preregistered_covariates_have_fixed_semantics(tmp_path: Path
     assert rows[0]["reference_confidence"] == .8
     assert rows[0]["reference_disagreement"] == .5
     assert "log_11" in evidence["land_cover_heterogeneity_definition"]
+
+
+def test_spatial_cells_are_fixed_within_latitude_band() -> None:
+    # Exact latitude must not enter the key: nearby points in one fixed cell cluster together.
+    assert _spatial_cell(10.01, 20.01) == _spatial_cell(10.49, 20.49)
+    cells = [_spatial_cell(lat, lon) for lat in range(-89, 90) for lon in range(-179, 180, 10)]
+    qa = _spatial_cluster_qa(cells)
+    assert qa["status"] == "pass"
+    assert qa["cluster_count"] <= _maximum_spatial_cell_count()
+    assert qa["cluster_count"] < qa["unit_count"]
 
 
 def test_association_builds_confirmatory_and_exploratory_outputs(tmp_path: Path) -> None:
@@ -72,3 +86,7 @@ def test_association_builds_confirmatory_and_exploratory_outputs(tmp_path: Path)
     assert {"land_cover_heterogeneity", "reference_confidence", "reference_disagreement",
             "ghsl_urbanization", "population_density", "nightlights"} <= completed
     assert all(row["status"] == "pass" for row in result["visual_qa"])
+    cluster_qa = read_csv_rows(tmp_path / "output" / "spatial_cluster_qa.csv")
+    assert cluster_qa
+    assert all(row["definition"] == "fixed_latitude_band_centre_adjusted_longitude_grid" for row in cluster_qa)
+    assert all(int(row["cluster_count"]) <= int(row["maximum_possible_global_cluster_count"]) for row in cluster_qa)

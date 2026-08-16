@@ -44,9 +44,9 @@ def main() -> None:
     for path in fmow_risks:
         print(f"[selected] fMoW atlas risk: {path}", flush=True)
 
-    covariates = args.project_root / "covariates" / "geographic_risk_v1"
-    cache = args.project_root / "cache" / "geographic_risk_covariates_v1"
-    association = output_root / "geographic_risk_association_v1_2"
+    covariates = args.project_root / "covariates" / "geographic_risk_v1_1"
+    cache = args.project_root / "cache" / "geographic_risk_covariates_v1_1"
+    association = output_root / "geographic_risk_association_v1_3"
     prepare = [
         sys.executable, str(repo / "scripts/analysis/prepare_geographic_risk_covariates.py"),
         "--atlas-dir", str(atlas), "--alphaearth-sample-csv", str(alpha_samples),

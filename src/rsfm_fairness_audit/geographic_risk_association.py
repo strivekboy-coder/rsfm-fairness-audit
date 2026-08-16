@@ -90,10 +90,50 @@ def _partial_spearman(risk: np.ndarray, exposure: np.ndarray, controls: np.ndarr
 
 
 def _spatial_cell(latitude: float, longitude: float, degrees: float = 15.0) -> str:
+    """Return a fixed grid cell; longitude width is fixed within a latitude band.
+
+    The previous implementation derived ``lon_width`` from every observation's
+    exact latitude and included that float in the key. Nearby observations then
+    became separate clusters. Using the band centre preserves the registered
+    high-latitude adjustment while making the partition deterministic.
+    """
+    latitude = min(max(latitude, -90.0), math.nextafter(90.0, -math.inf))
+    longitude = min(max(longitude, -180.0), math.nextafter(180.0, -math.inf))
     lat_bin = math.floor((latitude + 90.0) / degrees)
-    lon_width = min(60.0, degrees / max(.25, math.cos(math.radians(latitude))))
+    lat_centre = -90.0 + (lat_bin + .5) * degrees
+    lon_width = min(60.0, degrees / max(.25, math.cos(math.radians(lat_centre))))
     lon_bin = math.floor((longitude + 180.0) / lon_width)
-    return f"{lat_bin}:{lon_width:.3f}:{lon_bin}"
+    return f"{lat_bin}:{lon_bin}"
+
+
+def _maximum_spatial_cell_count(degrees: float = 15.0) -> int:
+    latitude_bins = math.ceil(180.0 / degrees)
+    total = 0
+    for lat_bin in range(latitude_bins):
+        lat_centre = -90.0 + (lat_bin + .5) * degrees
+        lon_width = min(60.0, degrees / max(.25, math.cos(math.radians(lat_centre))))
+        total += math.ceil(360.0 / lon_width)
+    return total
+
+
+def _spatial_cluster_qa(cells: Sequence[str], *, degrees: float = 15.0) -> dict[str, Any]:
+    counts = Counter(cells)
+    sizes = np.asarray(list(counts.values()), dtype=float)
+    maximum = _maximum_spatial_cell_count(degrees)
+    cluster_count = len(counts)
+    return {
+        "status": "pass" if 4 <= cluster_count <= maximum else "fail",
+        "definition": "fixed_latitude_band_centre_adjusted_longitude_grid",
+        "latitude_band_degrees": degrees,
+        "maximum_possible_global_cluster_count": maximum,
+        "cluster_count": cluster_count,
+        "unit_count": len(cells),
+        "mean_units_per_cluster": float(np.mean(sizes)) if sizes.size else math.nan,
+        "median_units_per_cluster": float(np.median(sizes)) if sizes.size else math.nan,
+        "maximum_units_per_cluster": int(np.max(sizes)) if sizes.size else 0,
+        "singleton_cluster_count": int(np.sum(sizes == 1)) if sizes.size else 0,
+        "singleton_cluster_fraction": float(np.mean(sizes == 1)) if sizes.size else math.nan,
+    }
 
 
 def _spatial_bootstrap_ci(
@@ -250,11 +290,13 @@ def _merge_by_unit_or_coordinate(
 def _analyse_variable(
     task: str, model: str, rows: Sequence[Mapping[str, Any]], variable: str,
     role: str, *, n_boot: int,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     clean = [row for row in rows if math.isfinite(_float(row.get(variable))) and math.isfinite(_float(row.get("mean_risk")))]
     if len(clean) < 20:
         return ({"task": task, "model": model, "variable": variable, "role": role,
-                 "status": "unavailable_insufficient_units", "n": len(clean)}, [])
+                 "status": "unavailable_insufficient_units", "n": len(clean)}, [],
+                {"task": task, "model": model, "variable": variable,
+                 "status": "unavailable_insufficient_units"})
     risk = np.asarray([float(row["mean_risk"]) for row in clean])
     exposure = np.asarray([float(row[variable]) for row in clean])
     latitude = np.asarray([float(row["latitude"]) for row in clean])
@@ -264,6 +306,8 @@ def _analyse_variable(
         latitude / 90.0, np.sin(np.radians(longitude)), np.cos(np.radians(longitude)), np.log1p(support),
     ])
     cells = [_spatial_cell(lat, lon) for lat, lon in zip(latitude, longitude)]
+    cluster_qa = {"task": task, "model": model, "variable": variable,
+                  **_spatial_cluster_qa(cells)}
     ci_low, ci_high, cell_count = _spatial_bootstrap_ci(
         risk, exposure, controls, cells, n_boot=n_boot,
     )
@@ -292,9 +336,10 @@ def _analyse_variable(
         "spatial_cluster_bootstrap_ci_low": ci_low,
         "spatial_cluster_bootstrap_ci_high": ci_high,
         "spatial_cluster_count": cell_count, "spatial_cluster_width_degrees": 15,
+        "spatial_cluster_definition": cluster_qa["definition"],
         "controls": "latitude+sin(longitude)+cos(longitude)+log1p(unit_support)",
         "inference_boundary": "association_not_causation",
-    }, effect_rows)
+    }, effect_rows, cluster_qa)
 
 
 def _plot_overlay(rows: Sequence[Mapping[str, Any]], variable: str, title: str, output: Path) -> list[Path]:
@@ -361,7 +406,7 @@ def build_geographic_risk_association(
     for path in sorted(atlas.glob("fmow_*_spatial_unit_risk.csv")):
         model = path.name.removeprefix("fmow_").removesuffix("_spatial_unit_risk.csv")
         assets.append(("fMoW", model, path))
-    availability, results, effects, artifacts = [], [], [], []
+    availability, results, effects, cluster_qa_rows, artifacts = [], [], [], [], []
     provenance: list[dict[str, Any]] = []
     for task, model, risk_path in assets:
         rows = [dict(row) for row in read_csv_rows(risk_path)]
@@ -401,8 +446,10 @@ def build_geographic_risk_association(
                                  "total_units": len(rows), "coverage": coverage, "reason": reason})
             if status != "ready":
                 continue
-            result, effect = _analyse_variable(task, model, rows, variable, str(spec["role"]), n_boot=n_boot)
-            results.append(result); effects.extend(effect)
+            result, effect, cluster_qa = _analyse_variable(
+                task, model, rows, variable, str(spec["role"]), n_boot=n_boot,
+            )
+            results.append(result); effects.extend(effect); cluster_qa_rows.append(cluster_qa)
             prefix = task if model == task else f"{task} — {model}"
             title = f"{prefix} — {variable.replace('_', ' ')}"
             artifacts += [path.name for path in _plot_overlay(rows, variable, title, output)]
@@ -421,6 +468,10 @@ def build_geographic_risk_association(
     write_csv(output / "covariate_availability.csv", availability)
     write_csv(output / "association_results.csv", results)
     write_csv(output / "association_effect_bins.csv", effects)
+    write_csv(output / "spatial_cluster_qa.csv", cluster_qa_rows)
+    failed_cluster_qa = [row for row in cluster_qa_rows if row.get("status") != "pass"]
+    if failed_cluster_qa:
+        raise ValueError(f"Fixed spatial-cluster QA failed: {failed_cluster_qa}")
     write_csv(output / "association_input_provenance.csv", provenance)
     qa = run_visual_qa([output / name for name in artifacts])
     write_csv(output / "visual_qa.csv", qa)
@@ -433,7 +484,9 @@ def build_geographic_risk_association(
         "exploratory_family": [name for name, spec in VARIABLES.items() if spec["role"] != "confirmatory"],
         "primary_estimand": "partial_Spearman_controlling_latitude_longitude_and_log_support",
         "significance_policy": "effect_sizes_and_spatial_cluster_bootstrap_CI_no_dichotomous_p_value_claims",
-        "spatial_sensitivity": "15_degree_equal_angle_adjusted_longitude_cluster_bootstrap_95CI",
+        "spatial_sensitivity": "15_degree_fixed_latitude_bands_with_band_centre_adjusted_longitude_cluster_bootstrap_95CI",
+        "spatial_cluster_qa_status": "pass",
+        "spatial_cluster_qa": cluster_qa_rows,
         "minimum_readiness": {"coverage": .8, "units": 20},
         "availability": availability, "results": results, "reben": reben_status,
         "artifacts": artifacts, "visual_qa": qa,

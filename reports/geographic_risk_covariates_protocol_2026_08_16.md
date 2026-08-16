@@ -9,7 +9,7 @@ This stage prepares external covariates for the existing geographic risk atlas a
 | Variable | Official public asset | Epoch | Canonical value |
 |---|---|---:|---|
 | GHSL urbanization | `JRC/GHSL/P2023A/GHS_SMOD_V2-0/2020` | 2020 | Official L2 `smod_code`; water/no-data is missing |
-| Population density | `JRC/GHSL/P2023A/GHS_POP/2020` | 2020 | `population_count / pixel_area_km2` |
+| Population density | `JRC/GHSL/P2023A/GHS_POP/2020` | 2020 | Native 100 m cell count / 0.01 km², sampled at 100 m |
 | Nightlights | `NOAA/VIIRS/DNB/ANNUAL_V21` | 2020 | `average_masked` radiance |
 | Dynamic World reference label | `GOOGLE/DYNAMICWORLD/V1` | 2021 | Temporal modal class |
 | Dynamic World reference confidence | `GOOGLE/DYNAMICWORLD/V1` | 2021 | Temporal mean of each observation's top-1 class probability |
@@ -30,11 +30,11 @@ The rerun reports partial Spearman effect sizes and spatial-cluster bootstrap in
 
 ## Persistent outputs
 
-- `covariates/geographic_risk_v1/alphaearth_covariates.csv`
-- `covariates/geographic_risk_v1/fmow_covariates.csv`
-- `covariates/geographic_risk_v1/geographic_covariate_manifest.json`
-- `covariates/geographic_risk_v1/covariate_qa.csv`
-- `cache/geographic_risk_covariates_v1/*_official_gee_samples.csv`
-- `outputs/geobwer_final_v3/geographic_risk_association_v1_2/`
+- `covariates/geographic_risk_v1_1/alphaearth_covariates.csv`
+- `covariates/geographic_risk_v1_1/fmow_covariates.csv`
+- `covariates/geographic_risk_v1_1/geographic_covariate_manifest.json`
+- `covariates/geographic_risk_v1_1/covariate_qa.csv`
+- `cache/geographic_risk_covariates_v1_1/*_official_gee_samples.csv`
+- `outputs/geobwer_final_v3/geographic_risk_association_v1_3/`
 
 The cache key includes the extraction protocol, product registry, input hash, and target risk-table hash. A rerun reuses the cache only when all of these remain identical.

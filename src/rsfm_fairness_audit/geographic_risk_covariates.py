@@ -31,7 +31,8 @@ PRODUCTS = {
     "population_density": {
         "asset": "JRC/GHSL/P2023A/GHS_POP/2020", "band": "population_count",
         "epoch": 2020, "native_resolution_m": 100,
-        "transform": "population_count / pixel_area_km2",
+        "native_cell_area_km2": 0.01, "sampling_scale_m": 100,
+        "transform": "population_count_per_native_100m_cell / 0.01_km2",
         "url": "https://developers.google.com/earth-engine/datasets/catalog/JRC_GHSL_P2023A_GHS_POP",
     },
     "nightlights": {
@@ -151,17 +152,19 @@ def build_fmow_sampling_rows(risk_csv: str | Path) -> tuple[list[dict[str, Any]]
     }
 
 
-def _official_image_stack(ee: Any, *, include_dynamic_world: bool) -> Any:
+def _official_image_stack(ee: Any, *, include_dynamic_world: bool) -> tuple[Any, Any]:
     smod = ee.Image(PRODUCTS["ghsl_urbanization"]["asset"]).select("smod_code")
     smod = smod.updateMask(smod.gt(10)).rename("ghsl_urbanization")
     population = ee.Image(PRODUCTS["population_density"]["asset"]).select("population_count")
-    density = population.divide(ee.Image.pixelArea().divide(1_000_000)).rename("population_density")
+    density = population.divide(
+        PRODUCTS["population_density"]["native_cell_area_km2"]
+    ).rename("population_density")
     nightlights = (
         ee.ImageCollection(PRODUCTS["nightlights"]["asset"])
         .filterDate("2020-01-01", "2021-01-01").first()
         .select("average_masked").rename("nightlights")
     )
-    stack = smod.addBands(density).addBands(nightlights)
+    stack = smod.addBands(nightlights)
     if include_dynamic_world:
         dynamic = ee.ImageCollection(PRODUCTS["dynamic_world"]["asset"]).filterDate(
             "2021-01-01", "2022-01-01"
@@ -174,7 +177,7 @@ def _official_image_stack(ee: Any, *, include_dynamic_world: bool) -> Any:
         confidence = dynamic.map(top_probability).mean().rename("reference_confidence")
         stack = stack.addBands(label).addBands(confidence)
     # Preserve a feature when one product is masked; sentinels become blanks client-side.
-    return stack.unmask(-9999)
+    return stack.unmask(-9999), density.unmask(-9999)
 
 
 def extract_official_covariates_gee(
@@ -185,7 +188,9 @@ def extract_official_covariates_gee(
     if ee_module is None:
         import ee as ee_module  # type: ignore[import-not-found]
     ee = ee_module
-    stack = _official_image_stack(ee, include_dynamic_world=include_dynamic_world)
+    stack, population_density = _official_image_stack(
+        ee, include_dynamic_world=include_dynamic_world,
+    )
     output: list[dict[str, Any]] = []
     total = len(sampling_rows)
     for start in range(0, total, batch_size):
@@ -200,10 +205,16 @@ def extract_official_covariates_gee(
         sampled = stack.sampleRegions(
             collection=ee.FeatureCollection(features), scale=10, geometries=False, tileScale=4,
         )
+        population_sampled = population_density.sampleRegions(
+            collection=ee.FeatureCollection(features),
+            scale=PRODUCTS["population_density"]["sampling_scale_m"],
+            geometries=False, tileScale=4,
+        )
         last_error: Exception | None = None
         for attempt in range(1, max_retries + 1):
             try:
                 payload = sampled.getInfo()
+                population_payload = population_sampled.getInfo()
                 break
             except Exception as exc:  # network/service errors are retried, then surfaced
                 last_error = exc
@@ -212,8 +223,13 @@ def extract_official_covariates_gee(
                     time.sleep(min(30, 2 ** attempt))
         else:
             raise RuntimeError(f"Earth Engine sampling failed at rows {start}:{start + len(batch)}") from last_error
+        population_by_row = {
+            str(feature.get("properties", {}).get("row_id")): feature.get("properties", {}).get("population_density")
+            for feature in population_payload.get("features", [])
+        }
         for feature in payload.get("features", []):
             item = dict(feature.get("properties", {}))
+            item["population_density"] = population_by_row.get(str(item.get("row_id")), "")
             for field in ("ghsl_urbanization", "population_density", "nightlights",
                           "dynamic_world_label", "reference_confidence"):
                 value = _float(item.get(field))
@@ -410,6 +426,10 @@ def prepare_geographic_risk_covariates(
             "AlphaEarth": "frozen test sample coordinates aggregated by exact spatial_block",
             "fMoW": "one frozen representative coordinate per exact location/site unit",
             "buffer_selection": "none", "nearest_join": "not_used_in_canonical_CSVs",
+        },
+        "sampling_scales_m": {
+            "DynamicWorld_and_point_stack": 10,
+            "GHS_POP_population_density": PRODUCTS["population_density"]["sampling_scale_m"],
         },
         "scientific_boundary": {
             "confirmatory": ["AlphaEarth:land_cover_heterogeneity", "AlphaEarth:reference_confidence",

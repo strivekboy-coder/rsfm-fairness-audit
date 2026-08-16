@@ -8,7 +8,9 @@ products:
   population_density:
     asset: JRC/GHSL/P2023A/GHS_POP/2020
     band: population_count
-    transform: population_count_divided_by_pixel_area_km2
+    native_cell_area_km2: 0.01
+    sampling_scale_m: 100
+    transform: population_count_per_native_100m_cell_divided_by_0.01_km2
     epoch: 2020
   nightlights:
     asset: NOAA/VIIRS/DNB/ANNUAL_V21

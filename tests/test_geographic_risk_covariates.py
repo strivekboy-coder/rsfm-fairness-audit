@@ -8,8 +8,10 @@ import pytest
 
 from rsfm_fairness_audit.geographic_risk_association import load_external_covariates
 from rsfm_fairness_audit.geographic_risk_covariates import (
+    PRODUCTS,
     aggregate_covariates,
     build_alphaearth_sampling_rows,
+    extract_official_covariates_gee,
     prepare_geographic_risk_covariates,
 )
 
@@ -53,6 +55,58 @@ def test_aggregate_covariates_preserves_smod_class_and_reference_semantics() -> 
     assert rows[0]["reference_confidence"] == pytest.approx(.7)
     assert rows[0]["reference_disagreement"] == pytest.approx(1 / 3)
     assert 0 < rows[0]["land_cover_heterogeneity"] < 1
+
+
+def test_population_density_is_sampled_separately_at_native_100m(monkeypatch) -> None:
+    calls = []
+
+    class Payload:
+        def __init__(self, features, values):
+            self.features, self.values = features, values
+
+        def getInfo(self):
+            return {"features": [{"properties": {**feature, **self.values}} for feature in self.features]}
+
+    class Image:
+        def __init__(self, values):
+            self.values = values
+
+        def sampleRegions(self, *, collection, scale, **kwargs):
+            calls.append(scale)
+            return Payload(collection, self.values)
+
+    class Geometry:
+        @staticmethod
+        def Point(value):
+            return value
+
+    class FakeEE:
+        @staticmethod
+        def Feature(geometry, properties):
+            return properties
+
+        @staticmethod
+        def FeatureCollection(features):
+            return features
+
+    FakeEE.Geometry = Geometry
+
+    monkeypatch.setattr(
+        "rsfm_fairness_audit.geographic_risk_covariates._official_image_stack",
+        lambda ee, include_dynamic_world: (
+            Image({"ghsl_urbanization": 21, "nightlights": 2}),
+            Image({"population_density": 1234}),
+        ),
+    )
+    rows = extract_official_covariates_gee(
+        [{"row_id": "x", "spatial_unit": "u", "latitude": 1,
+          "longitude": 2, "source_worldcover_label": ""}],
+        include_dynamic_world=False, ee_module=FakeEE(),
+    )
+    assert calls == [10, 100]
+    assert rows[0]["population_density"] == 1234
+    assert PRODUCTS["population_density"]["native_cell_area_km2"] == .01
+    assert "native_100m_cell" in PRODUCTS["population_density"]["transform"]
 
 
 def test_prepare_writes_canonical_manifest_qa_and_reuses_fixed_task_contract(tmp_path: Path, monkeypatch) -> None:
