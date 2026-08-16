@@ -1,0 +1,55 @@
+schema: geobwer.optimization_1_7.protocol.v1
+scope:
+  implemented: [1, 2, 3, 4, 5, 6, 7]
+  explicitly_not_started: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+
+evidence_policy:
+  point_estimates: retain_when_estimate_valid
+  inference: label_separately
+  small_slice_rankings: retain_as_valid_descriptive_with_support
+  preflight_bypass: forbidden
+
+distribution_comparator:
+  deployment_weighting: equal_fixed_slice_universe
+  beta_profile: [0.05, 0.10, 0.20, 0.30]
+  main_metrics: [mean_risk, weighted_std, worst_mean_gap, geobwer]
+  appendix_metrics: [weighted_variance, weighted_mad, weighted_iqr, max_min_gap]
+  primary_beta: 0.10
+  support:
+    fmow_country_or_interaction: 20
+    sen1_event: 1
+    reben_label: 1
+    alphaearth_interaction: 5
+
+label_budget:
+  model: TerraMind-1.0-base
+  sensor: S2
+  budgets: [0.05, 0.10, 0.25, 0.50, 1.00]
+  seeds: [42, 73, 101]
+  probe_epochs: 100
+  probe_learning_rate: 0.01
+  probe_weight_decay: 0.0001
+  probe_batch_size: 512
+  nested_unit: independent_unit_id
+  validation_fixed: true
+  test_fixed: true
+  test_used_for_selection: false
+  reuse_frozen_embeddings: true
+
+paired_sensor_shift:
+  model: TerraMind-1.0-base
+  train_domain: S2_train
+  threshold_calibration_domain: S2_validation
+  id_domain: S2_test
+  ood_domain: S1_test
+  same_linear_head: required
+  seeds: [42, 73, 101]
+  probe_epochs: 100
+  probe_learning_rate: 0.01
+  probe_weight_decay: 0.0001
+  probe_batch_size: 512
+  paired_sample_ids: required
+  paired_targets: required
+  paired_country_and_source_tile: required
+  report: [absolute_ood_drop, delta_mean_risk, delta_tail_risk, delta_geobwer, tail_acceleration, levelling_down]
+  effective_robustness_term: forbidden_without_earthshift_reference_regression

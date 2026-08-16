@@ -314,6 +314,7 @@ def train_streaming_multilabel_probe(
     device: str,
     seed: int,
     cache_signature: str | None = None,
+    train_indices: Sequence[int] | np.ndarray | None = None,
 ) -> tuple[dict[str, Path], Path]:
     try:
         import torch
@@ -355,7 +356,27 @@ def train_streaming_multilabel_probe(
     y_train = np.load(train_labels_path, mmap_mode="r")
     if x_train.ndim != 2 or y_train.shape != (len(x_train), 19):
         raise RebenTerraMindError("Train embedding/label cache shapes are invalid.")
-    mean, std = _streaming_mean_std(x_train)
+    selected_indices = (
+        np.arange(len(x_train), dtype=np.int64)
+        if train_indices is None
+        else np.asarray(train_indices, dtype=np.int64)
+    )
+    if selected_indices.ndim != 1 or len(selected_indices) == 0:
+        raise RebenTerraMindError("train_indices must select at least one training row.")
+    if np.any(selected_indices < 0) or np.any(selected_indices >= len(x_train)):
+        raise RebenTerraMindError("train_indices contain an out-of-range row.")
+    count = 0
+    total = np.zeros(x_train.shape[1], dtype=np.float64)
+    square = np.zeros(x_train.shape[1], dtype=np.float64)
+    for start in range(0, len(selected_indices), 8192):
+        chunk = np.asarray(x_train[selected_indices[start : start + 8192]], dtype=np.float64)
+        total += chunk.sum(axis=0)
+        square += np.square(chunk).sum(axis=0)
+        count += len(chunk)
+    mean64 = total / count
+    variance64 = np.maximum(square / count - np.square(mean64), 1e-12)
+    mean = mean64.astype(np.float32)
+    std = np.sqrt(variance64).astype(np.float32)
     if device == "auto":
         torch_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
@@ -367,7 +388,7 @@ def train_streaming_multilabel_probe(
     model = nn.Linear(x_train.shape[1], 19).to(torch_device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     history: list[dict[str, float | int]] = []
-    indices = np.arange(len(x_train), dtype=np.int64)
+    indices = selected_indices.copy()
     for epoch in range(1, epochs + 1):
         rng.shuffle(indices)
         losses: list[float] = []
@@ -398,6 +419,7 @@ def train_streaming_multilabel_probe(
             "learning_rate": learning_rate,
             "weight_decay": weight_decay,
             "seed": seed,
+            "train_sample_count": int(len(selected_indices)),
             "history": history,
         },
         checkpoint_path,
