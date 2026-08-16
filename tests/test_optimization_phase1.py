@@ -8,6 +8,7 @@ import pytest
 
 from rsfm_fairness_audit.io import write_csv
 from rsfm_fairness_audit.optimization_phase1 import distribution_metrics, synthetic_counterexamples
+from rsfm_fairness_audit.paired_probability_diagnostics import paired_label_probability_diagnostics
 from rsfm_fairness_audit.reben_phase1_postprocess import (
     build_final_optimization_evidence,
     postprocess_label_budget,
@@ -23,6 +24,22 @@ def test_distribution_metrics_reports_variance_and_tail_separately() -> None:
     assert result["weighted_variance"] == pytest.approx(result["weighted_std"] ** 2)
     assert result["geobwer_beta_0_10"] > 0
     assert len(result["profile"]) == 4
+    assert result["weighted_sd"] == result["weighted_std"]
+    assert result["worst_minus_mean"] == result["worst_mean_gap"]
+    assert result["geobwer"] == result["geobwer_beta_0_10"]
+
+
+def test_probability_diagnostics_separate_threshold_and_collapse_signatures() -> None:
+    targets = np.asarray([[0, 0], [0, 0], [1, 1], [1, 1]], dtype=np.int8)
+    id_prob = np.asarray([[0.10, 0.10], [0.20, 0.20], [0.80, 0.80], [0.90, 0.90]])
+    ood_prob = np.asarray([[0.55, 0.50], [0.60, 0.50], [0.70, 0.50], [0.75, 0.50]])
+    rows = paired_label_probability_diagnostics(
+        targets, id_prob, ood_prob, np.asarray([0.5, 0.5]), ["threshold", "collapse"], seed=42,
+    )
+    assert rows[0]["diagnostic_signature"] == "threshold_shift_dominant"
+    assert rows[0]["delta_auroc"] == pytest.approx(0.0)
+    assert rows[1]["diagnostic_signature"] == "representation_collapse_signature"
+    assert rows[1]["diagnostic_is_causal_attribution"] is False
 
 
 def test_counterexamples_include_levelling_down() -> None:
@@ -155,11 +172,27 @@ def test_label_budget_postprocess_audits_nested_grid_and_writes_figures(tmp_path
 
 def test_paired_shift_postprocess_requires_complete_paired_outputs(tmp_path: Path) -> None:
     output = tmp_path / "paired"
+    cache_root = tmp_path / "s2_cache"
+    (cache_root / "test").mkdir(parents=True)
+    rng = np.random.default_rng(11)
+    targets = (rng.random((40, 19)) > 0.65).astype(np.int8)
+    np.save(cache_root / "test" / "labels.npy", targets)
     summaries = []
     deltas = []
     label_deltas = []
     country_deltas = []
     for seed in (42, 73):
+        seed_dir = output / f"seed_{seed}"
+        probe_dir = seed_dir / "s2_trained_probe"
+        probe_dir.mkdir(parents=True)
+        id_probability = np.clip(0.15 + 0.70 * targets + rng.normal(0, 0.08, targets.shape), 0, 1)
+        ood_probability = np.clip(id_probability - 0.12 + rng.normal(0, 0.05, targets.shape), 0, 1)
+        np.save(probe_dir / "s2_id_test_probabilities.npy", id_probability)
+        np.save(probe_dir / "s1_ood_test_probabilities.npy", ood_probability)
+        write_csv(seed_dir / "s2_validation_locked_thresholds.csv", [
+            {"class_index": index, "class_label": f"label_{index}", "threshold": 0.5}
+            for index in range(19)
+        ])
         for domain, offset in (("ID", 0.0), ("OOD", 0.1)):
             summaries.append({
                 "seed": seed, "domain": domain, "macro_ap": 0.8 - offset,
@@ -183,10 +216,13 @@ def test_paired_shift_postprocess_requires_complete_paired_outputs(tmp_path: Pat
     }), encoding="utf-8")
     (output / "paired_shift_preflight.json").write_text(json.dumps({
         "status": "formal_ready", "paired_sample_ids_targets_and_metadata": True,
+        "s2_contract": {"root": str(cache_root)},
     }), encoding="utf-8")
     artifacts = postprocess_paired_sensor_shift(output, expected_seeds=(42, 73))
     assert json.loads(artifacts["audit"].read_text(encoding="utf-8"))["status"] == "pass"
     assert (output / "figures/paired_sensor_shift_burden_carriers.pdf").is_file()
+    assert (output / "paired_shift_probability_diagnostics_label_summary.csv").is_file()
+    assert (output / "figures/paired_probability_diagnostics.pdf").is_file()
 
 
 def test_final_evidence_manifest_stays_nonfinal_when_results_are_pending(tmp_path: Path) -> None:

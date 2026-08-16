@@ -91,6 +91,7 @@ def distribution_metrics(
         "mean_risk": mean,
         "weighted_variance": variance,
         "weighted_std": math.sqrt(max(variance, 0.0)),
+        "weighted_sd": math.sqrt(max(variance, 0.0)),
         "weighted_median": median,
         "weighted_mad": mad,
         "weighted_iqr": q75 - q25,
@@ -98,8 +99,10 @@ def distribution_metrics(
         "max_risk": float(np.max(values)),
         "max_min_gap": float(np.max(values) - np.min(values)),
         "worst_mean_gap": primary.worst_group_gap,
+        "worst_minus_mean": primary.worst_group_gap,
         "tail_risk_beta_0_10": primary.tail_risk,
         "geobwer_beta_0_10": primary.bwer,
+        "geobwer": primary.bwer,
         "tail_effective_groups_beta_0_10": primary.allocation.tail_effective_groups,
         "tail_regime_beta_0_10": primary.allocation.tail_regime,
         "profile": profile,
@@ -493,6 +496,83 @@ def _plots(slice_rows: Sequence[Mapping[str, Any]], output: Path) -> list[Path]:
     return paths
 
 
+def audit_four_task_distribution_coverage(
+    summaries: Sequence[Mapping[str, Any]],
+    slices: Sequence[Mapping[str, Any]],
+    output: Path,
+) -> dict[str, Path]:
+    expected = {
+        "fMoW-Sentinel": "classification",
+        "Sen1Floods11": "segmentation",
+        "reBEN": "multilabel_classification",
+        "AlphaEarth": "landcover_agreement",
+    }
+    primary = [row for row in summaries if row.get("evidence_role") != "beta_profile"]
+    coverage_rows = []
+    for dataset, task in expected.items():
+        panels = [row for row in primary if row.get("dataset") == dataset]
+        distribution = [row for row in slices if row.get("dataset") == dataset]
+        metric_complete = bool(panels) and all(
+            math.isfinite(_float(row.get(column)))
+            for row in panels
+            for column in ("weighted_sd", "worst_mean_gap", "geobwer_beta_0_10")
+        )
+        aliases_complete = bool(panels) and all(
+            math.isfinite(_float(row.get(column)))
+            for row in panels
+            for column in ("weighted_sd", "weighted_sd", "worst_minus_mean", "geobwer")
+        )
+        coverage_rows.append({
+            "dataset": dataset, "task": task, "panel_count": len(panels),
+            "slice_row_count": len(distribution),
+            "slice_axes": ";".join(sorted({str(row.get("slice_axis")) for row in distribution})),
+            "weighted_sd_complete": metric_complete,
+            "worst_minus_mean_complete": metric_complete,
+            "geobwer_complete": metric_complete,
+            "canonical_aliases_complete": aliases_complete,
+            "full_slice_distribution_complete": bool(distribution),
+            "primary_eligible_slice_count": sum(str(row.get("presentation_role")) == "primary_eligible" for row in distribution),
+            "descriptive_low_support_slice_count": sum(str(row.get("presentation_role")) == "descriptive_low_support" for row in distribution),
+            "status": "pass" if metric_complete and aliases_complete and bool(distribution) else "fail",
+        })
+    coverage_path = output / "four_task_distribution_coverage.csv"
+    write_csv(coverage_path, coverage_rows)
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    palette = {"fMoW-Sentinel": "#0072B2", "Sen1Floods11": "#D55E00", "reBEN": "#009E73", "AlphaEarth": "#CC79A7"}
+    fig, axes = plt.subplots(1, 2, figsize=(9.0, 3.8))
+    for dataset in expected:
+        rows = [row for row in primary if row.get("dataset") == dataset]
+        axes[0].scatter([_float(row["weighted_sd"]) for row in rows], [_float(row["geobwer_beta_0_10"]) for row in rows], color=palette[dataset], label=dataset, alpha=0.72, s=24)
+        axes[1].scatter([_float(row["worst_mean_gap"]) for row in rows], [_float(row["geobwer_beta_0_10"]) for row in rows], color=palette[dataset], label=dataset, alpha=0.72, s=24)
+    axes[0].set(xlabel="Weighted SD", ylabel="GeoBWER (beta=0.10)")
+    axes[1].set(xlabel="Worst slice − mean risk", ylabel="GeoBWER (beta=0.10)")
+    for index, ax in enumerate(axes):
+        ax.text(-0.13, 1.04, chr(ord("A") + index), transform=ax.transAxes, fontweight="bold")
+        ax.grid(alpha=0.16)
+        ax.spines[["top", "right"]].set_visible(False)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", ncol=4, frameon=False, bbox_to_anchor=(0.5, 1.01))
+    fig.tight_layout(rect=(0, 0, 1, 0.91))
+    figure_dir = ensure_dir(output / "figures")
+    figures = []
+    for suffix in (".png", ".pdf"):
+        path = figure_dir / f"four_task_dispersion_comparator{suffix}"
+        fig.savefig(path, dpi=300, bbox_inches="tight")
+        figures.append(path)
+    plt.close(fig)
+    audit_path = output / "four_task_distribution_coverage.json"
+    audit_path.write_text(json.dumps({
+        "schema": f"{SCHEMA}.four_task_distribution_coverage.v1",
+        "status": "pass" if all(row["status"] == "pass" for row in coverage_rows) else "fail",
+        "expected_tasks": expected, "rows": coverage_rows,
+        "interpretation": "Weighted SD, worst-minus-mean, and GeoBWER are complementary descriptive summaries; the full slice table remains the distribution-level evidence.",
+    }, indent=2), encoding="utf-8")
+    return {"table": coverage_path, "audit": audit_path, "figures": figures[0].parent}
+
+
 def freeze_evidence(root: Path, output: Path, source_paths: Sequence[Path]) -> dict[str, Path]:
     inventory = []
     for path in source_paths:
@@ -572,8 +652,10 @@ def run_optimization_1_7(
         Path("src/rsfm_fairness_audit/optimization_phase1.py"),
         Path("src/rsfm_fairness_audit/reben_phase1_runners.py"),
         Path("src/rsfm_fairness_audit/reben_phase1_postprocess.py"),
+        Path("src/rsfm_fairness_audit/paired_probability_diagnostics.py"),
         Path("src/rsfm_fairness_audit/reben_terramind_campaign.py"),
         Path("scripts/analysis/finalize_optimization_1_7.py"),
+        Path("docs/reproduction/optimization_1_7.md"),
         Path(snapshot_v050) / "sen1/unified_19model_metrics.csv",
         Path(snapshot_v050) / "sen1/event_level_metrics.csv",
         Path(snapshot_v050) / "sen1/source_contract.json",
@@ -611,6 +693,7 @@ def run_optimization_1_7(
     write_csv(artifact_paths["synthetic_counterexamples"], counterexamples)
     write_csv(artifact_paths["terramind_cross_task"], cross_task)
     write_csv(artifact_paths["compound_interactions"], interactions)
+    coverage = audit_four_task_distribution_coverage(summaries, slices, output)
     status = [
         {"item": 1, "name": "evidence_freeze", "code_status": "implemented", "execution_status": "completed_local"},
         {"item": 2, "name": "distribution_and_variance_comparator", "code_status": "implemented", "execution_status": "completed_local"},
@@ -622,6 +705,7 @@ def run_optimization_1_7(
     ]
     write_csv(artifact_paths["execution_status"], status)
     figures = _plots(slices, output)
+    figures.extend(sorted(coverage["figures"].glob("four_task_dispersion_comparator.*")))
     report = _write_report(output, summaries, cross_task, figures)
     primary = [row for row in summaries if row.get("evidence_role") != "beta_profile"]
     examples = {row["scenario"]: row for row in counterexamples}
@@ -633,6 +717,7 @@ def run_optimization_1_7(
             for row in primary
             for key in ("mean_risk", "weighted_std", "worst_mean_gap", "geobwer_beta_0_10")
         ),
+        "four_task_metric_and_full_distribution_coverage": json.loads(coverage["audit"].read_text(encoding="utf-8"))["status"] == "pass",
         "full_slice_table_retains_primary_and_low_support": (
             any(row["presentation_role"] == "primary_eligible" for row in slices)
             and any(row["presentation_role"] == "descriptive_low_support" for row in slices)
@@ -670,11 +755,12 @@ def run_optimization_1_7(
     if not all(gates.values()):
         failed = ", ".join(name for name, passed in gates.items() if not passed)
         raise RuntimeError(f"Optimization 1-7 validation failed: {failed}")
-    return {**artifacts, **artifact_paths, "report": report, "validation": validation_path}
+    return {**artifacts, **artifact_paths, "report": report, "validation": validation_path, "coverage_audit": coverage["audit"], "coverage_table": coverage["table"]}
 
 
 __all__ = [
     "BETAS",
+    "audit_four_task_distribution_coverage",
     "build_slice_distribution_panel",
     "build_terramind_cross_task",
     "distribution_metrics",

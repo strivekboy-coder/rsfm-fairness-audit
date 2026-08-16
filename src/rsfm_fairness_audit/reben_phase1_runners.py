@@ -607,8 +607,10 @@ def run_paired_sensor_shift_panel(
     manifest.write_text(json.dumps({
         "schema": "geobwer.reben.paired_sensor_shift_panel.v1", "status": "complete",
         "seeds": [int(seed) for seed in seeds], "same_s2_trained_head_within_seed": True,
+        "s2_cache_root": str(Path(s2_cache_root)), "s1_cache_root": str(Path(s1_cache_root)),
         "shared_aligned_s1_cache": str(shared), "test_used_for_selection": False,
         "effective_robustness_claimed": False,
+        "probability_diagnostics_require_no_retraining": True,
         "preflight_status": preflight["status"],
     }, indent=2), encoding="utf-8")
     from rsfm_fairness_audit.reben_phase1_postprocess import postprocess_paired_sensor_shift

@@ -13,6 +13,11 @@ import numpy as np
 
 from rsfm_fairness_audit.formal_outputs import file_sha256
 from rsfm_fairness_audit.io import ensure_dir, read_csv_rows, write_csv
+from rsfm_fairness_audit.paired_probability_diagnostics import (
+    SCHEMA as PAIRED_PROBABILITY_SCHEMA,
+    write_paired_probability_diagnostics,
+)
+from rsfm_fairness_audit.reben_sensor_audit import default_reben_class_names
 
 
 LABEL_BUDGET_SCHEMA = "geobwer.reben.label_budget.postprocess.v1"
@@ -375,6 +380,32 @@ def postprocess_paired_sensor_shift(
     burden_path = output / "paired_shift_burden_recurrence.csv"
     write_csv(burden_path, burden_rows)
     figures = _paired_shift_figures(summaries, deltas, burden_rows, output)
+    s2_root = Path(str(preflight.get("s2_contract", {}).get("root", "")))
+    targets_path = s2_root / "test" / "labels.npy"
+    diagnostic_inputs = []
+    for seed in expected_seeds:
+        seed_dir = output / f"seed_{int(seed)}"
+        threshold_path = seed_dir / "s2_validation_locked_thresholds.csv"
+        threshold_rows = read_csv_rows(threshold_path) if threshold_path.is_file() else []
+        label_names = [str(row.get("class_label")) for row in threshold_rows]
+        if not label_names and targets_path.is_file():
+            label_names = default_reben_class_names()[: np.load(targets_path, mmap_mode="r").shape[1]]
+        diagnostic_inputs.append({
+            "seed": int(seed), "targets": targets_path,
+            "id_probabilities": seed_dir / "s2_trained_probe" / "s2_id_test_probabilities.npy",
+            "ood_probabilities": seed_dir / "s2_trained_probe" / "s1_ood_test_probabilities.npy",
+            "thresholds": [_float(row.get("threshold")) for row in threshold_rows],
+            "label_names": label_names,
+        })
+    diagnostic_sources_complete = bool(diagnostic_inputs) and all(
+        Path(item[key]).is_file()
+        for item in diagnostic_inputs
+        for key in ("targets", "id_probabilities", "ood_probabilities")
+    ) and all(len(item["thresholds"]) == len(item["label_names"]) > 0 for item in diagnostic_inputs)
+    diagnostics: dict[str, Path] = {}
+    if diagnostic_sources_complete:
+        diagnostics = write_paired_probability_diagnostics(diagnostic_inputs, output)
+        figures.extend(path for path in diagnostics["figures"].glob("paired_probability_diagnostics.*"))
     preflight_ready = preflight.get("status") in {"ready", "formal_ready"}
     gates = {
         "formal_preflight_passed": preflight_ready,
@@ -388,6 +419,8 @@ def postprocess_paired_sensor_shift(
         "paired_common_support": bool(preflight.get("paired_sample_ids_targets_and_metadata")),
         "effective_robustness_not_claimed": manifest.get("effective_robustness_claimed", False) is False,
         "slice_burden_tables_present": bool(slice_rows),
+        "probability_diagnostic_sources_complete": diagnostic_sources_complete,
+        "probability_diagnostics_complete": bool(diagnostics),
         "figures_include_vector_and_raster": ".png" in {path.suffix for path in figures} and ".pdf" in {path.suffix for path in figures},
     }
     audit_path = output / "paired_shift_result_audit.json"
@@ -395,6 +428,7 @@ def postprocess_paired_sensor_shift(
         "schema": PAIRED_SHIFT_SCHEMA, "status": "pass" if all(gates.values()) else "fail",
         "gates": gates, "summary_rows": len(summaries), "delta_rows": len(deltas),
         "burden_rows": len(burden_rows),
+        "probability_diagnostic_schema": PAIRED_PROBABILITY_SCHEMA,
         "inference_role": "paired_external_validity_descriptive_seed_panel",
         "terminology": "OOD degradation; effective robustness is not claimed",
     }, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -407,11 +441,12 @@ def postprocess_paired_sensor_shift(
         "## Audit", "", *[f"- `{name}`: `{passed}`" for name, passed in gates.items()], "",
         "## Interpretation boundary", "",
         "Positive deltas mean larger risk under S1 OOD. Tail acceleration is delta tail risk minus delta mean risk. Slice burden rows are descriptive unless uncertainty and multiplicity controls are added.",
+        "Probability diagnostics separate rank/separation degradation from locked-threshold crossing. `representation_collapse_signature` is an operational frozen-head signature, not causal proof that the encoder representation collapsed.",
     ]) + "\n", encoding="utf-8")
     if not all(gates.values()):
         failed = ", ".join(name for name, passed in gates.items() if not passed)
         raise RuntimeError(f"Paired sensor-shift result audit failed: {failed}")
-    return {"audit": audit_path, "aggregate": aggregate_path, "burdens": burden_path, "report": report, "figures": figures[0].parent}
+    return {"audit": audit_path, "aggregate": aggregate_path, "burdens": burden_path, "report": report, "figures": figures[0].parent, **diagnostics}
 
 
 def _git_value(root: Path, args: Sequence[str]) -> str:
@@ -452,6 +487,51 @@ def build_final_optimization_evidence(
         item_audits[item] = {"path": str(path), "status": payload.get("status", "pending"), "gates": payload.get("gates", {})}
     base_pass = base_validation.get("passes") is True
     complete = base_pass and all(item_audits[item]["status"] == "pass" for item in (6, 7))
+    base_coverage_path = base / "four_task_distribution_coverage.json"
+    base_coverage = json.loads(base_coverage_path.read_text(encoding="utf-8")) if base_coverage_path.is_file() else {}
+    coverage_status = base_coverage.get("status", "pass" if base_pass else "pending")
+    status_rows = [
+        {"item": 1, "name": "evidence_freeze", "result_status": "pass" if base_pass else "pending", "evidence": str(base / "evidence_freeze_manifest.json")},
+        {"item": 2, "name": "dispersion_comparator", "result_status": coverage_status, "evidence": str(base_coverage_path)},
+        {"item": 3, "name": "full_slice_distribution", "result_status": coverage_status, "evidence": str(base / "full_slice_distribution.csv")},
+        {"item": 4, "name": "terramind_cross_task", "result_status": "pass" if base_pass else "pending", "evidence": str(base / "terramind_cross_task_analysis.csv")},
+        {"item": 5, "name": "compound_interactions", "result_status": "pass" if base_pass else "pending", "evidence": str(base / "compound_interaction_atlas.csv")},
+        {"item": 6, "name": "nested_label_budget", "result_status": item_audits[6]["status"], "evidence": item_audits[6]["path"]},
+        {"item": 7, "name": "paired_sensor_shift", "result_status": item_audits[7]["status"], "evidence": item_audits[7]["path"]},
+    ]
+    status_path = output / "optimization_1_7_result_status.csv"
+    write_csv(status_path, status_rows)
+
+    conclusions: list[dict[str, Any]] = [
+        {"item": 1, "status": status_rows[0]["result_status"], "conclusion": "Frozen source lineage and derived evidence are inventoried with hashes; inferential limitations do not suppress valid descriptive estimates.", "evidence": status_rows[0]["evidence"]},
+        {"item": 2, "status": status_rows[1]["result_status"], "conclusion": "Across all four tasks, weighted SD, worst-minus-mean, and GeoBWER are reported together as complementary, non-interchangeable summaries.", "evidence": status_rows[1]["evidence"]},
+        {"item": 3, "status": status_rows[2]["result_status"], "conclusion": "The full slice distribution is retained for all four tasks, including eligible and explicitly labelled low-support slices where present.", "evidence": status_rows[2]["evidence"]},
+        {"item": 4, "status": status_rows[3]["result_status"], "conclusion": "TerraMind cross-task results are joined for within-task descriptive rank comparison; ranks are not treated as directly commensurate cross-task scores.", "evidence": status_rows[3]["evidence"]},
+        {"item": 5, "status": status_rows[4]["result_status"], "conclusion": "Compound interaction slices are retained as descriptive burden-localization evidence rather than deleted when formal inference is unsupported.", "evidence": status_rows[4]["evidence"]},
+    ]
+    label_endpoints = label / "label_budget_endpoint_changes.csv"
+    if item_audits[6]["status"] == "pass" and label_endpoints.is_file():
+        endpoint_rows = read_csv_rows(label_endpoints)
+        conclusions.append({"item": 6, "status": "pass", "conclusion": f"Nested label-budget sensitivity is complete across {len(endpoint_rows)} seeds; endpoint changes are descriptive and preserve non-monotonic seed paths.", "evidence": str(label_endpoints)})
+    else:
+        conclusions.append({"item": 6, "status": item_audits[6]["status"], "conclusion": "Label-budget empirical conclusion remains pending the required audited result.", "evidence": item_audits[6]["path"]})
+    probability_summary = paired / "paired_shift_probability_diagnostics_label_summary.csv"
+    if item_audits[7]["status"] == "pass" and probability_summary.is_file():
+        diagnostic_rows = read_csv_rows(probability_summary)
+        counts = defaultdict(int)
+        for row in diagnostic_rows:
+            counts[str(row.get("modal_diagnostic_signature"))] += 1
+        conclusions.append({
+            "item": 7, "status": "pass",
+            "conclusion": "Paired S2 ID→S1 OOD degradation is decomposed into rank/separation and locked-threshold effects; " + ", ".join(f"{key}={value}" for key, value in sorted(counts.items())) + ". These are operational signatures, not causal encoder attributions.",
+            "evidence": str(probability_summary),
+        })
+    else:
+        conclusions.append({"item": 7, "status": item_audits[7]["status"], "conclusion": "Paired sensor-shift empirical conclusion remains pending the probability-level audited result.", "evidence": item_audits[7]["path"]})
+    conclusions_path = output / "optimization_1_7_main_conclusions.json"
+    conclusions_path.write_text(json.dumps({"schema": f"{FINAL_EVIDENCE_SCHEMA}.conclusions.v1", "conclusions": conclusions}, ensure_ascii=False, indent=2), encoding="utf-8")
+    conclusions_report = output / "optimization_1_7_main_conclusions.md"
+    conclusions_report.write_text("\n".join(["# Optimization 1–7 main conclusions", "", *[f"- Item {row['item']} (`{row['status']}`): {row['conclusion']}" for row in conclusions], "", "All conclusions are bounded by their listed evidence artifacts; diagnostic signatures are not causal claims."]) + "\n", encoding="utf-8")
     evidence_rows: list[dict[str, Any]] = []
     for item_range, directory in (("1-5", base), ("6", label), ("7", paired)):
         for path in _evidence_files(directory):
@@ -476,6 +556,8 @@ def build_final_optimization_evidence(
             "1-5": {"status": "pass" if base_pass else "pending", "validation": str(base_validation_path)},
             "6": item_audits[6], "7": item_audits[7],
         },
+        "result_status_table": str(status_path),
+        "main_conclusions": str(conclusions_path),
         "evidence_file_count": len(evidence_rows),
         "inventory": str(inventory_path),
     }
@@ -494,7 +576,7 @@ def build_final_optimization_evidence(
     ]) + "\n", encoding="utf-8")
     if not complete and not allow_pending:
         raise RuntimeError("Final evidence is incomplete: items 1-5, 6, and 7 must all pass their audits.")
-    return {"manifest": manifest_path, "inventory": inventory_path, "report": report_path}
+    return {"manifest": manifest_path, "inventory": inventory_path, "report": report_path, "status": status_path, "conclusions": conclusions_path, "conclusions_report": conclusions_report}
 
 
 __all__ = [
