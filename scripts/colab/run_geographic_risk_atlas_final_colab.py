@@ -6,6 +6,7 @@ training, or large external download is performed.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -18,14 +19,6 @@ def _require(path: Path, label: str) -> Path:
     return path
 
 
-def _optional(path: Path, label: str) -> Path | None:
-    if path.is_file():
-        print(f"[selected optional] {label}: {path}", flush=True)
-        return path
-    print(f"[unavailable optional] {label}: {path}", flush=True)
-    return None
-
-
 def _require_result_root(candidates: list[Path], label: str, filename: str) -> Path:
     for root in candidates:
         if (root / filename).is_file():
@@ -36,10 +29,34 @@ def _require_result_root(candidates: list[Path], label: str, filename: str) -> P
     )
 
 
+def _mark_invalid_predecessors(paths: list[Path], replacement: dict[str, str]) -> list[str]:
+    marked = []
+    payload = {
+        "status": "invalid_for_fmow_spatial_science",
+        "scope": "fMoW spatial atlas, covariate alignment, maps, and associations only",
+        "reason": "location_id is category-scoped and was incorrectly treated as globally unique",
+        "invalid_unit_contract": "location_id",
+        "replacement_unit_contract": "site_id=category|location_id",
+        "alphaearth_and_reben_status": "unaffected_by_this_invalidation",
+        "replacement": replacement,
+    }
+    for path in paths:
+        if not path.is_dir():
+            continue
+        marker = path / "INVALID_FMOW_LOCATION_ID_AGGREGATION.json"
+        marker.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        marked.append(str(marker))
+        print(f"[invalidated predecessor] {marker}", flush=True)
+    return marked
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, default=Path("/content/rsfm-fairness-audit"))
     parser.add_argument("--project-root", type=Path, default=Path("/content/drive/MyDrive/rsfm_fairness_audit"))
+    parser.add_argument("--ee-project", default="rsfm-fairness-audit")
+    parser.add_argument("--batch-size", type=int, default=400)
+    parser.add_argument("--n-boot", type=int, default=500)
     args = parser.parse_args()
     repo = args.repo.resolve()
     sys.path.insert(0, str(repo / "src"))
@@ -52,19 +69,24 @@ def main() -> None:
     output_root = args.project_root / "outputs" / "geobwer_final_v3"
     alpha_root = output_root / "alphaearth_geobwer_spatial_v2"
     alpha_csv = _require(alpha_root / "formal_outputs" / "formal_audit_table.csv", "AlphaEarth sample audit")
-    dofa = _require(output_root / "fmow_dofav2_geo_clean_v1" / "formal_outputs" / "formal_audit_table.csv", "fMoW DOFAv2")
+    dofa_root = output_root / "fmow_dofav2_geo_clean_v1"
+    dofa, dofa_discovery = discover_canonical_fmow_seed_tables(
+        dofa_root / "probe_seeds", architecture=None, model_prefix="dofav2",
+    )
     resnet_root = output_root / "fmow_resnet50_common9_v1"
     resnet, resnet_discovery = discover_canonical_fmow_seed_tables(resnet_root)
-    print(
-        "[discovered] fMoW ResNet50 canonical seeds: "
-        + ", ".join(map(str, resnet_discovery["seeds"])),
-        flush=True,
-    )
-    print(f"[scientific role] {resnet_discovery['scientific_role']}", flush=True)
-    for path in resnet:
-        print(f"[selected] fMoW ResNet50 canonical formal table: {path}", flush=True)
-    for rejected in resnet_discovery["rejected_seed_directories"]:
-        print(f"[rejected incomplete/noncanonical seed] {rejected}", flush=True)
+    for model, paths, discovery in (
+        ("DOFAv2", dofa, dofa_discovery), ("ResNet50", resnet, resnet_discovery),
+    ):
+        print(
+            f"[discovered] fMoW {model} canonical seeds: "
+            + ", ".join(map(str, discovery["seeds"])), flush=True,
+        )
+        print(f"[scientific role] {model}: {discovery['scientific_role']}", flush=True)
+        for path in paths:
+            print(f"[selected] fMoW {model} canonical formal table: {path}", flush=True)
+        for rejected in discovery["rejected_seed_directories"]:
+            print(f"[rejected incomplete/noncanonical {model} seed] {rejected}", flush=True)
     reben = output_root / "reben_terramind_paired_shift_v1"
     if not reben.is_dir():
         raise FileNotFoundError(f"Missing reBEN paired root: {reben}")
@@ -73,16 +95,20 @@ def main() -> None:
         output_root / "reben_croma_paired_shift_v1",
     ], "reBEN CROMA paired result", "paired_shift_country_deltas.csv")
     _require_result_root([reben], "reBEN TerraMind paired result", "paired_shift_country_deltas.csv")
-    atlas_dir = output_root / "geographic_risk_atlas_v2_1"
-    association_dir = output_root / "geographic_risk_association_v1_1"
+    atlas_dir = output_root / "geographic_risk_atlas_v3_site_id"
+    covariate_dir = args.project_root / "covariates" / "geographic_risk_v2_site_id"
+    cache_dir = args.project_root / "cache" / "geographic_risk_covariates_v2_site_id"
+    association_dir = output_root / "geographic_risk_association_v2_site_id"
     atlas_command = [
         sys.executable, str(repo / "scripts/analysis/build_geographic_risk_atlas.py"),
         "--alphaearth-root", str(alpha_root),
-        "--fmow-csv", f"DOFAv2={dofa}", "--fmow-seed-count", "DOFAv2=1",
     ]
+    for path in dofa:
+        atlas_command += ["--fmow-csv", f"DOFAv2={path}"]
     for path in resnet:
         atlas_command += ["--fmow-csv", f"ResNet50={path}"]
     atlas_command += [
+        "--fmow-seed-count", f"DOFAv2={len(dofa)}",
         "--fmow-seed-count", f"ResNet50={len(resnet)}", "--reben-paired-dir", str(reben),
         "--reben-model-paired-dir", f"TerraMind={reben}",
         "--reben-model-paired-dir", f"CROMA={croma}",
@@ -91,15 +117,23 @@ def main() -> None:
     print("[atlas]", " ".join(map(str, atlas_command)), flush=True)
     subprocess.run(atlas_command, cwd=repo, env=env, check=True)
 
-    covariate_root = args.project_root / "covariates" / "geographic_risk_v1"
-    alpha_external = _optional(covariate_root / "alphaearth_covariates.csv", "AlphaEarth GHSL/population/nightlights")
-    fmow_external = _optional(covariate_root / "fmow_covariates.csv", "fMoW GHSL/population/nightlights")
+    prepare_command = [
+        sys.executable, str(repo / "scripts/analysis/prepare_geographic_risk_covariates.py"),
+        "--atlas-dir", str(atlas_dir), "--alphaearth-sample-csv", str(alpha_csv),
+        "--output-dir", str(covariate_dir), "--cache-dir", str(cache_dir),
+        "--ee-project", args.ee_project, "--batch-size", str(args.batch_size),
+    ]
+    print("[covariates]", " ".join(map(str, prepare_command)), flush=True)
+    subprocess.run(prepare_command, cwd=repo, env=env, check=True)
+    alpha_external = _require(covariate_dir / "alphaearth_covariates.csv", "AlphaEarth canonical covariates")
+    fmow_external = _require(covariate_dir / "fmow_covariates.csv", "fMoW site_id canonical covariates")
     association_command = [
         sys.executable, str(repo / "scripts/analysis/build_geographic_risk_association.py"),
         "--atlas-dir", str(atlas_dir), "--output-dir", str(association_dir),
         "--alphaearth-sample-csv", str(alpha_csv),
-        "--fmow-sample-csv", f"DOFAv2={dofa}",
+        "--fmow-sample-csv", f"DOFAv2={dofa[0]}",
         "--fmow-sample-csv", f"ResNet50={next((path for path in resnet if 'seed_101' in path.parts), resnet[0])}",
+        "--n-boot", str(args.n_boot),
     ]
     if alpha_external:
         association_command += ["--alphaearth-external-csv", str(alpha_external)]
@@ -108,7 +142,31 @@ def main() -> None:
                                 "--fmow-external-csv", f"ResNet50={fmow_external}"]
     print("[association]", " ".join(map(str, association_command)), flush=True)
     subprocess.run(association_command, cwd=repo, env=env, check=True)
+    replacement = {
+        "atlas": str(atlas_dir), "covariates": str(covariate_dir),
+        "association": str(association_dir),
+    }
+    predecessors = sorted({
+        *(
+            path for path in output_root.glob("geographic_risk_atlas_v*")
+            if path != atlas_dir
+        ),
+        *(
+            path for path in output_root.glob("geographic_risk_association_v*")
+            if path != association_dir
+        ),
+        *(
+            path for path in (args.project_root / "covariates").glob("geographic_risk_v*")
+            if path != covariate_dir
+        ),
+    }, key=str)
+    invalidated = _mark_invalid_predecessors(predecessors, replacement)
+    (atlas_dir / "invalidated_predecessors.json").write_text(
+        json.dumps({"status": "complete", "markers": invalidated, **replacement}, indent=2),
+        encoding="utf-8",
+    )
     print(f"Atlas complete: {atlas_dir}")
+    print(f"Covariates complete: {covariate_dir}")
     print(f"Association complete: {association_dir}")
     print("GPU required: no")
 

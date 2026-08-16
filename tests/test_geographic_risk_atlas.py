@@ -22,18 +22,24 @@ def _write(path: Path, rows: list[dict[str, object]]) -> None:
         writer.writeheader(); writer.writerows(rows)
 
 
-def _write_formal_seed(root: Path, seed: int, *, protocol_hash: str = "same") -> Path:
+def _write_formal_seed(
+    root: Path, seed: int, *, protocol_hash: str = "same",
+    model: str = "ResNet50", seed_field: str = "seed",
+) -> Path:
     import json
 
     formal = root / f"seed_{seed}" / "formal_outputs"
     table = formal / "formal_audit_table.csv"
     _write(table, [{
-        "sample_id": f"{seed}-a", "location_id": "site-a", "latitude": 10,
-        "longitude": 20, "risk": 0, "split": "test",
+        "sample_id": f"{seed}-a", "category": "airport", "location_id": "1",
+        "site_id": "airport|1", "country": "USA", "continent": "America",
+        "latitude": 10, "longitude": 20, "risk": 0, "split": "test",
     }])
     manifest = {
         "protocol_hash": protocol_hash,
-        "model_lineage": {"seed": seed, "architecture": "torchvision_resnet50"},
+        "model_lineage": {
+            seed_field: seed, "architecture": "torchvision_resnet50", "model": model,
+        },
         "dataset_lineage": {
             "dataset": "fMoW-Sentinel", "metadata_sha256": "metadata",
             "geography_contract_hash": "geography",
@@ -71,6 +77,20 @@ def test_fmow_single_seed_discovery_is_explicitly_descriptive(tmp_path: Path) ->
     assert rows[0]["seed_count"] == 1
     assert aggregation["scientific_role"] == "single_seed_descriptive"
     assert aggregation["uncertainty_role"] == "unavailable_single_seed"
+
+
+def test_dofa_seed_discovery_accepts_probe_seed_and_case_insensitive_model_prefix(tmp_path: Path) -> None:
+    root = tmp_path / "fmow_dofav2_geo_clean_v1" / "probe_seeds"
+    expected = [
+        _write_formal_seed(root, seed, model="DOFAv2-frozen", seed_field="probe_seed")
+        for seed in (42, 73, 101)
+    ]
+    paths, discovery = discover_canonical_fmow_seed_tables(
+        root, architecture=None, model_prefix="dofav2",
+    )
+    assert paths == expected
+    assert discovery["seeds"] == [42, 73, 101]
+    assert discovery["scientific_role"] == "multi_seed_aggregate"
 
 
 def test_coordinate_asset_uses_real_units_and_test_split(tmp_path: Path) -> None:
@@ -166,10 +186,12 @@ def test_fmow_three_seed_aggregation_is_strict_and_seed_first(tmp_path: Path) ->
     for seed, risks in ((101, (0, 1)), (202, (1, 1)), (303, (0, 0))):
         path = tmp_path / f"seed_{seed}" / "formal_audit_table.csv"
         _write(path, [
-            {"sample_id": f"{seed}-a", "location_id": "site-a", "latitude": 10,
-             "longitude": 20, "risk": risks[0], "split": "test"},
-            {"sample_id": f"{seed}-b", "location_id": "site-b", "latitude": 30,
-             "longitude": 40, "risk": risks[1], "split": "test"},
+            {"sample_id": f"{seed}-a", "category": "airport", "location_id": "1",
+             "site_id": "airport|1", "country": "USA", "continent": "America",
+             "latitude": 10, "longitude": 20, "risk": risks[0], "split": "test"},
+            {"sample_id": f"{seed}-b", "category": "port", "location_id": "1",
+             "site_id": "port|1", "country": "DEU", "continent": "Europe",
+             "latitude": 30, "longitude": 40, "risk": risks[1], "split": "test"},
         ])
         paths.append(path)
     rows, status = aggregate_coordinate_risk_across_seeds(paths, expected_seed_count=3)
@@ -194,10 +216,28 @@ def test_fmow_three_seed_aggregation_rejects_unit_drift(tmp_path: Path) -> None:
     paths = []
     for seed, unit in ((101, "site-a"), (202, "site-a"), (303, "site-b")):
         path = tmp_path / f"seed_{seed}" / "formal_audit_table.csv"
-        _write(path, [{"location_id": unit, "latitude": 10, "longitude": 20, "risk": 0}])
+        category, location = unit.split("-")
+        _write(path, [{"category": category, "location_id": location,
+                       "site_id": f"{category}|{location}",
+                       "latitude": 10, "longitude": 20, "risk": 0}])
         paths.append(path)
     with pytest.raises(ValueError, match="universe differs"):
         aggregate_coordinate_risk_across_seeds(paths, expected_seed_count=3)
+
+
+def test_fmow_atlas_requires_exact_category_scoped_site_id(tmp_path: Path) -> None:
+    import pytest
+
+    source = tmp_path / "seed_42" / "formal_audit_table.csv"
+    _write(source, [
+        {"category": "airport", "location_id": "1", "site_id": "1",
+         "latitude": 10, "longitude": 20, "risk": 0, "split": "test"},
+    ])
+    with pytest.raises(ValueError, match=r"site_id.*category\|location_id"):
+        build_geographic_risk_atlas(
+            tmp_path / "invalid", fmow_csvs={"DOFAv2": [source]},
+            fmow_expected_seed_counts={"DOFAv2": 1},
+        )
 
 
 def test_reben_full_panel_layout_emits_no_margin_warning(tmp_path: Path) -> None:
@@ -238,7 +278,7 @@ def test_reben_country_model_comparison_is_strict_and_visualized(tmp_path: Path)
     manifest = build_geographic_risk_atlas(
         tmp_path / "cross_model_atlas", reben_model_paired_dirs=roots,
     )
-    assert manifest["schema"].endswith(".v2")
+    assert manifest["schema"].endswith(".v3")
     assert (tmp_path / "cross_model_atlas" / "atlas_reben_country_delta_model_comparison.png").is_file()
     assert all(row["status"] == "pass" for row in manifest["visual_qa"])
 

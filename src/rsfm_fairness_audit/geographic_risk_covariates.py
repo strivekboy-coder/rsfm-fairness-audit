@@ -16,7 +16,8 @@ from rsfm_fairness_audit.geographic_risk_atlas import LATITUDE_FIELDS, LONGITUDE
 from rsfm_fairness_audit.io import ensure_dir, read_csv_rows, write_csv
 
 
-SCHEMA = "geobwer.geographic_covariates.official_gee.v1"
+SCHEMA = "geobwer.geographic_covariates.official_gee.v2"
+FMOW_METADATA_FIELDS = ("site_id", "category", "location_id", "country", "continent", "region", "un_region")
 PROBABILITY_BANDS = (
     "water", "trees", "grass", "flooded_vegetation", "crops",
     "shrub_and_scrub", "built", "bare", "snow_and_ice",
@@ -131,7 +132,7 @@ def build_alphaearth_sampling_rows(
 
 
 def build_fmow_sampling_rows(risk_csv: str | Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Use one canonical representative coordinate per frozen fMoW location unit."""
+    """Use one canonical representative coordinate per frozen fMoW site."""
     rows, invalid = [], 0
     for row in read_csv_rows(risk_csv):
         latitude, longitude = _coordinate(row)
@@ -139,16 +140,27 @@ def build_fmow_sampling_rows(risk_csv: str | Path) -> tuple[list[dict[str, Any]]
             invalid += 1
             continue
         unit = str(row["spatial_unit"])
+        site_id = str(row.get("site_id", "") or "")
+        category = str(row.get("category", "") or "")
+        location_id = str(row.get("location_id", "") or "")
+        if not site_id or unit != site_id or site_id != f"{category}|{location_id}":
+            raise ValueError(
+                "fMoW atlas risk must use exact site_id=category|location_id; "
+                f"observed spatial_unit={unit!r}, site_id={site_id!r}, "
+                f"category={category!r}, location_id={location_id!r}"
+            )
         rows.append({
             "row_id": unit, "spatial_unit": unit, "latitude": latitude,
             "longitude": longitude, "source_worldcover_label": "",
+            **{field: row.get(field, "") for field in FMOW_METADATA_FIELDS},
         })
     return rows, {
         "task": "fMoW", "risk_source": str(risk_csv), "sampling_row_count": len(rows),
         "target_unit_count": len(rows) + invalid, "represented_unit_count": len(rows),
         "unit_coverage": len(rows) / (len(rows) + invalid) if rows or invalid else 0.0,
         "invalid_coordinate_count": invalid,
-        "sampling_rule": "one_frozen_atlas_representative_coordinate_per_location_or_site_unit",
+        "sampling_rule": "one_frozen_atlas_representative_coordinate_per_exact_site_id",
+        "spatial_unit_contract": "site_id=category|location_id",
     }
 
 
@@ -200,6 +212,7 @@ def extract_official_covariates_gee(
                 "row_id": str(row["row_id"]), "spatial_unit": str(row["spatial_unit"]),
                 "latitude": float(row["latitude"]), "longitude": float(row["longitude"]),
                 "source_worldcover_label": str(row.get("source_worldcover_label", "")),
+                **{field: str(row.get(field, "")) for field in FMOW_METADATA_FIELDS},
             }) for row in batch
         ]
         sampled = stack.sampleRegions(
@@ -254,6 +267,12 @@ def aggregate_covariates(
             "longitude": float(math.degrees(math.atan2(np.nanmean(np.sin(longitude)), np.nanmean(np.cos(longitude))))),
             "covariate_support": len(rows),
         }
+        if task == "fMoW":
+            for field in FMOW_METADATA_FIELDS:
+                values = {str(row.get(field, "") or "") for row in rows}
+                if len(values) > 1:
+                    raise ValueError(f"Metadata drift for {unit}/{field}: {sorted(values)}")
+                item[field] = next(iter(values), "")
         for variable in ("ghsl_urbanization", "population_density", "nightlights", "reference_confidence"):
             values = [_float(row.get(variable)) for row in rows]
             clean = [value for value in values if math.isfinite(value)]
@@ -424,7 +443,7 @@ def prepare_geographic_risk_covariates(
         "products": PRODUCTS, "epoch_policy": "fixed_before_association_results: GHSL/VIIRS=2020; DynamicWorld=2021",
         "spatial_matching": {
             "AlphaEarth": "frozen test sample coordinates aggregated by exact spatial_block",
-            "fMoW": "one frozen representative coordinate per exact location/site unit",
+            "fMoW": "one frozen representative coordinate per exact site_id=category|location_id",
             "buffer_selection": "none", "nearest_join": "not_used_in_canonical_CSVs",
         },
         "sampling_scales_m": {
@@ -440,6 +459,7 @@ def prepare_geographic_risk_covariates(
             "selection_policy": "no outcome-informed variable, product, year, radius, or transformation selection",
             "reference_semantics": "Dynamic World confidence/disagreement are reference-map ambiguity diagnostics, not ground truth quality",
         },
+        "fmow_spatial_unit_contract": "site_id=category|location_id; location_id-only predecessor outputs are invalid",
         "tasks": task_manifests, "artifacts": artifacts,
         "qa_csv": str(qa_path), "fmow_model_unit_alignment": model_unit_audit,
     }

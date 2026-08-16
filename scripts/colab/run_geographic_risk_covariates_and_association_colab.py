@@ -32,7 +32,7 @@ def main() -> None:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(repo / "src") + os.pathsep + env.get("PYTHONPATH", "")
     output_root = args.project_root / "outputs" / "geobwer_final_v3"
-    atlas = output_root / "geographic_risk_atlas_v2_1"
+    atlas = output_root / "geographic_risk_atlas_v3_site_id"
     alpha_samples = _require(
         output_root / "alphaearth_geobwer_spatial_v2" / "formal_outputs" / "formal_audit_table.csv",
         "AlphaEarth canonical formal audit",
@@ -44,9 +44,9 @@ def main() -> None:
     for path in fmow_risks:
         print(f"[selected] fMoW atlas risk: {path}", flush=True)
 
-    covariates = args.project_root / "covariates" / "geographic_risk_v1_1"
-    cache = args.project_root / "cache" / "geographic_risk_covariates_v1_1"
-    association = output_root / "geographic_risk_association_v1_3"
+    covariates = args.project_root / "covariates" / "geographic_risk_v2_site_id"
+    cache = args.project_root / "cache" / "geographic_risk_covariates_v2_site_id"
+    association = output_root / "geographic_risk_association_v2_site_id"
     prepare = [
         sys.executable, str(repo / "scripts/analysis/prepare_geographic_risk_covariates.py"),
         "--atlas-dir", str(atlas), "--alphaearth-sample-csv", str(alpha_samples),

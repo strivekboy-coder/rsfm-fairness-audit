@@ -117,7 +117,10 @@ def test_prepare_writes_canonical_manifest_qa_and_reuses_fixed_task_contract(tmp
     ])
     for model in ("dofa", "resnet"):
         _write(atlas / f"fmow_{model}_spatial_unit_risk.csv", [
-            {"spatial_unit": "site", "latitude": 30, "longitude": 40, "mean_risk": .3},
+            {"spatial_unit": "airport|1", "site_id": "airport|1",
+             "category": "airport", "location_id": "1", "country": "USA",
+             "continent": "America", "latitude": 30, "longitude": 40,
+             "mean_risk": .3},
         ])
     _write(alpha_samples, [
         {"sample_id": "x", "spatial_block_id": "a", "split": "test", "latitude": 10,
@@ -144,6 +147,7 @@ def test_prepare_writes_canonical_manifest_qa_and_reuses_fixed_task_contract(tmp
     assert (output / "covariate_qa.csv").is_file()
     manifest = json.loads((output / "geographic_covariate_manifest.json").read_text(encoding="utf-8"))
     assert manifest["spatial_matching"]["buffer_selection"] == "none"
+    assert manifest["fmow_spatial_unit_contract"].startswith("site_id=category|location_id")
     assert "no outcome-informed" in manifest["scientific_boundary"]["selection_policy"]
 
 

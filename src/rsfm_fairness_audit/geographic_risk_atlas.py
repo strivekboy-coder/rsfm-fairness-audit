@@ -13,12 +13,14 @@ import numpy as np
 from rsfm_fairness_audit.io import ensure_dir, write_csv
 
 
-SCHEMA = "geobwer.geographic_risk_atlas.v2"
+SCHEMA = "geobwer.geographic_risk_atlas.v3"
 FIGURE_PREFIX = "atlas"
 OKABE_ITO = ("#0072B2", "#E69F00", "#009E73", "#CC79A7")
 LATITUDE_FIELDS = ("latitude", "lat", "center_lat", "centroid_lat")
 LONGITUDE_FIELDS = ("longitude", "lon", "lng", "center_lon", "centroid_lon")
-UNIT_FIELDS = ("spatial_block_id", "location_id", "site_id", "independent_unit_id", "sample_id")
+UNIT_FIELDS = ("spatial_block_id", "site_id", "location_id", "independent_unit_id", "sample_id")
+FMOW_SITE_FIELDS = ("site_id",)
+FMOW_SITE_METADATA_FIELDS = ("category", "location_id", "country", "continent", "region", "un_region")
 ALPHAEARTH_AGGREGATE_TABLES = (
     "geobwer_by_group.csv", "geobwer_profile.csv", "geobwer_summary.csv",
 )
@@ -29,7 +31,8 @@ ALPHAEARTH_SAMPLE_TABLES = (
 
 
 def discover_canonical_fmow_seed_tables(
-    root: str | Path, *, architecture: str = "torchvision_resnet50",
+    root: str | Path, *, architecture: str | None = "torchvision_resnet50",
+    model_prefix: str | None = None,
 ) -> tuple[list[Path], dict[str, Any]]:
     """Discover manifest-validated formal fMoW seed tables below one run root.
 
@@ -66,12 +69,16 @@ def discover_canonical_fmow_seed_tables(
         lineage = manifest.get("model_lineage") or {}
         dataset = manifest.get("dataset_lineage") or {}
         reasons: list[str] = []
-        if lineage.get("seed") != directory_seed:
+        manifest_seed = lineage.get("seed", lineage.get("probe_seed"))
+        if manifest_seed != directory_seed:
             reasons.append(
-                f"manifest seed {lineage.get('seed')!r} != directory seed {directory_seed}"
+                f"manifest seed {manifest_seed!r} != directory seed {directory_seed}"
             )
-        if lineage.get("architecture") != architecture:
+        if architecture is not None and lineage.get("architecture") != architecture:
             reasons.append(f"architecture {lineage.get('architecture')!r} != {architecture!r}")
+        if (model_prefix is not None
+                and not str(lineage.get("model", "")).casefold().startswith(model_prefix.casefold())):
+            reasons.append(f"model {lineage.get('model')!r} does not start with {model_prefix!r}")
         if dataset.get("dataset") != "fMoW-Sentinel":
             reasons.append(f"dataset {dataset.get('dataset')!r} != 'fMoW-Sentinel'")
         if not manifest.get("protocol_hash"):
@@ -119,7 +126,21 @@ def discover_canonical_fmow_seed_tables(
         "accepted_tables": [str(item[1]) for item in accepted],
         "rejected_seed_directories": rejected,
         "selection_rule": "direct seed_* child + canonical formal table + validated formal manifest",
+        "architecture_contract": architecture or "not_applicable",
+        "model_prefix_contract": model_prefix or "not_applicable",
     }
+
+
+def _fmow_site_metadata(row: Mapping[str, Any]) -> dict[str, str]:
+    category = str(row.get("category", "") or "").strip()
+    location_id = str(row.get("location_id", "") or "").strip()
+    site_id = str(row.get("site_id", "") or "").strip()
+    if not category or not location_id or not site_id:
+        raise ValueError("fMoW site aggregation requires non-empty category, location_id, and site_id")
+    expected = f"{category}|{location_id}"
+    if site_id != expected:
+        raise ValueError(f"Invalid fMoW site_id {site_id!r}; expected category|location_id={expected!r}")
+    return {field: str(row.get(field, "") or "").strip() for field in FMOW_SITE_METADATA_FIELDS}
 
 
 def _first(row: Mapping[str, Any], fields: Sequence[str], *, required: bool = True) -> str:
@@ -224,6 +245,7 @@ def aggregate_coordinate_risk(
     # Circular longitude averaging prevents a unit spanning the dateline from
     # being plotted near Greenwich.
     sums: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0, 0.0])
+    metadata: dict[str, dict[str, str]] = {}
     for index, row in enumerate(_iter_csv(path)):
         if split and row.get("split") not in (None, "", split):
             continue
@@ -236,24 +258,40 @@ def aggregate_coordinate_risk(
         if not all(math.isfinite(value) for value in (lat, lon, risk)) or not (-90 <= lat <= 90 and -180 <= lon <= 180):
             continue
         unit = str(row.get(unit_field, "") or f"row_{index}")
+        if unit_field == "site_id":
+            observed = _fmow_site_metadata(row)
+            if unit in metadata and metadata[unit] != observed:
+                raise ValueError(
+                    f"fMoW site metadata drift within {unit}: {metadata[unit]} != {observed}"
+                )
+            metadata[unit] = observed
         acc = sums[unit]
         acc[0] += lat
         acc[1] += math.sin(math.radians(lon))
         acc[2] += math.cos(math.radians(lon))
         acc[3] += risk
         acc[4] += 1
-    rows = [
-        {"spatial_unit": unit, "latitude": acc[0] / acc[4],
-         "longitude": math.degrees(math.atan2(acc[1], acc[2])),
-         "mean_risk": acc[3] / acc[4], "support": int(acc[4])}
-        for unit, acc in sums.items() if acc[4] > 0
-    ]
+    rows = []
+    for unit, acc in sums.items():
+        if acc[4] <= 0:
+            continue
+        item = {
+            "spatial_unit": unit, "latitude": acc[0] / acc[4],
+            "longitude": math.degrees(math.atan2(acc[1], acc[2])),
+            "mean_risk": acc[3] / acc[4], "support": int(acc[4]),
+        }
+        if unit_field == "site_id":
+            item.update({"site_id": unit, **metadata[unit]})
+        rows.append(item)
     if not rows:
         raise ValueError(f"No finite coordinate-risk rows found in {path}")
     q90 = float(np.quantile([row["mean_risk"] for row in rows], .9))
     for row in rows:
         row["tail_excess_over_unit_q90"] = max(0.0, float(row["mean_risk"]) - q90)
-    readiness.update({"status": "ready", "usable_spatial_unit_count": len(rows), "unit_risk_q90": q90})
+    readiness.update({
+        "status": "ready", "usable_spatial_unit_count": len(rows), "unit_risk_q90": q90,
+        "spatial_unit_contract": "site_id=category|location_id" if unit_field == "site_id" else unit_field,
+    })
     return rows, readiness
 
 
@@ -304,6 +342,11 @@ def aggregate_coordinate_risk_across_seeds(
             lon_delta = abs(((float(row["longitude"]) - float(reference["longitude"]) + 180) % 360) - 180)
             if lon_delta > 1e-8:
                 raise ValueError(f"Longitude differs for unit {unit} in seed {seed}")
+            for field in ("site_id",) + FMOW_SITE_METADATA_FIELDS:
+                if str(row.get(field, "")) != str(reference.get(field, "")):
+                    raise ValueError(
+                        f"Site metadata {field} differs for unit {unit} in seed {seed}"
+                    )
         risks = np.asarray([float(row["mean_risk"]) for row in unit_rows], dtype=float)
         output.append({
             "spatial_unit": unit,
@@ -315,6 +358,8 @@ def aggregate_coordinate_risk_across_seeds(
             "seed_max_risk": float(np.max(risks)),
             "seed_count": len(risks),
             "support": int(reference["support"]),
+            **({field: reference.get(field, "") for field in ("site_id",) + FMOW_SITE_METADATA_FIELDS}
+               if reference.get("site_id") else {}),
         })
     q90 = float(np.quantile([row["mean_risk"] for row in output], .9))
     for row in output:
@@ -327,6 +372,7 @@ def aggregate_coordinate_risk_across_seeds(
         "uncertainty_role": "across_seed_sd_available" if len(seeds) > 1 else "unavailable_single_seed",
         "aggregation": "within_seed_unit_risk_then_equal_seed_mean_on_exact_common_units",
         "unit_support_contract": "identical_unit_universe_support_and_coordinates_required",
+        "spatial_unit_contract": "site_id=category|location_id",
         "usable_spatial_unit_count": len(output), "unit_risk_q90": q90,
         "per_seed_readiness": [item[2] for item in per_seed],
     }
@@ -658,10 +704,15 @@ def build_geographic_risk_atlas(
     for name, value in (fmow_csvs or {}).items():
         paths = [value] if isinstance(value, (str, Path)) else list(value)
         rows, status = aggregate_coordinate_risk_across_seeds(
-            paths, required_unit_fields=("location_id", "site_id", "independent_unit_id"),
+            paths, required_unit_fields=FMOW_SITE_FIELDS,
             expected_seed_count=(fmow_expected_seed_counts or {}).get(name),
         )
-        status.update({"task": "fMoW", "model": name, "scientific_role": "exploratory_spatial_localization"})
+        status.update({
+            "task": "fMoW", "model": name,
+            "scientific_role": "exploratory_spatial_localization",
+            "invalid_predecessor_unit_contract": "location_id_only",
+            "replacement_unit_contract": "site_id=category|location_id",
+        })
         stem = _safe_stem(name)
         readiness.append(status); write_csv(output / f"fmow_{stem}_spatial_unit_risk.csv", rows)
         artifacts += [item.name for item in plot_coordinate_atlas(rows, "fMoW", name, output)]
@@ -692,6 +743,7 @@ def build_geographic_risk_atlas(
             "figure_system": "shared typography, panel labels, colorbar geometry, legend style, and atlas_* naming",
         },
         "claim_boundary": "Atlas outputs localize descriptive risk; they do not create causal or multiplicity-adjusted geographic inference.",
+        "fmow_spatial_unit_contract": "site_id=category|location_id; location_id-only aggregation is invalid",
     }
     (output / "geographic_risk_atlas_manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     write_csv(output / "atlas_asset_readiness.csv", readiness)

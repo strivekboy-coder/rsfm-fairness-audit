@@ -90,3 +90,60 @@ def test_association_builds_confirmatory_and_exploratory_outputs(tmp_path: Path)
     assert cluster_qa
     assert all(row["definition"] == "fixed_latitude_band_centre_adjusted_longitude_grid" for row in cluster_qa)
     assert all(int(row["cluster_count"]) <= int(row["maximum_possible_global_cluster_count"]) for row in cluster_qa)
+
+
+def test_fmow_site_id_association_keeps_raw_and_robustness_layers(tmp_path: Path) -> None:
+    atlas = tmp_path / "atlas"
+    risks, covariates = [], []
+    for index in range(40):
+        category = "airport" if index < 20 else "port"
+        location_id = str(index)
+        site_id = f"{category}|{location_id}"
+        continent = "America" if index < 20 else "Europe"
+        country = "USA" if index < 20 else "DEU"
+        latitude = -55 + index * 2.5
+        longitude = -170 + index * 8
+        risks.append({
+            "spatial_unit": site_id, "site_id": site_id, "category": category,
+            "location_id": location_id, "country": country, "continent": continent,
+            "latitude": latitude, "longitude": longitude,
+            "mean_risk": index / 50, "support": 3,
+            "tail_excess_over_unit_q90": 0,
+        })
+        covariates.append({
+            "spatial_unit": site_id, "site_id": site_id, "category": category,
+            "location_id": location_id, "country": country, "continent": continent,
+            "latitude": latitude, "longitude": longitude,
+            "ghsl_urbanization": 11 if index < 20 else 30,
+            "population_density": index * 100, "nightlights": index / 2,
+        })
+    _write(atlas / "fmow_DOFAv2_spatial_unit_risk.csv", risks)
+    _write(tmp_path / "fmow_covariates.csv", covariates)
+    result = build_geographic_risk_association(
+        atlas, tmp_path / "output",
+        fmow_external_csvs={"DOFAv2": tmp_path / "fmow_covariates.csv"},
+        n_boot=40,
+    )
+    night = next(row for row in result["results"] if row["variable"] == "nightlights")
+    assert night["raw_spearman_rho"] == night["spearman_rho"]
+    assert "partial_spatial_cluster_bootstrap_ci_low" in night
+    layers = read_csv_rows(tmp_path / "output" / "association_layers.csv")
+    assert {row["analysis_layer"] for row in layers} == {
+        "descriptive_spatial_covariation", "robustness_independent_association",
+    }
+    summaries = read_csv_rows(tmp_path / "output" / "fmow_geographic_summary.csv")
+    assert {row["geography"] for row in summaries if row["variable"] == "nightlights"} >= {
+        "America", "Europe", "USA", "DEU",
+    }
+
+
+def test_fmow_association_rejects_location_id_only_predecessor(tmp_path: Path) -> None:
+    import pytest
+
+    atlas = tmp_path / "atlas"
+    _write(atlas / "fmow_DOFAv2_spatial_unit_risk.csv", [{
+        "spatial_unit": "1", "latitude": 10, "longitude": 20,
+        "mean_risk": .5, "support": 10,
+    }])
+    with pytest.raises(ValueError, match="Invalid fMoW site contract"):
+        build_geographic_risk_association(atlas, tmp_path / "output", n_boot=20)

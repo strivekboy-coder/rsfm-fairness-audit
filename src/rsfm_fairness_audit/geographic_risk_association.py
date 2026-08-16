@@ -23,7 +23,8 @@ from rsfm_fairness_audit.geographic_risk_atlas import (
 from rsfm_fairness_audit.io import ensure_dir, read_csv_rows, write_csv
 
 
-SCHEMA = "geobwer.geographic_risk_association.preregistered.v1"
+SCHEMA = "geobwer.geographic_risk_association.preregistered.v2"
+GEOGRAPHIC_SUMMARY_MIN_UNITS = 20
 DW_TO_WORLDCOVER = {"0": "80", "1": "10", "2": "30", "3": "90", "4": "40", "5": "20", "6": "50", "7": "60", "8": "70"}
 VARIABLES = {
     "land_cover_heterogeneity": {"role": "confirmatory", "tasks": {"AlphaEarth"}, "direction": "two_sided"},
@@ -248,7 +249,8 @@ def load_external_covariates(path: str | Path) -> tuple[list[dict[str, Any]], di
 
 
 def _merge_by_unit_or_coordinate(
-    target: list[dict[str, Any]], source: Sequence[Mapping[str, Any]], *, max_distance_km: float = 50.0,
+    target: list[dict[str, Any]], source: Sequence[Mapping[str, Any]], *,
+    max_distance_km: float = 50.0, allow_coordinate_fallback: bool = True,
 ) -> dict[str, Any]:
     by_unit = {str(row["spatial_unit"]): row for row in source if row.get("spatial_unit") not in (None, "")}
     coordinate_rows = [row for row in source if math.isfinite(_float(row.get("latitude"))) and math.isfinite(_float(row.get("longitude")))]
@@ -265,7 +267,7 @@ def _merge_by_unit_or_coordinate(
     variable_names = set(EXTERNAL_ALIASES)
     for target_row in target:
         source_row = by_unit.get(str(target_row["spatial_unit"]))
-        if source_row is None and source_xyz is not None:
+        if source_row is None and allow_coordinate_fallback and source_xyz is not None:
             lat, lon = math.radians(float(target_row["latitude"])), math.radians(float(target_row["longitude"]))
             query = np.asarray([math.cos(lat) * math.cos(lon), math.cos(lat) * math.sin(lon), math.sin(lat)])
             dots = np.clip(source_xyz @ query, -1.0, 1.0)
@@ -284,7 +286,25 @@ def _merge_by_unit_or_coordinate(
         "coverage": matched / len(target) if target else 0.0,
         "max_match_distance_km": max(distances) if distances else 0.0,
         "registered_distance_cap_km": max_distance_km,
+        "coordinate_fallback_allowed": allow_coordinate_fallback,
     }
+
+
+def _validate_fmow_site_rows(rows: Sequence[Mapping[str, Any]], source: Path) -> None:
+    seen: set[str] = set()
+    for row in rows:
+        unit = str(row.get("spatial_unit", "") or "")
+        site_id = str(row.get("site_id", "") or "")
+        category = str(row.get("category", "") or "")
+        location_id = str(row.get("location_id", "") or "")
+        if not unit or unit in seen:
+            raise ValueError(f"Duplicate or empty fMoW spatial_unit in {source}: {unit!r}")
+        seen.add(unit)
+        if unit != site_id or site_id != f"{category}|{location_id}":
+            raise ValueError(
+                f"Invalid fMoW site contract in {source}: spatial_unit={unit!r}, "
+                f"site_id={site_id!r}, category={category!r}, location_id={location_id!r}"
+            )
 
 
 def _analyse_variable(
@@ -332,17 +352,25 @@ def _analyse_variable(
         "task": task, "model": model, "variable": variable, "role": role,
         "status": "complete", "n": len(clean), "coverage": len(clean) / len(rows),
         "spearman_rho": _spearman(risk, exposure),
+        "raw_spearman_rho": _spearman(risk, exposure),
         "partial_spearman_rho": _partial_spearman(risk, exposure, controls),
         "spatial_cluster_bootstrap_ci_low": ci_low,
         "spatial_cluster_bootstrap_ci_high": ci_high,
+        "partial_spatial_cluster_bootstrap_ci_low": ci_low,
+        "partial_spatial_cluster_bootstrap_ci_high": ci_high,
         "spatial_cluster_count": cell_count, "spatial_cluster_width_degrees": 15,
         "spatial_cluster_definition": cluster_qa["definition"],
         "controls": "latitude+sin(longitude)+cos(longitude)+log1p(unit_support)",
+        "descriptive_layer": "map_plus_raw_spearman_for_observed_spatial_covariation",
+        "robustness_layer": "partial_spearman_plus_fixed_spatial_cluster_bootstrap_ci",
         "inference_boundary": "association_not_causation",
     }, effect_rows, cluster_qa)
 
 
-def _plot_overlay(rows: Sequence[Mapping[str, Any]], variable: str, title: str, output: Path) -> list[Path]:
+def _plot_overlay(
+    rows: Sequence[Mapping[str, Any]], variable: str, title: str, output: Path,
+    result: Mapping[str, Any],
+) -> list[Path]:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -363,13 +391,20 @@ def _plot_overlay(rows: Sequence[Mapping[str, Any]], variable: str, title: str, 
     for ax, label in zip(axes, ("Covariate with tail-risk outline", "Observed unit risk")):
         ax.set(xlim=(-180, 180), ylim=(-90, 90), xlabel="Longitude", ylabel="Latitude", title=label)
         ax.set_xticks([-180, -90, 0, 90, 180]); ax.set_yticks([-60, -30, 0, 30, 60]); ax.grid(alpha=.18)
-    fig.suptitle(title, fontweight="bold")
+    fig.suptitle(
+        f"{title}\nDescriptive spatial covariation: raw Spearman "
+        f"ρ={float(result['raw_spearman_rho']):.3f}",
+        fontweight="bold",
+    )
     paths = _save_figure(fig, output, _safe_stem(title.lower()) + "_overlay")
     plt.close(fig)
     return paths
 
 
-def _plot_effect(effect_rows: Sequence[Mapping[str, Any]], title: str, output: Path) -> list[Path]:
+def _plot_effect(
+    effect_rows: Sequence[Mapping[str, Any]], title: str, output: Path,
+    result: Mapping[str, Any],
+) -> list[Path]:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -384,10 +419,63 @@ def _plot_effect(effect_rows: Sequence[Mapping[str, Any]], title: str, output: P
     for xi, yi, row in zip(x, y, rows):
         ax.annotate(f"n={row['n']}", (xi, yi), xytext=(4, 5), textcoords="offset points", fontsize=7)
     ax.set(xlabel="Mean covariate value in preregistered quartile", ylabel="Mean unit risk", title=title)
+    ax.text(
+        .02, .02,
+        "Descriptive raw ρ={raw:.3f}\nRobustness partial ρ={partial:.3f} "
+        "[spatial 95% CI {low:.3f}, {high:.3f}]".format(
+            raw=float(result["raw_spearman_rho"]),
+            partial=float(result["partial_spearman_rho"]),
+            low=float(result["partial_spatial_cluster_bootstrap_ci_low"]),
+            high=float(result["partial_spatial_cluster_bootstrap_ci_high"]),
+        ),
+        transform=ax.transAxes, fontsize=7, va="bottom",
+        bbox={"facecolor": "white", "edgecolor": ".8", "alpha": .9, "pad": 3},
+    )
     ax.grid(alpha=.18)
     paths = _save_figure(fig, output, _safe_stem(title.lower()) + "_effect")
     plt.close(fig)
     return paths
+
+
+def _geographic_summaries(
+    task: str, model: str, rows: Sequence[Mapping[str, Any]], variable: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Create support-gated descriptive summaries without adding inferential tests."""
+    if task != "fMoW":
+        return [], []
+    output: list[dict[str, Any]] = []
+    qa: list[dict[str, Any]] = []
+    for level in ("continent", "country"):
+        grouped: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+        for row in rows:
+            group = str(row.get(level, "") or "").strip()
+            if (group and math.isfinite(_float(row.get(variable)))
+                    and math.isfinite(_float(row.get("mean_risk")))):
+                grouped[group].append(row)
+        eligible = 0
+        for group, members in sorted(grouped.items()):
+            if len(members) < GEOGRAPHIC_SUMMARY_MIN_UNITS:
+                continue
+            eligible += 1
+            exposure = np.asarray([float(row[variable]) for row in members])
+            risk = np.asarray([float(row["mean_risk"]) for row in members])
+            output.append({
+                "task": task, "model": model, "variable": variable,
+                "geography_level": level, "geography": group,
+                "unit_count": len(members), "minimum_unit_count": GEOGRAPHIC_SUMMARY_MIN_UNITS,
+                "mean_exposure": float(np.mean(exposure)), "mean_risk": float(np.mean(risk)),
+                "raw_spearman_rho": _spearman(risk, exposure),
+                "analysis_layer": "descriptive_within_geography_raw_spatial_covariation",
+            })
+        qa.append({
+            "task": task, "model": model, "variable": variable,
+            "geography_level": level, "status": "ready" if eligible else "unavailable",
+            "minimum_unit_count": GEOGRAPHIC_SUMMARY_MIN_UNITS,
+            "eligible_group_count": eligible,
+            "suppressed_group_count": len(grouped) - eligible,
+            "suppression_reason": f"fewer_than_{GEOGRAPHIC_SUMMARY_MIN_UNITS}_site_units",
+        })
+    return output, qa
 
 
 def build_geographic_risk_association(
@@ -407,9 +495,13 @@ def build_geographic_risk_association(
         model = path.name.removeprefix("fmow_").removesuffix("_spatial_unit_risk.csv")
         assets.append(("fMoW", model, path))
     availability, results, effects, cluster_qa_rows, artifacts = [], [], [], [], []
+    geographic_summaries: list[dict[str, Any]] = []
+    geographic_summary_qa: list[dict[str, Any]] = []
     provenance: list[dict[str, Any]] = []
     for task, model, risk_path in assets:
         rows = [dict(row) for row in read_csv_rows(risk_path)]
+        if task == "fMoW":
+            _validate_fmow_site_rows(rows, risk_path)
         if task == "AlphaEarth" and alphaearth_sample_csv:
             derived, evidence = derive_alphaearth_covariates(alphaearth_sample_csv)
             provenance.append({"task": task, "model": model, "kind": "internal", **evidence})
@@ -430,7 +522,12 @@ def build_geographic_risk_association(
         if external_path:
             external, evidence = load_external_covariates(external_path)
             provenance.append({"task": task, "model": model, "kind": "external", **evidence})
-            provenance.append({"task": task, "model": model, "kind": "external_join", **_merge_by_unit_or_coordinate(rows, external)})
+            provenance.append({
+                "task": task, "model": model, "kind": "external_join",
+                **_merge_by_unit_or_coordinate(
+                    rows, external, allow_coordinate_fallback=task != "fMoW",
+                ),
+            })
         for variable, spec in VARIABLES.items():
             if task not in spec["tasks"]:
                 availability.append({"task": task, "model": model, "variable": variable,
@@ -450,11 +547,13 @@ def build_geographic_risk_association(
                 task, model, rows, variable, str(spec["role"]), n_boot=n_boot,
             )
             results.append(result); effects.extend(effect); cluster_qa_rows.append(cluster_qa)
+            summaries, summary_qa = _geographic_summaries(task, model, rows, variable)
+            geographic_summaries.extend(summaries); geographic_summary_qa.extend(summary_qa)
             prefix = task if model == task else f"{task} — {model}"
             title = f"{prefix} — {variable.replace('_', ' ')}"
-            artifacts += [path.name for path in _plot_overlay(rows, variable, title, output)]
+            artifacts += [path.name for path in _plot_overlay(rows, variable, title, output, result)]
             if effect:
-                artifacts += [path.name for path in _plot_effect(effect, title, output)]
+                artifacts += [path.name for path in _plot_effect(effect, title, output, result)]
     reben_path = atlas / "reben_country_label_burden.csv"
     reben_status: dict[str, Any] = {"status": "not_available"}
     if reben_path.is_file():
@@ -467,7 +566,23 @@ def build_geographic_risk_association(
         }
     write_csv(output / "covariate_availability.csv", availability)
     write_csv(output / "association_results.csv", results)
+    layers = []
+    for row in results:
+        base = {key: row[key] for key in ("task", "model", "variable", "role", "status", "n", "coverage")}
+        layers.extend([
+            {**base, "analysis_layer": "descriptive_spatial_covariation",
+             "estimand": "raw_spearman", "estimate": row["raw_spearman_rho"],
+             "ci_low": "", "ci_high": "", "controls": "none"},
+            {**base, "analysis_layer": "robustness_independent_association",
+             "estimand": "partial_spearman", "estimate": row["partial_spearman_rho"],
+             "ci_low": row["partial_spatial_cluster_bootstrap_ci_low"],
+             "ci_high": row["partial_spatial_cluster_bootstrap_ci_high"],
+             "controls": row["controls"]},
+        ])
+    write_csv(output / "association_layers.csv", layers)
     write_csv(output / "association_effect_bins.csv", effects)
+    write_csv(output / "fmow_geographic_summary.csv", geographic_summaries)
+    write_csv(output / "fmow_geographic_summary_qa.csv", geographic_summary_qa)
     write_csv(output / "spatial_cluster_qa.csv", cluster_qa_rows)
     failed_cluster_qa = [row for row in cluster_qa_rows if row.get("status") != "pass"]
     if failed_cluster_qa:
@@ -482,13 +597,24 @@ def build_geographic_risk_association(
         "large_external_downloads": False, "n_boot": n_boot,
         "confirmatory_family": [name for name, spec in VARIABLES.items() if spec["role"] == "confirmatory"],
         "exploratory_family": [name for name, spec in VARIABLES.items() if spec["role"] != "confirmatory"],
-        "primary_estimand": "partial_Spearman_controlling_latitude_longitude_and_log_support",
+        "analysis_layers": {
+            "descriptive": "maps + raw Spearman quantify observed spatial covariation",
+            "robustness": "partial Spearman + fixed spatial-cluster bootstrap CI check persistence after registered controls",
+            "interpretation_rule": "adjusted results do not replace or erase the raw spatial phenomenon",
+        },
         "significance_policy": "effect_sizes_and_spatial_cluster_bootstrap_CI_no_dichotomous_p_value_claims",
         "spatial_sensitivity": "15_degree_fixed_latitude_bands_with_band_centre_adjusted_longitude_cluster_bootstrap_95CI",
         "spatial_cluster_qa_status": "pass",
         "spatial_cluster_qa": cluster_qa_rows,
         "minimum_readiness": {"coverage": .8, "units": 20},
         "availability": availability, "results": results, "reben": reben_status,
+        "fmow_spatial_unit_contract": "site_id=category|location_id; exact-unit covariate join only",
+        "geographic_summary": {
+            "minimum_site_units": GEOGRAPHIC_SUMMARY_MIN_UNITS,
+            "levels": ["continent", "country"],
+            "small_groups": "suppressed_not_pooled_or_inferred",
+            "rows": geographic_summaries, "qa": geographic_summary_qa,
+        },
         "artifacts": artifacts, "visual_qa": qa,
         "claim_boundary": (
             "Confirmatory means variables and estimands were fixed before this association run; it does not imply causality. "
