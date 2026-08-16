@@ -34,6 +34,9 @@ VARIABLES = {
     "nightlights": {"role": "exploratory_exposure", "tasks": {"AlphaEarth", "fMoW"}, "direction": "descriptive"},
 }
 EXTERNAL_ALIASES = {
+    "land_cover_heterogeneity": ("land_cover_heterogeneity", "worldcover_heterogeneity"),
+    "reference_confidence": ("reference_confidence", "dynamic_world_confidence", "dw_confidence"),
+    "reference_disagreement": ("reference_disagreement", "worldcover_dynamic_world_disagreement", "map_disagreement"),
     "ghsl_urbanization": ("ghsl_urbanization", "ghsl_degree_urbanisation", "ghsl_smod", "degree_of_urbanisation"),
     "population_density": ("population_density", "population_per_km2", "pop_density"),
     "nightlights": ("nightlights", "nighttime_lights", "viirs_nightlights", "viirs_rad"),
@@ -219,7 +222,7 @@ def _merge_by_unit_or_coordinate(
             np.cos(source_lat) * np.sin(source_lon),
             np.sin(source_lat),
         ])
-    variable_names = set(EXTERNAL_ALIASES) | {"land_cover_heterogeneity", "reference_confidence", "reference_disagreement"}
+    variable_names = set(EXTERNAL_ALIASES)
     for target_row in target:
         source_row = by_unit.get(str(target_row["spatial_unit"]))
         if source_row is None and source_xyz is not None:

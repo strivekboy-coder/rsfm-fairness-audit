@@ -1,0 +1,35 @@
+schema: geobwer.geographic_covariates.official_gee.v1
+freeze_timing: before_external_covariate_association_results
+products:
+  ghsl_urbanization:
+    asset: JRC/GHSL/P2023A/GHS_SMOD_V2-0/2020
+    band: smod_code
+    epoch: 2020
+  population_density:
+    asset: JRC/GHSL/P2023A/GHS_POP/2020
+    band: population_count
+    transform: population_count_divided_by_pixel_area_km2
+    epoch: 2020
+  nightlights:
+    asset: NOAA/VIIRS/DNB/ANNUAL_V21
+    band: average_masked
+    epoch: 2020
+  dynamic_world:
+    asset: GOOGLE/DYNAMICWORLD/V1
+    epoch: 2021
+    label_composite: temporal_mode
+    confidence_composite: temporal_mean_of_per_observation_top1_probability
+spatial_alignment:
+  alphaearth: frozen_test_sample_coordinates_aggregated_by_exact_spatial_block
+  fmow: frozen_atlas_representative_coordinate_per_exact_location_or_site_unit
+  buffer_radius: none
+  outcome_informed_matching: forbidden
+roles:
+  confirmatory:
+    alphaearth: [land_cover_heterogeneity, reference_confidence, reference_disagreement, ghsl_urbanization]
+    fmow: [ghsl_urbanization]
+  exploratory_exposure:
+    alphaearth: [population_density, nightlights]
+    fmow: [population_density, nightlights]
+reference_boundary: Dynamic World confidence/disagreement describe reference-map ambiguity, not human ground truth quality
+selection_policy: no outcome-informed variable, product, epoch, radius, transform, or missing-data proxy selection
