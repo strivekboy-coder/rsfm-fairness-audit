@@ -21,9 +21,14 @@ from rsfm_fairness_audit.geographic_risk_atlas import (
     run_visual_qa,
 )
 from rsfm_fairness_audit.io import ensure_dir, read_csv_rows, write_csv
+from rsfm_fairness_audit.fmow_geographic_identity import (
+    FMOW_GEOGRAPHIC_SITE_COUNT,
+    FMOW_POLYGON_SPAN_LIMIT_M,
+    validate_fmow_geographic_unit,
+)
 
 
-SCHEMA = "geobwer.geographic_risk_association.preregistered.v2"
+SCHEMA = "geobwer.geographic_risk_association.preregistered.v3"
 GEOGRAPHIC_SUMMARY_MIN_UNITS = 20
 DW_TO_WORLDCOVER = {"0": "80", "1": "10", "2": "30", "3": "90", "4": "40", "5": "20", "6": "50", "7": "60", "8": "70"}
 VARIABLES = {
@@ -42,6 +47,11 @@ EXTERNAL_ALIASES = {
     "population_density": ("population_density", "population_per_km2", "pop_density"),
     "nightlights": ("nightlights", "nighttime_lights", "viirs_nightlights", "viirs_rad"),
 }
+FMOW_EXTERNAL_METADATA_FIELDS = (
+    "country", "country_code", "continent", "region", "geography_match_count",
+    "geography_source", "fmow_geographic_site_id", "split_original", "category",
+    "location_id", "archive_parent", "polygon_centroid_span_m", "coordinate_source",
+)
 REFERENCE_CONFIDENCE_FIELDS = ("dynamic_world_confidence", "reference_confidence", "dw_confidence")
 REFERENCE_DISAGREEMENT_FIELDS = ("reference_disagreement", "worldcover_dynamic_world_disagreement", "map_disagreement")
 LAND_COVER_FIELDS = ("worldcover_class_name", "worldcover_label")
@@ -244,6 +254,9 @@ def load_external_covariates(path: str | Path) -> tuple[list[dict[str, Any]], di
             if field:
                 value = _float(row.get(field))
                 item[name] = value if math.isfinite(value) else ""
+        for field in FMOW_EXTERNAL_METADATA_FIELDS:
+            if row.get(field) not in (None, ""):
+                item[field] = row[field]
         output.append(item)
     return output, {"source": str(path), "status": "ready", "variables": variables, "row_count": len(output)}
 
@@ -264,7 +277,7 @@ def _merge_by_unit_or_coordinate(
             np.cos(source_lat) * np.sin(source_lon),
             np.sin(source_lat),
         ])
-    variable_names = set(EXTERNAL_ALIASES)
+    variable_names = set(EXTERNAL_ALIASES) | set(FMOW_EXTERNAL_METADATA_FIELDS)
     for target_row in target:
         source_row = by_unit.get(str(target_row["spatial_unit"]))
         if source_row is None and allow_coordinate_fallback and source_xyz is not None:
@@ -290,21 +303,35 @@ def _merge_by_unit_or_coordinate(
     }
 
 
-def _validate_fmow_site_rows(rows: Sequence[Mapping[str, Any]], source: Path) -> None:
+def _validate_fmow_site_rows(
+    rows: Sequence[Mapping[str, Any]], source: Path, *, expected_site_count: int,
+) -> None:
     seen: set[str] = set()
     for row in rows:
         unit = str(row.get("spatial_unit", "") or "")
-        site_id = str(row.get("site_id", "") or "")
-        category = str(row.get("category", "") or "")
-        location_id = str(row.get("location_id", "") or "")
         if not unit or unit in seen:
             raise ValueError(f"Duplicate or empty fMoW spatial_unit in {source}: {unit!r}")
         seen.add(unit)
-        if unit != site_id or site_id != f"{category}|{location_id}":
-            raise ValueError(
-                f"Invalid fMoW site contract in {source}: spatial_unit={unit!r}, "
-                f"site_id={site_id!r}, category={category!r}, location_id={location_id!r}"
-            )
+        validate_fmow_geographic_unit(row)
+        span = _float(row.get("polygon_centroid_span_m"))
+        if not math.isfinite(span) or not span < FMOW_POLYGON_SPAN_LIMIT_M:
+            raise ValueError(f"Invalid fMoW polygon span in {source}/{unit}: {span}")
+        if row.get("coordinate_source") != "original_polygon_wkt_centroid":
+            raise ValueError(f"Forbidden canonical/legacy coordinate source in {source}/{unit}")
+    if len(seen) != expected_site_count:
+        raise ValueError(
+            f"fMoW association requires the frozen {expected_site_count}-site contract; "
+            f"observed {len(seen)} in {source}"
+        )
+
+
+def _validate_fmow_rebuilt_geography(rows: Sequence[Mapping[str, Any]], source: Path) -> None:
+    for row in rows:
+        unit = str(row["spatial_unit"])
+        if int(float(row.get("geography_match_count") or 0)) != 1:
+            raise ValueError(f"fMoW geography is not an exact point-in-polygon match in {source}/{unit}")
+        if not all(str(row.get(field, "") or "").strip() for field in ("country", "continent", "region")):
+            raise ValueError(f"Missing rebuilt fMoW geography in {source}/{unit}")
 
 
 def _analyse_variable(
@@ -485,6 +512,7 @@ def build_geographic_risk_association(
     alphaearth_external_csv: str | Path | None = None,
     fmow_external_csvs: Mapping[str, str | Path] | None = None,
     n_boot: int = 500,
+    fmow_expected_site_count: int = FMOW_GEOGRAPHIC_SITE_COUNT,
 ) -> dict[str, Any]:
     atlas, output = Path(atlas_dir), ensure_dir(output_dir)
     assets: list[tuple[str, str, Path]] = []
@@ -497,11 +525,12 @@ def build_geographic_risk_association(
     availability, results, effects, cluster_qa_rows, artifacts = [], [], [], [], []
     geographic_summaries: list[dict[str, Any]] = []
     geographic_summary_qa: list[dict[str, Any]] = []
+    fmow_analysis_units: list[dict[str, Any]] = []
     provenance: list[dict[str, Any]] = []
     for task, model, risk_path in assets:
         rows = [dict(row) for row in read_csv_rows(risk_path)]
         if task == "fMoW":
-            _validate_fmow_site_rows(rows, risk_path)
+            _validate_fmow_site_rows(rows, risk_path, expected_site_count=fmow_expected_site_count)
         if task == "AlphaEarth" and alphaearth_sample_csv:
             derived, evidence = derive_alphaearth_covariates(alphaearth_sample_csv)
             provenance.append({"task": task, "model": model, "kind": "internal", **evidence})
@@ -522,12 +551,24 @@ def build_geographic_risk_association(
         if external_path:
             external, evidence = load_external_covariates(external_path)
             provenance.append({"task": task, "model": model, "kind": "external", **evidence})
-            provenance.append({
+            join_evidence = {
                 "task": task, "model": model, "kind": "external_join",
                 **_merge_by_unit_or_coordinate(
                     rows, external, allow_coordinate_fallback=task != "fMoW",
                 ),
-            })
+            }
+            provenance.append(join_evidence)
+            if task == "fMoW" and (
+                join_evidence["join_method"] != "spatial_unit"
+                or join_evidence["matched_unit_count"] != join_evidence["target_unit_count"]
+                or join_evidence["coverage"] != 1.0
+            ):
+                raise ValueError(f"fMoW exact-key covariate coverage failed: {join_evidence}")
+        if task == "fMoW":
+            if not external_path:
+                raise ValueError("Corrected fMoW association requires exact-key rebuilt geography/covariates")
+            _validate_fmow_rebuilt_geography(rows, Path(external_path))
+            fmow_analysis_units.extend({"model": model, **row} for row in rows)
         for variable, spec in VARIABLES.items():
             if task not in spec["tasks"]:
                 availability.append({"task": task, "model": model, "variable": variable,
@@ -584,6 +625,7 @@ def build_geographic_risk_association(
     write_csv(output / "fmow_geographic_summary.csv", geographic_summaries)
     write_csv(output / "fmow_geographic_summary_qa.csv", geographic_summary_qa)
     write_csv(output / "spatial_cluster_qa.csv", cluster_qa_rows)
+    write_csv(output / "fmow_association_analysis_units.csv", fmow_analysis_units)
     failed_cluster_qa = [row for row in cluster_qa_rows if row.get("status") != "pass"]
     if failed_cluster_qa:
         raise ValueError(f"Fixed spatial-cluster QA failed: {failed_cluster_qa}")
@@ -608,7 +650,11 @@ def build_geographic_risk_association(
         "spatial_cluster_qa": cluster_qa_rows,
         "minimum_readiness": {"coverage": .8, "units": 20},
         "availability": availability, "results": results, "reben": reben_status,
-        "fmow_spatial_unit_contract": "site_id=category|location_id; exact-unit covariate join only",
+        "fmow_spatial_unit_contract": (
+            "split_original|category|location_id equivalent to raw archive parent; "
+            "raw-polygon centroid and exact-unit covariate join only"
+        ),
+        "invalid_fmow_predecessors": ["location_id", "category|location_id", "canonical_lat_lon"],
         "geographic_summary": {
             "minimum_site_units": GEOGRAPHIC_SUMMARY_MIN_UNITS,
             "levels": ["continent", "country"],

@@ -13,11 +13,20 @@ import numpy as np
 
 from rsfm_fairness_audit.geographic_risk_association import DW_TO_WORLDCOVER
 from rsfm_fairness_audit.geographic_risk_atlas import LATITUDE_FIELDS, LONGITUDE_FIELDS, _iter_csv
+from rsfm_fairness_audit.fmow_geographic_identity import (
+    FMOW_GEOGRAPHIC_SITE_COUNT,
+    FMOW_GEOGRAPHY_FIELDS,
+    FMOW_POLYGON_SPAN_LIMIT_M,
+    validate_fmow_geographic_unit,
+)
 from rsfm_fairness_audit.io import ensure_dir, read_csv_rows, write_csv
 
 
-SCHEMA = "geobwer.geographic_covariates.official_gee.v2"
-FMOW_METADATA_FIELDS = ("site_id", "category", "location_id", "country", "continent", "region", "un_region")
+SCHEMA = "geobwer.geographic_covariates.official_gee.v3"
+FMOW_METADATA_FIELDS = FMOW_GEOGRAPHY_FIELDS + (
+    "coordinate_source", "country", "country_code", "continent", "region",
+    "geography_match_count", "geography_source",
+)
 PROBABILITY_BANDS = (
     "water", "trees", "grass", "flooded_vegetation", "crops",
     "shrub_and_scrub", "built", "bare", "snow_and_ice",
@@ -46,6 +55,13 @@ PRODUCTS = {
         "native_resolution_m": 10,
         "temporal_label": "mode", "temporal_confidence": "mean_per_observation_top1_probability",
         "url": "https://developers.google.com/earth-engine/datasets/catalog/GOOGLE_DYNAMICWORLD_V1",
+    },
+    "fmow_admin_geography": {
+        "asset": "USDOS/LSIB_SIMPLE/2017",
+        "country_name_property": "country_na", "country_code_property": "country_co",
+        "region_property": "wld_rgn",
+        "join": "exact_point_in_polygon_at_raw_polygon_centroid",
+        "url": "https://developers.google.com/earth-engine/datasets/catalog/USDOS_LSIB_SIMPLE_2017",
     },
 }
 VARIABLES_BY_TASK = {
@@ -131,36 +147,41 @@ def build_alphaearth_sampling_rows(
     }
 
 
-def build_fmow_sampling_rows(risk_csv: str | Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Use one canonical representative coordinate per frozen fMoW site."""
+def build_fmow_sampling_rows(
+    risk_csv: str | Path, *, expected_site_count: int | None = FMOW_GEOGRAPHIC_SITE_COUNT,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Use one raw-polygon-derived coordinate per audited fMoW sequence."""
     rows, invalid = [], 0
     for row in read_csv_rows(risk_csv):
         latitude, longitude = _coordinate(row)
         if not (math.isfinite(latitude) and math.isfinite(longitude)):
             invalid += 1
             continue
-        unit = str(row["spatial_unit"])
-        site_id = str(row.get("site_id", "") or "")
-        category = str(row.get("category", "") or "")
-        location_id = str(row.get("location_id", "") or "")
-        if not site_id or unit != site_id or site_id != f"{category}|{location_id}":
-            raise ValueError(
-                "fMoW atlas risk must use exact site_id=category|location_id; "
-                f"observed spatial_unit={unit!r}, site_id={site_id!r}, "
-                f"category={category!r}, location_id={location_id!r}"
-            )
+        unit = validate_fmow_geographic_unit(row)
+        span_m = _float(row.get("polygon_centroid_span_m"))
+        if not math.isfinite(span_m) or not span_m < FMOW_POLYGON_SPAN_LIMIT_M:
+            raise ValueError(f"Invalid polygon centroid span for {unit}: {span_m}")
+        if row.get("coordinate_source") != "original_polygon_wkt_centroid":
+            raise ValueError(f"fMoW coordinates are not raw-polygon-derived for {unit}")
         rows.append({
             "row_id": unit, "spatial_unit": unit, "latitude": latitude,
             "longitude": longitude, "source_worldcover_label": "",
             **{field: row.get(field, "") for field in FMOW_METADATA_FIELDS},
         })
+    if expected_site_count is not None and len(rows) != expected_site_count:
+        raise ValueError(
+            f"fMoW covariate sampling requires exactly {expected_site_count} audited sites; "
+            f"observed {len(rows)}"
+        )
     return rows, {
         "task": "fMoW", "risk_source": str(risk_csv), "sampling_row_count": len(rows),
         "target_unit_count": len(rows) + invalid, "represented_unit_count": len(rows),
         "unit_coverage": len(rows) / (len(rows) + invalid) if rows or invalid else 0.0,
         "invalid_coordinate_count": invalid,
-        "sampling_rule": "one_frozen_atlas_representative_coordinate_per_exact_site_id",
-        "spatial_unit_contract": "site_id=category|location_id",
+        "sampling_rule": "one_raw_polygon_derived_centroid_per_exact_original_sequence",
+        "spatial_unit_contract": "split_original|category|location_id_equivalent_to_archive_parent",
+        "site_collision_count": 0,
+        "maximum_polygon_centroid_span_m": max((_float(row.get("polygon_centroid_span_m")) for row in rows), default=math.nan),
     }
 
 
@@ -192,6 +213,39 @@ def _official_image_stack(ee: Any, *, include_dynamic_world: bool) -> tuple[Any,
     return stack.unmask(-9999), density.unmask(-9999)
 
 
+def _continent_from_lsib_region(region: Any) -> str:
+    value = str(region or "").strip()
+    normalized = value.casefold()
+    if "middle east" in normalized:
+        return "Asia"
+    for token, continent in (
+        ("africa", "Africa"), ("asia", "Asia"), ("europe", "Europe"),
+        ("north america", "North America"), ("south america", "South America"),
+        ("oceania", "Oceania"), ("australia", "Oceania"),
+    ):
+        if token in normalized:
+            return continent
+    return ""
+
+
+def _attach_fmow_admin_geography(ee: Any, collection: Any) -> Any:
+    boundaries = ee.FeatureCollection(PRODUCTS["fmow_admin_geography"]["asset"])
+
+    def attach(feature: Any) -> Any:
+        matches = boundaries.filterBounds(feature.geometry())
+        count = matches.size()
+        first = ee.Feature(matches.first())
+        return feature.set({
+            "geography_match_count": count,
+            "country": ee.Algorithms.If(count.eq(1), first.get("country_na"), ""),
+            "country_code": ee.Algorithms.If(count.eq(1), first.get("country_co"), ""),
+            "region": ee.Algorithms.If(count.eq(1), first.get("wld_rgn"), ""),
+            "geography_source": PRODUCTS["fmow_admin_geography"]["asset"],
+        })
+
+    return collection.map(attach)
+
+
 def extract_official_covariates_gee(
     sampling_rows: Sequence[Mapping[str, Any]], *, include_dynamic_world: bool,
     batch_size: int = 400, max_retries: int = 3, ee_module: Any | None = None,
@@ -215,11 +269,15 @@ def extract_official_covariates_gee(
                 **{field: str(row.get(field, "")) for field in FMOW_METADATA_FIELDS},
             }) for row in batch
         ]
+        feature_collection = ee.FeatureCollection(features)
+        is_fmow = bool(batch and batch[0].get("fmow_geographic_site_id"))
+        if is_fmow:
+            feature_collection = _attach_fmow_admin_geography(ee, feature_collection)
         sampled = stack.sampleRegions(
-            collection=ee.FeatureCollection(features), scale=10, geometries=False, tileScale=4,
+            collection=feature_collection, scale=10, geometries=False, tileScale=4,
         )
         population_sampled = population_density.sampleRegions(
-            collection=ee.FeatureCollection(features),
+            collection=feature_collection,
             scale=PRODUCTS["population_density"]["sampling_scale_m"],
             geometries=False, tileScale=4,
         )
@@ -247,6 +305,8 @@ def extract_official_covariates_gee(
                           "dynamic_world_label", "reference_confidence"):
                 value = _float(item.get(field))
                 item[field] = "" if not math.isfinite(value) or value <= -9990 else value
+            if is_fmow:
+                item["continent"] = _continent_from_lsib_region(item.get("region"))
             output.append(item)
         print(f"[covariates] sampled {min(start + len(batch), total)}/{total}", flush=True)
     return output
@@ -273,6 +333,10 @@ def aggregate_covariates(
                 if len(values) > 1:
                     raise ValueError(f"Metadata drift for {unit}/{field}: {sorted(values)}")
                 item[field] = next(iter(values), "")
+            if int(float(item.get("geography_match_count") or 0)) != 1:
+                raise ValueError(f"fMoW site {unit} does not have exactly one administrative polygon match")
+            if not all(str(item.get(field, "") or "").strip() for field in ("country", "continent", "region")):
+                raise ValueError(f"fMoW site {unit} lacks rebuilt country/continent/region")
         for variable in ("ghsl_urbanization", "population_density", "nightlights", "reference_confidence"):
             values = [_float(row.get(variable)) for row in rows]
             clean = [value for value in values if math.isfinite(value)]
@@ -316,6 +380,30 @@ def covariate_qa(task: str, rows: Sequence[Mapping[str, Any]], target_units: int
         "task": task, "check": "unique_spatial_unit", "status": "pass" if len(units) == len(set(units)) else "fail",
         "observed": len(set(units)), "expected": len(units),
     })
+    if task == "fMoW":
+        exact_geography = sum(
+            int(float(row.get("geography_match_count") or 0)) == 1
+            and all(str(row.get(field, "") or "").strip() for field in ("country", "continent", "region"))
+            for row in rows
+        )
+        checks.extend([
+            {
+                "task": task, "check": "exact_key_covariate_coverage",
+                "status": "pass" if len(units) == target_units and len(set(units)) == target_units else "fail",
+                "observed": len(set(units)), "expected": target_units,
+            },
+            {
+                "task": task, "check": "point_in_admin_polygon_no_ocean_or_cross_continent",
+                "status": "pass" if exact_geography == len(rows) == target_units else "fail",
+                "observed": exact_geography, "expected": target_units,
+            },
+            {
+                "task": task, "check": "polygon_centroid_span_below_1m",
+                "status": "pass" if all(_float(row.get("polygon_centroid_span_m")) < 1.0 for row in rows) else "fail",
+                "observed": max((_float(row.get("polygon_centroid_span_m")) for row in rows), default=""),
+                "expected": "<1.0m",
+            },
+        ])
     coverage = len(set(units)) / target_units if target_units else 0.0
     checks.append({
         "task": task, "check": "target_unit_alignment", "status": "pass" if coverage >= .8 else "fail",
@@ -365,6 +453,7 @@ def prepare_geographic_risk_covariates(
     *, atlas_dir: str | Path, alphaearth_sample_csv: str | Path,
     output_dir: str | Path, cache_dir: str | Path, batch_size: int = 400,
     ee_module: Any | None = None,
+    expected_fmow_site_count: int = FMOW_GEOGRAPHIC_SITE_COUNT,
 ) -> dict[str, Any]:
     atlas, output, cache = Path(atlas_dir), ensure_dir(output_dir), ensure_dir(cache_dir)
     alpha_risk = atlas / "alphaearth_spatial_unit_risk.csv"
@@ -374,14 +463,19 @@ def prepare_geographic_risk_covariates(
     # All fMoW model tables must describe the same frozen location universe.
     fmow_risk = fmow_risks[0]
     alpha_sampling, alpha_alignment = build_alphaearth_sampling_rows(alphaearth_sample_csv, alpha_risk)
-    fmow_sampling, fmow_alignment = build_fmow_sampling_rows(fmow_risk)
+    fmow_sampling, fmow_alignment = build_fmow_sampling_rows(
+        fmow_risk, expected_site_count=expected_fmow_site_count,
+    )
     fmow_units = {row["spatial_unit"] for row in fmow_sampling}
     model_unit_audit = []
     for path in fmow_risks:
-        units = {row["spatial_unit"] for row in read_csv_rows(path)}
+        source_rows = read_csv_rows(path)
+        source_by_unit = {str(row["spatial_unit"]): row for row in source_rows}
+        canonical_by_unit = {str(row["spatial_unit"]): row for row in fmow_sampling}
+        units = set(source_by_unit)
         coordinates = {
             str(row["spatial_unit"]): (_float(row.get("latitude")), _float(row.get("longitude")))
-            for row in read_csv_rows(path)
+            for row in source_rows
         }
         canonical_coordinates = {
             str(row["spatial_unit"]): (float(row["latitude"]), float(row["longitude"]))
@@ -394,15 +488,26 @@ def prepare_geographic_risk_covariates(
             )
             for unit in fmow_units
         )
+        metadata_mismatches = sum(
+            unit not in source_by_unit or any(
+                str(source_by_unit[unit].get(field, ""))
+                != str(canonical_by_unit[unit].get(field, ""))
+                for field in FMOW_GEOGRAPHY_FIELDS
+            )
+            for unit in fmow_units
+        )
         model_unit_audit.append({
             "source": str(path), "unit_count": len(units),
-            "matches_canonical": units == fmow_units and coordinate_mismatches == 0,
+            "matches_canonical": units == fmow_units and coordinate_mismatches == 0 and metadata_mismatches == 0,
             "coordinate_mismatch_count": coordinate_mismatches,
+            "identity_metadata_mismatch_count": metadata_mismatches,
         })
         if units != fmow_units:
             raise ValueError(f"fMoW atlas model unit mismatch: {path}")
         if coordinate_mismatches:
             raise ValueError(f"fMoW atlas model coordinate mismatch: {path}")
+        if metadata_mismatches:
+            raise ValueError(f"fMoW atlas model identity metadata mismatch: {path}")
     sources = {
         "AlphaEarth": (alpha_sampling, alpha_alignment, True, Path(alphaearth_sample_csv), alpha_risk),
         "fMoW": (fmow_sampling, fmow_alignment, False, fmow_risk, fmow_risk),
@@ -420,10 +525,22 @@ def prepare_geographic_risk_covariates(
             )
             _write_cache(cache_path, extracted, protocol_hash)
             cache_status = "created"
+        expected_row_ids = {str(row["row_id"]) for row in sampling}
+        observed_row_ids = {str(row.get("row_id", "")) for row in extracted}
+        if len(extracted) != len(sampling) or observed_row_ids != expected_row_ids:
+            raise ValueError(
+                f"{task} GEE extraction violated exact-key coverage: "
+                f"expected={len(expected_row_ids)}, observed={len(observed_row_ids)}, "
+                f"missing={sorted(expected_row_ids - observed_row_ids)[:5]}, "
+                f"extra={sorted(observed_row_ids - expected_row_ids)[:5]}"
+            )
         canonical = aggregate_covariates(task, extracted)
         canonical_path = output / ("alphaearth_covariates.csv" if task == "AlphaEarth" else "fmow_covariates.csv")
         write_csv(canonical_path, canonical)
         task_qa = covariate_qa(task, canonical, int(alignment["target_unit_count"]))
+        hard_failures = [row for row in task_qa if row["status"] == "fail"]
+        if hard_failures:
+            raise ValueError(f"Geographic covariate hard QA failed: {hard_failures}")
         qa_rows.extend(task_qa)
         artifacts[task] = str(canonical_path)
         task_manifests.append({
@@ -443,7 +560,7 @@ def prepare_geographic_risk_covariates(
         "products": PRODUCTS, "epoch_policy": "fixed_before_association_results: GHSL/VIIRS=2020; DynamicWorld=2021",
         "spatial_matching": {
             "AlphaEarth": "frozen test sample coordinates aggregated by exact spatial_block",
-            "fMoW": "one frozen representative coordinate per exact site_id=category|location_id",
+            "fMoW": "one original-polygon-derived centroid per exact split_original|category|location_id",
             "buffer_selection": "none", "nearest_join": "not_used_in_canonical_CSVs",
         },
         "sampling_scales_m": {
@@ -459,7 +576,11 @@ def prepare_geographic_risk_covariates(
             "selection_policy": "no outcome-informed variable, product, year, radius, or transformation selection",
             "reference_semantics": "Dynamic World confidence/disagreement are reference-map ambiguity diagnostics, not ground truth quality",
         },
-        "fmow_spatial_unit_contract": "site_id=category|location_id; location_id-only predecessor outputs are invalid",
+        "fmow_spatial_unit_contract": (
+            "split_original|category|location_id equivalent to raw archive parent; "
+            "location_id, category|location_id, and canonical lat/lon predecessors are invalid"
+        ),
+        "fmow_expected_site_count": expected_fmow_site_count,
         "tasks": task_manifests, "artifacts": artifacts,
         "qa_csv": str(qa_path), "fmow_model_unit_alignment": model_unit_audit,
     }

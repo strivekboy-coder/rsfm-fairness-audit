@@ -11,16 +11,26 @@ from typing import Any, Iterable, Mapping, Sequence
 import numpy as np
 
 from rsfm_fairness_audit.io import ensure_dir, write_csv
+from rsfm_fairness_audit.fmow_geographic_identity import (
+    FMOW_GEOGRAPHIC_SITE_COUNT,
+    FMOW_GEOGRAPHY_FIELDS,
+    FMOW_POLYGON_SPAN_LIMIT_M,
+    archive_parent,
+    fmow_geographic_site_id,
+    maximum_coordinate_span_m,
+    mean_coordinate,
+    polygon_centroid,
+)
 
 
-SCHEMA = "geobwer.geographic_risk_atlas.v3"
+SCHEMA = "geobwer.geographic_risk_atlas.v4"
 FIGURE_PREFIX = "atlas"
 OKABE_ITO = ("#0072B2", "#E69F00", "#009E73", "#CC79A7")
 LATITUDE_FIELDS = ("latitude", "lat", "center_lat", "centroid_lat")
 LONGITUDE_FIELDS = ("longitude", "lon", "lng", "center_lon", "centroid_lon")
 UNIT_FIELDS = ("spatial_block_id", "site_id", "location_id", "independent_unit_id", "sample_id")
-FMOW_SITE_FIELDS = ("site_id",)
-FMOW_SITE_METADATA_FIELDS = ("category", "location_id", "country", "continent", "region", "un_region")
+FMOW_SITE_FIELDS = ("split_original", "category", "location_id")
+FMOW_SITE_METADATA_FIELDS = FMOW_GEOGRAPHY_FIELDS
 ALPHAEARTH_AGGREGATE_TABLES = (
     "geobwer_by_group.csv", "geobwer_profile.csv", "geobwer_summary.csv",
 )
@@ -131,18 +141,6 @@ def discover_canonical_fmow_seed_tables(
     }
 
 
-def _fmow_site_metadata(row: Mapping[str, Any]) -> dict[str, str]:
-    category = str(row.get("category", "") or "").strip()
-    location_id = str(row.get("location_id", "") or "").strip()
-    site_id = str(row.get("site_id", "") or "").strip()
-    if not category or not location_id or not site_id:
-        raise ValueError("fMoW site aggregation requires non-empty category, location_id, and site_id")
-    expected = f"{category}|{location_id}"
-    if site_id != expected:
-        raise ValueError(f"Invalid fMoW site_id {site_id!r}; expected category|location_id={expected!r}")
-    return {field: str(row.get(field, "") or "").strip() for field in FMOW_SITE_METADATA_FIELDS}
-
-
 def _first(row: Mapping[str, Any], fields: Sequence[str], *, required: bool = True) -> str:
     for field in fields:
         value = row.get(field)
@@ -245,7 +243,6 @@ def aggregate_coordinate_risk(
     # Circular longitude averaging prevents a unit spanning the dateline from
     # being plotted near Greenwich.
     sums: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0, 0.0])
-    metadata: dict[str, dict[str, str]] = {}
     for index, row in enumerate(_iter_csv(path)):
         if split and row.get("split") not in (None, "", split):
             continue
@@ -258,13 +255,6 @@ def aggregate_coordinate_risk(
         if not all(math.isfinite(value) for value in (lat, lon, risk)) or not (-90 <= lat <= 90 and -180 <= lon <= 180):
             continue
         unit = str(row.get(unit_field, "") or f"row_{index}")
-        if unit_field == "site_id":
-            observed = _fmow_site_metadata(row)
-            if unit in metadata and metadata[unit] != observed:
-                raise ValueError(
-                    f"fMoW site metadata drift within {unit}: {metadata[unit]} != {observed}"
-                )
-            metadata[unit] = observed
         acc = sums[unit]
         acc[0] += lat
         acc[1] += math.sin(math.radians(lon))
@@ -280,8 +270,6 @@ def aggregate_coordinate_risk(
             "longitude": math.degrees(math.atan2(acc[1], acc[2])),
             "mean_risk": acc[3] / acc[4], "support": int(acc[4]),
         }
-        if unit_field == "site_id":
-            item.update({"site_id": unit, **metadata[unit]})
         rows.append(item)
     if not rows:
         raise ValueError(f"No finite coordinate-risk rows found in {path}")
@@ -290,15 +278,96 @@ def aggregate_coordinate_risk(
         row["tail_excess_over_unit_q90"] = max(0.0, float(row["mean_risk"]) - q90)
     readiness.update({
         "status": "ready", "usable_spatial_unit_count": len(rows), "unit_risk_q90": q90,
-        "spatial_unit_contract": "site_id=category|location_id" if unit_field == "site_id" else unit_field,
+        "spatial_unit_contract": unit_field,
     })
     return rows, readiness
+
+
+def aggregate_fmow_coordinate_risk(
+    path: str | Path, *, split: str | None = "test",
+    expected_site_count: int | None = FMOW_GEOGRAPHIC_SITE_COUNT,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Aggregate risk on the audited raw fMoW sequence identity.
+
+    Coordinates are recomputed exclusively from each observation's original
+    polygon WKT.  Legacy site_id, location_id grouping, canonical lat/lon, and
+    inherited country/region fields are intentionally ignored.
+    """
+    path = Path(path)
+    grouped: dict[str, dict[str, Any]] = {}
+    row_count = 0
+    for row in _iter_csv(path):
+        if split and row.get("split") not in (None, "", split):
+            continue
+        unit = fmow_geographic_site_id(row)
+        parent = archive_parent(row)
+        point = polygon_centroid(row.get("polygon"))
+        if row.get("risk") not in (None, ""):
+            risk = float(row["risk"])
+        elif row.get("error") not in (None, ""):
+            risk = float(row["error"])
+        elif row.get("correct") not in (None, ""):
+            risk = 1.0 - float(row["correct"])
+        else:
+            raise ValueError(f"Missing risk/error/correct for fMoW geographic unit {unit}")
+        if not math.isfinite(risk):
+            raise ValueError(f"Non-finite risk for fMoW geographic unit {unit}")
+        identity = {
+            "fmow_geographic_site_id": unit,
+            "split_original": str(row["split_original"]).strip(),
+            "category": str(row["category"]).strip(),
+            "location_id": str(row["location_id"]).strip(),
+            "archive_parent": parent,
+        }
+        item = grouped.setdefault(unit, {"identity": identity, "points": [], "risks": []})
+        if item["identity"] != identity:
+            raise ValueError(f"fMoW geographic identity collision for {unit}: {item['identity']} != {identity}")
+        item["points"].append(point)
+        item["risks"].append(risk)
+        row_count += 1
+    if not grouped:
+        raise ValueError(f"No fMoW rows survived split={split!r} in {path}")
+    if expected_site_count is not None and len(grouped) != expected_site_count:
+        raise ValueError(
+            f"fMoW geographic contract requires {expected_site_count} sites; "
+            f"observed {len(grouped)} in {path}"
+        )
+    output: list[dict[str, Any]] = []
+    for unit, item in sorted(grouped.items()):
+        span_m = maximum_coordinate_span_m(item["points"])
+        if not span_m < FMOW_POLYGON_SPAN_LIMIT_M:
+            raise ValueError(
+                f"fMoW site-internal polygon centroid span must be <{FMOW_POLYGON_SPAN_LIMIT_M}m; "
+                f"observed {span_m:.6f}m for {unit}"
+            )
+        latitude, longitude = mean_coordinate(item["points"])
+        output.append({
+            "spatial_unit": unit, **item["identity"],
+            "latitude": latitude, "longitude": longitude,
+            "coordinate_source": "original_polygon_wkt_centroid",
+            "polygon_centroid_span_m": span_m,
+            "mean_risk": float(np.mean(item["risks"])),
+            "support": len(item["risks"]),
+        })
+    q90 = float(np.quantile([row["mean_risk"] for row in output], .9))
+    for row in output:
+        row["tail_excess_over_unit_q90"] = max(0.0, float(row["mean_risk"]) - q90)
+    return output, {
+        "status": "ready", "path": str(path), "source_row_count": row_count,
+        "usable_spatial_unit_count": len(output), "expected_spatial_unit_count": expected_site_count,
+        "site_collision_count": 0, "maximum_polygon_centroid_span_m": max(float(row["polygon_centroid_span_m"]) for row in output),
+        "polygon_span_contract_m": f"strictly_less_than_{FMOW_POLYGON_SPAN_LIMIT_M}",
+        "coordinate_source": "original_polygon_wkt_only_canonical_lat_lon_forbidden",
+        "spatial_unit_contract": "split_original|category|location_id_equivalent_to_archive_parent",
+        "unit_risk_q90": q90,
+    }
 
 
 def aggregate_coordinate_risk_across_seeds(
     paths: Sequence[str | Path], *, split: str | None = "test",
     required_unit_fields: Sequence[str] | None = None,
     expected_seed_count: int | None = None,
+    expected_site_count: int | None = FMOW_GEOGRAPHIC_SITE_COUNT,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Aggregate unit risks within seed, then average matched units across seeds.
 
@@ -314,8 +383,8 @@ def aggregate_coordinate_risk_across_seeds(
         )
     per_seed: list[tuple[str, dict[str, dict[str, Any]], dict[str, Any]]] = []
     for path in source_paths:
-        rows, status = aggregate_coordinate_risk(
-            path, split=split, required_unit_fields=required_unit_fields,
+        rows, status = aggregate_fmow_coordinate_risk(
+            path, split=split, expected_site_count=expected_site_count,
         )
         seed = _seed_from_path(path)
         per_seed.append((seed, {str(row["spatial_unit"]): row for row in rows}, status))
@@ -342,7 +411,7 @@ def aggregate_coordinate_risk_across_seeds(
             lon_delta = abs(((float(row["longitude"]) - float(reference["longitude"]) + 180) % 360) - 180)
             if lon_delta > 1e-8:
                 raise ValueError(f"Longitude differs for unit {unit} in seed {seed}")
-            for field in ("site_id",) + FMOW_SITE_METADATA_FIELDS:
+            for field in FMOW_SITE_METADATA_FIELDS + ("coordinate_source",):
                 if str(row.get(field, "")) != str(reference.get(field, "")):
                     raise ValueError(
                         f"Site metadata {field} differs for unit {unit} in seed {seed}"
@@ -358,8 +427,7 @@ def aggregate_coordinate_risk_across_seeds(
             "seed_max_risk": float(np.max(risks)),
             "seed_count": len(risks),
             "support": int(reference["support"]),
-            **({field: reference.get(field, "") for field in ("site_id",) + FMOW_SITE_METADATA_FIELDS}
-               if reference.get("site_id") else {}),
+            **{field: reference.get(field, "") for field in FMOW_SITE_METADATA_FIELDS + ("coordinate_source",)},
         })
     q90 = float(np.quantile([row["mean_risk"] for row in output], .9))
     for row in output:
@@ -372,7 +440,9 @@ def aggregate_coordinate_risk_across_seeds(
         "uncertainty_role": "across_seed_sd_available" if len(seeds) > 1 else "unavailable_single_seed",
         "aggregation": "within_seed_unit_risk_then_equal_seed_mean_on_exact_common_units",
         "unit_support_contract": "identical_unit_universe_support_and_coordinates_required",
-        "spatial_unit_contract": "site_id=category|location_id",
+        "spatial_unit_contract": "split_original|category|location_id_equivalent_to_archive_parent",
+        "site_collision_count": 0,
+        "maximum_polygon_centroid_span_m": max(float(row["polygon_centroid_span_m"]) for row in output),
         "usable_spatial_unit_count": len(output), "unit_risk_q90": q90,
         "per_seed_readiness": [item[2] for item in per_seed],
     }
@@ -680,10 +750,12 @@ def build_geographic_risk_atlas(
     fmow_expected_seed_counts: Mapping[str, int] | None = None,
     reben_paired_dir: str | Path | None = None,
     reben_model_paired_dirs: Mapping[str, str | Path] | None = None,
+    fmow_expected_site_count: int = FMOW_GEOGRAPHIC_SITE_COUNT,
 ) -> dict[str, Any]:
     output = ensure_dir(output_dir)
     readiness: list[dict[str, Any]] = []
     artifacts: list[str] = []
+    fmow_contract_rows: dict[str, list[dict[str, Any]]] = {}
     if alphaearth_csv and alphaearth_root:
         raise ValueError("Use only one of alphaearth_csv or alphaearth_root")
     alpha_discovery: dict[str, Any] | None = None
@@ -706,16 +778,51 @@ def build_geographic_risk_atlas(
         rows, status = aggregate_coordinate_risk_across_seeds(
             paths, required_unit_fields=FMOW_SITE_FIELDS,
             expected_seed_count=(fmow_expected_seed_counts or {}).get(name),
+            expected_site_count=fmow_expected_site_count,
         )
         status.update({
             "task": "fMoW", "model": name,
             "scientific_role": "exploratory_spatial_localization",
-            "invalid_predecessor_unit_contract": "location_id_only",
-            "replacement_unit_contract": "site_id=category|location_id",
+            "invalid_predecessor_unit_contracts": ["location_id", "category|location_id", "canonical_lat_lon"],
+            "replacement_unit_contract": "split_original|category|location_id equivalent to raw archive parent",
         })
         stem = _safe_stem(name)
+        fmow_contract_rows[name] = rows
         readiness.append(status); write_csv(output / f"fmow_{stem}_spatial_unit_risk.csv", rows)
         artifacts += [item.name for item in plot_coordinate_atlas(rows, "fMoW", name, output)]
+    fmow_contract_qa: list[dict[str, Any]] = []
+    if fmow_contract_rows:
+        reference_model = next(iter(fmow_contract_rows))
+        reference = {str(row["spatial_unit"]): row for row in fmow_contract_rows[reference_model]}
+        for model, rows in fmow_contract_rows.items():
+            observed = {str(row["spatial_unit"]): row for row in rows}
+            coordinate_mismatches = 0
+            metadata_mismatches = 0
+            for unit in set(reference) & set(observed):
+                if (abs(float(reference[unit]["latitude"]) - float(observed[unit]["latitude"])) > 1e-10
+                        or abs(((float(reference[unit]["longitude"]) - float(observed[unit]["longitude"]) + 180) % 360) - 180) > 1e-10):
+                    coordinate_mismatches += 1
+                if any(str(reference[unit].get(field, "")) != str(observed[unit].get(field, ""))
+                       for field in FMOW_SITE_METADATA_FIELDS):
+                    metadata_mismatches += 1
+            passed = (
+                len(observed) == fmow_expected_site_count
+                and set(observed) == set(reference)
+                and coordinate_mismatches == 0 and metadata_mismatches == 0
+            )
+            qa = {
+                "model": model, "reference_model": reference_model,
+                "site_count": len(observed), "expected_site_count": fmow_expected_site_count,
+                "missing_site_count": len(set(reference) - set(observed)),
+                "extra_site_count": len(set(observed) - set(reference)),
+                "coordinate_mismatch_count": coordinate_mismatches,
+                "metadata_mismatch_count": metadata_mismatches,
+                "site_collision_count": 0, "status": "pass" if passed else "fail",
+            }
+            fmow_contract_qa.append(qa)
+            if not passed:
+                raise ValueError(f"Cross-model fMoW 1,480-site geography contract failed: {qa}")
+        write_csv(output / "fmow_geography_contract_qa.csv", fmow_contract_qa)
     if reben_paired_dir:
         rows, status = aggregate_reben_country_label_burden(reben_paired_dir)
         status.update({"task": "reBEN", "scientific_role": "descriptive_paired_burden_localization"})
@@ -736,6 +843,7 @@ def build_geographic_risk_atlas(
         "schema": SCHEMA, "status": "complete" if readiness else "no_inputs", "cpu_only": True,
         "external_downloads": False, "training": False, "readiness": readiness,
         "artifacts": artifacts, "visual_qa": qa_rows,
+        "fmow_geography_contract_qa": fmow_contract_qa,
         "visual_contract": {
             "coordinate_risk_cmap": "viridis", "tail_burden_cmap": "magma",
             "signed_delta_cmap": "PuOr_r centered at zero", "formats": ["png_300dpi", "pdf_vector_text"],
@@ -743,7 +851,11 @@ def build_geographic_risk_atlas(
             "figure_system": "shared typography, panel labels, colorbar geometry, legend style, and atlas_* naming",
         },
         "claim_boundary": "Atlas outputs localize descriptive risk; they do not create causal or multiplicity-adjusted geographic inference.",
-        "fmow_spatial_unit_contract": "site_id=category|location_id; location_id-only aggregation is invalid",
+        "fmow_spatial_unit_contract": (
+            "split_original|category|location_id equivalent to raw archive parent; "
+            "all centroids recomputed from original polygon WKT"
+        ),
+        "invalid_fmow_predecessors": ["location_id", "category|location_id", "canonical_lat_lon"],
     }
     (output / "geographic_risk_atlas_manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     write_csv(output / "atlas_asset_readiness.csv", readiness)

@@ -117,9 +117,11 @@ def test_prepare_writes_canonical_manifest_qa_and_reuses_fixed_task_contract(tmp
     ])
     for model in ("dofa", "resnet"):
         _write(atlas / f"fmow_{model}_spatial_unit_risk.csv", [
-            {"spatial_unit": "airport|1", "site_id": "airport|1",
-             "category": "airport", "location_id": "1", "country": "USA",
-             "continent": "America", "latitude": 30, "longitude": 40,
+            {"spatial_unit": "test|airport|1", "fmow_geographic_site_id": "test|airport|1",
+             "split_original": "test", "category": "airport", "location_id": "1",
+             "archive_parent": "fmow-sentinel/test/airport/airport_1",
+             "polygon_centroid_span_m": 0, "coordinate_source": "original_polygon_wkt_centroid",
+             "latitude": 30, "longitude": 40,
              "mean_risk": .3},
         ])
     _write(alpha_samples, [
@@ -130,7 +132,11 @@ def test_prepare_writes_canonical_manifest_qa_and_reuses_fixed_task_contract(tmp
     def fake_extract(rows, *, include_dynamic_world, **kwargs):
         return [{**dict(row), "ghsl_urbanization": 21, "population_density": 50,
                  "nightlights": 1.5, "dynamic_world_label": 1 if include_dynamic_world else "",
-                 "reference_confidence": .9 if include_dynamic_world else ""} for row in rows]
+                 "reference_confidence": .9 if include_dynamic_world else "",
+                 **({"country": "United States", "country_code": "US", "continent": "North America",
+                     "region": "North America", "geography_match_count": 1,
+                     "geography_source": "USDOS/LSIB_SIMPLE/2017"}
+                    if not include_dynamic_world else {})} for row in rows]
 
     monkeypatch.setattr(
         "rsfm_fairness_audit.geographic_risk_covariates.extract_official_covariates_gee",
@@ -140,6 +146,7 @@ def test_prepare_writes_canonical_manifest_qa_and_reuses_fixed_task_contract(tmp
     result = prepare_geographic_risk_covariates(
         atlas_dir=atlas, alphaearth_sample_csv=alpha_samples,
         output_dir=output, cache_dir=tmp_path / "cache",
+        expected_fmow_site_count=1,
     )
     assert result["status"] == "complete"
     assert (output / "alphaearth_covariates.csv").is_file()
@@ -147,7 +154,7 @@ def test_prepare_writes_canonical_manifest_qa_and_reuses_fixed_task_contract(tmp
     assert (output / "covariate_qa.csv").is_file()
     manifest = json.loads((output / "geographic_covariate_manifest.json").read_text(encoding="utf-8"))
     assert manifest["spatial_matching"]["buffer_selection"] == "none"
-    assert manifest["fmow_spatial_unit_contract"].startswith("site_id=category|location_id")
+    assert manifest["fmow_spatial_unit_contract"].startswith("split_original|category|location_id")
     assert "no outcome-informed" in manifest["scientific_boundary"]["selection_policy"]
 
 

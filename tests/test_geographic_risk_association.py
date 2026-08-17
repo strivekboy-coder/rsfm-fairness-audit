@@ -92,27 +92,34 @@ def test_association_builds_confirmatory_and_exploratory_outputs(tmp_path: Path)
     assert all(int(row["cluster_count"]) <= int(row["maximum_possible_global_cluster_count"]) for row in cluster_qa)
 
 
-def test_fmow_site_id_association_keeps_raw_and_robustness_layers(tmp_path: Path) -> None:
+def test_fmow_original_sequence_association_keeps_raw_and_robustness_layers(tmp_path: Path) -> None:
     atlas = tmp_path / "atlas"
     risks, covariates = [], []
     for index in range(40):
         category = "airport" if index < 20 else "port"
         location_id = str(index)
-        site_id = f"{category}|{location_id}"
+        site_id = f"test|{category}|{location_id}"
         continent = "America" if index < 20 else "Europe"
         country = "USA" if index < 20 else "DEU"
         latitude = -55 + index * 2.5
         longitude = -170 + index * 8
         risks.append({
-            "spatial_unit": site_id, "site_id": site_id, "category": category,
-            "location_id": location_id, "country": country, "continent": continent,
+            "spatial_unit": site_id, "fmow_geographic_site_id": site_id,
+            "split_original": "test", "category": category, "location_id": location_id,
+            "archive_parent": f"fmow-sentinel/test/{category}/{category}_{location_id}",
+            "polygon_centroid_span_m": 0, "coordinate_source": "original_polygon_wkt_centroid",
             "latitude": latitude, "longitude": longitude,
             "mean_risk": index / 50, "support": 3,
             "tail_excess_over_unit_q90": 0,
         })
         covariates.append({
-            "spatial_unit": site_id, "site_id": site_id, "category": category,
-            "location_id": location_id, "country": country, "continent": continent,
+            "spatial_unit": site_id, "fmow_geographic_site_id": site_id,
+            "split_original": "test", "category": category, "location_id": location_id,
+            "archive_parent": f"fmow-sentinel/test/{category}/{category}_{location_id}",
+            "polygon_centroid_span_m": 0, "coordinate_source": "original_polygon_wkt_centroid",
+            "country": country, "country_code": country, "continent": continent,
+            "region": continent, "geography_match_count": 1,
+            "geography_source": "USDOS/LSIB_SIMPLE/2017",
             "latitude": latitude, "longitude": longitude,
             "ghsl_urbanization": 11 if index < 20 else 30,
             "population_density": index * 100, "nightlights": index / 2,
@@ -122,7 +129,7 @@ def test_fmow_site_id_association_keeps_raw_and_robustness_layers(tmp_path: Path
     result = build_geographic_risk_association(
         atlas, tmp_path / "output",
         fmow_external_csvs={"DOFAv2": tmp_path / "fmow_covariates.csv"},
-        n_boot=40,
+        n_boot=40, fmow_expected_site_count=40,
     )
     night = next(row for row in result["results"] if row["variable"] == "nightlights")
     assert night["raw_spearman_rho"] == night["spearman_rho"]
@@ -145,5 +152,7 @@ def test_fmow_association_rejects_location_id_only_predecessor(tmp_path: Path) -
         "spatial_unit": "1", "latitude": 10, "longitude": 20,
         "mean_risk": .5, "support": 10,
     }])
-    with pytest.raises(ValueError, match="Invalid fMoW site contract"):
-        build_geographic_risk_association(atlas, tmp_path / "output", n_boot=20)
+    with pytest.raises(ValueError, match="fMoW geographic identity requires"):
+        build_geographic_risk_association(
+            atlas, tmp_path / "output", n_boot=20, fmow_expected_site_count=1,
+        )

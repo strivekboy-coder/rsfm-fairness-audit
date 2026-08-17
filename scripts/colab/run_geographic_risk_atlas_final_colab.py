@@ -34,16 +34,19 @@ def _mark_invalid_predecessors(paths: list[Path], replacement: dict[str, str]) -
     payload = {
         "status": "invalid_for_fmow_spatial_science",
         "scope": "fMoW spatial atlas, covariate alignment, maps, and associations only",
-        "reason": "location_id is category-scoped and was incorrectly treated as globally unique",
-        "invalid_unit_contract": "location_id",
-        "replacement_unit_contract": "site_id=category|location_id",
+        "reason": (
+            "location_id and category|location_id merge distinct original split sequences; "
+            "canonical lat/lon were produced by the same contaminated aggregation"
+        ),
+        "invalid_unit_contracts": ["location_id", "category|location_id", "canonical_lat_lon"],
+        "replacement_unit_contract": "split_original|category|location_id equivalent to raw archive parent",
         "alphaearth_and_reben_status": "unaffected_by_this_invalidation",
         "replacement": replacement,
     }
     for path in paths:
         if not path.is_dir():
             continue
-        marker = path / "INVALID_FMOW_LOCATION_ID_AGGREGATION.json"
+        marker = path / "INVALID_FMOW_GEOGRAPHIC_IDENTITY.json"
         marker.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
         marked.append(str(marker))
         print(f"[invalidated predecessor] {marker}", flush=True)
@@ -95,10 +98,10 @@ def main() -> None:
         output_root / "reben_croma_paired_shift_v1",
     ], "reBEN CROMA paired result", "paired_shift_country_deltas.csv")
     _require_result_root([reben], "reBEN TerraMind paired result", "paired_shift_country_deltas.csv")
-    atlas_dir = output_root / "geographic_risk_atlas_v3_site_id"
-    covariate_dir = args.project_root / "covariates" / "geographic_risk_v2_site_id"
-    cache_dir = args.project_root / "cache" / "geographic_risk_covariates_v2_site_id"
-    association_dir = output_root / "geographic_risk_association_v2_site_id"
+    atlas_dir = output_root / "geographic_risk_atlas_v4_original_sequence"
+    covariate_dir = args.project_root / "covariates" / "geographic_risk_v3_original_sequence"
+    cache_dir = args.project_root / "cache" / "geographic_risk_covariates_v3_original_sequence"
+    association_dir = output_root / "geographic_risk_association_v3_original_sequence"
     atlas_command = [
         sys.executable, str(repo / "scripts/analysis/build_geographic_risk_atlas.py"),
         "--alphaearth-root", str(alpha_root),
@@ -126,7 +129,7 @@ def main() -> None:
     print("[covariates]", " ".join(map(str, prepare_command)), flush=True)
     subprocess.run(prepare_command, cwd=repo, env=env, check=True)
     alpha_external = _require(covariate_dir / "alphaearth_covariates.csv", "AlphaEarth canonical covariates")
-    fmow_external = _require(covariate_dir / "fmow_covariates.csv", "fMoW site_id canonical covariates")
+    fmow_external = _require(covariate_dir / "fmow_covariates.csv", "fMoW original-sequence canonical covariates")
     association_command = [
         sys.executable, str(repo / "scripts/analysis/build_geographic_risk_association.py"),
         "--atlas-dir", str(atlas_dir), "--output-dir", str(association_dir),
@@ -158,6 +161,10 @@ def main() -> None:
         *(
             path for path in (args.project_root / "covariates").glob("geographic_risk_v*")
             if path != covariate_dir
+        ),
+        *(
+            path for path in (args.project_root / "cache").glob("geographic_risk_covariates_v*")
+            if path != cache_dir
         ),
     }, key=str)
     invalidated = _mark_invalid_predecessors(predecessors, replacement)

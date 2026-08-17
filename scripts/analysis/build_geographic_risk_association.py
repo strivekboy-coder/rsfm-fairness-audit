@@ -25,6 +25,7 @@ def main() -> None:
     parser.add_argument("--fmow-sample-csv", action="append", default=[], metavar="NAME=CSV")
     parser.add_argument("--fmow-external-csv", action="append", default=[], metavar="NAME=CSV")
     parser.add_argument("--n-boot", type=int, default=500)
+    parser.add_argument("--fmow-site-count", type=int, default=1480)
     args = parser.parse_args()
     result = build_geographic_risk_association(
         args.atlas_dir, args.output_dir,
@@ -33,6 +34,7 @@ def main() -> None:
         alphaearth_external_csv=args.alphaearth_external_csv,
         fmow_external_csvs=_mapping(args.fmow_external_csv, parser),
         n_boot=args.n_boot,
+        fmow_expected_site_count=args.fmow_site_count,
     )
     print(f"status={result['status']}")
     print(f"completed_associations={len(result['results'])}")

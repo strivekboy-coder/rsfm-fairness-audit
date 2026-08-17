@@ -13,6 +13,7 @@ def main() -> None:
     alpha.add_argument("--alphaearth-root", type=Path, help="Canonical AlphaEarth result root; discovers formal_outputs/formal_audit_table.csv and validates its contract.")
     parser.add_argument("--fmow-csv", action="append", default=[], metavar="NAME=CSV")
     parser.add_argument("--fmow-seed-count", action="append", default=[], metavar="NAME=N")
+    parser.add_argument("--fmow-site-count", type=int, default=1480)
     parser.add_argument("--reben-paired-dir", type=Path)
     parser.add_argument("--reben-model-paired-dir", action="append", default=[], metavar="MODEL=DIR")
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -42,6 +43,7 @@ def main() -> None:
         fmow_csvs=fmow, fmow_expected_seed_counts=expected,
         reben_paired_dir=args.reben_paired_dir,
         reben_model_paired_dirs=reben_models,
+        fmow_expected_site_count=args.fmow_site_count,
     )
     print(f"status={result['status']}")
     print(f"asset_count={len(result['readiness'])}")
