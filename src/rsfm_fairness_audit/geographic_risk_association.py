@@ -51,6 +51,7 @@ FMOW_EXTERNAL_METADATA_FIELDS = (
     "country", "country_code", "continent", "region", "geography_match_count",
     "geography_source", "fmow_geographic_site_id", "split_original", "category",
     "location_id", "archive_parent", "polygon_centroid_span_m", "coordinate_source",
+    "admin_geography_reliable",
 )
 REFERENCE_CONFIDENCE_FIELDS = ("dynamic_world_confidence", "reference_confidence", "dw_confidence")
 REFERENCE_DISAGREEMENT_FIELDS = ("reference_disagreement", "worldcover_dynamic_world_disagreement", "map_disagreement")
@@ -325,13 +326,34 @@ def _validate_fmow_site_rows(
         )
 
 
-def _validate_fmow_rebuilt_geography(rows: Sequence[Mapping[str, Any]], source: Path) -> None:
+def _validate_fmow_rebuilt_geography(
+    rows: Sequence[Mapping[str, Any]], source: Path,
+) -> dict[str, Any]:
+    reliable = 0
+    unmatched: list[str] = []
     for row in rows:
         unit = str(row["spatial_unit"])
-        if int(float(row.get("geography_match_count") or 0)) != 1:
-            raise ValueError(f"fMoW geography is not an exact point-in-polygon match in {source}/{unit}")
-        if not all(str(row.get(field, "") or "").strip() for field in ("country", "continent", "region")):
-            raise ValueError(f"Missing rebuilt fMoW geography in {source}/{unit}")
+        match_count = int(float(row.get("geography_match_count") or 0))
+        fields = [str(row.get(field, "") or "").strip() for field in ("country", "continent", "region")]
+        is_reliable = match_count == 1 and all(value and value != "unknown" for value in fields)
+        if is_reliable:
+            reliable += 1
+        else:
+            unmatched.append(unit)
+            if any(value not in ("", "unknown") for value in fields):
+                raise ValueError(
+                    f"Unreliable fMoW administrative match must be explicitly unknown in {source}/{unit}"
+                )
+    return {
+        "source": str(source), "total_site_count": len(rows),
+        "exact_admin_match_count": reliable,
+        "unmatched_admin_site_count": len(unmatched),
+        "admin_match_coverage": reliable / len(rows) if rows else 0.0,
+        "unmatched_spatial_units": unmatched,
+        "global_association_policy": "all_exact_spatial_units_regardless_of_admin_match",
+        "administrative_summary_policy": "reliable_exact_admin_matches_only",
+        "nearest_country_fallback": "forbidden",
+    }
 
 
 def _analyse_variable(
@@ -472,9 +494,15 @@ def _geographic_summaries(
         return [], []
     output: list[dict[str, Any]] = []
     qa: list[dict[str, Any]] = []
+    reliable_rows = [
+        row for row in rows
+        if int(float(row.get("geography_match_count") or 0)) == 1
+        and all(str(row.get(field, "") or "").strip() not in ("", "unknown")
+                for field in ("country", "continent", "region"))
+    ]
     for level in ("continent", "country"):
         grouped: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
-        for row in rows:
+        for row in reliable_rows:
             group = str(row.get(level, "") or "").strip()
             if (group and math.isfinite(_float(row.get(variable)))
                     and math.isfinite(_float(row.get("mean_risk")))):
@@ -500,7 +528,12 @@ def _geographic_summaries(
             "minimum_unit_count": GEOGRAPHIC_SUMMARY_MIN_UNITS,
             "eligible_group_count": eligible,
             "suppressed_group_count": len(grouped) - eligible,
+            "total_site_count": len(rows),
+            "reliable_admin_site_count": len(reliable_rows),
+            "unmatched_admin_site_count": len(rows) - len(reliable_rows),
+            "admin_match_coverage": len(reliable_rows) / len(rows) if rows else 0.0,
             "suppression_reason": f"fewer_than_{GEOGRAPHIC_SUMMARY_MIN_UNITS}_site_units",
+            "admin_subset_policy": "reliable_exact_matches_only_no_nearest_country_fallback",
         })
     return output, qa
 
@@ -526,6 +559,7 @@ def build_geographic_risk_association(
     geographic_summaries: list[dict[str, Any]] = []
     geographic_summary_qa: list[dict[str, Any]] = []
     fmow_analysis_units: list[dict[str, Any]] = []
+    fmow_admin_coverage: list[dict[str, Any]] = []
     provenance: list[dict[str, Any]] = []
     for task, model, risk_path in assets:
         rows = [dict(row) for row in read_csv_rows(risk_path)]
@@ -567,7 +601,9 @@ def build_geographic_risk_association(
         if task == "fMoW":
             if not external_path:
                 raise ValueError("Corrected fMoW association requires exact-key rebuilt geography/covariates")
-            _validate_fmow_rebuilt_geography(rows, Path(external_path))
+            fmow_admin_coverage.append(
+                {"model": model, **_validate_fmow_rebuilt_geography(rows, Path(external_path))}
+            )
             fmow_analysis_units.extend({"model": model, **row} for row in rows)
         for variable, spec in VARIABLES.items():
             if task not in spec["tasks"]:
@@ -626,6 +662,7 @@ def build_geographic_risk_association(
     write_csv(output / "fmow_geographic_summary_qa.csv", geographic_summary_qa)
     write_csv(output / "spatial_cluster_qa.csv", cluster_qa_rows)
     write_csv(output / "fmow_association_analysis_units.csv", fmow_analysis_units)
+    write_csv(output / "fmow_admin_geography_coverage_qa.csv", fmow_admin_coverage)
     failed_cluster_qa = [row for row in cluster_qa_rows if row.get("status") != "pass"]
     if failed_cluster_qa:
         raise ValueError(f"Fixed spatial-cluster QA failed: {failed_cluster_qa}")
@@ -655,6 +692,7 @@ def build_geographic_risk_association(
             "raw-polygon centroid and exact-unit covariate join only"
         ),
         "invalid_fmow_predecessors": ["location_id", "category|location_id", "canonical_lat_lon"],
+        "fmow_admin_geography_coverage": fmow_admin_coverage,
         "geographic_summary": {
             "minimum_site_units": GEOGRAPHIC_SUMMARY_MIN_UNITS,
             "levels": ["continent", "country"],

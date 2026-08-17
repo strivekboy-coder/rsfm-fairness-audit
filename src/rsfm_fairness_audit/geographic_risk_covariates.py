@@ -216,12 +216,15 @@ def _official_image_stack(ee: Any, *, include_dynamic_world: bool) -> tuple[Any,
 def _continent_from_lsib_region(region: Any) -> str:
     value = str(region or "").strip()
     normalized = value.casefold()
+    if any(token in normalized for token in ("caribbean", "central america")):
+        return "North America"
     if "middle east" in normalized:
         return "Asia"
     for token, continent in (
         ("africa", "Africa"), ("asia", "Asia"), ("europe", "Europe"),
         ("north america", "North America"), ("south america", "South America"),
         ("oceania", "Oceania"), ("australia", "Oceania"),
+        ("pacific", "Oceania"), ("antarctica", "Antarctica"),
     ):
         if token in normalized:
             return continent
@@ -333,10 +336,16 @@ def aggregate_covariates(
                 if len(values) > 1:
                     raise ValueError(f"Metadata drift for {unit}/{field}: {sorted(values)}")
                 item[field] = next(iter(values), "")
-            if int(float(item.get("geography_match_count") or 0)) != 1:
-                raise ValueError(f"fMoW site {unit} does not have exactly one administrative polygon match")
-            if not all(str(item.get(field, "") or "").strip() for field in ("country", "continent", "region")):
-                raise ValueError(f"fMoW site {unit} lacks rebuilt country/continent/region")
+            match_count = int(float(item.get("geography_match_count") or 0))
+            country = str(item.get("country", "") or "").strip()
+            region = str(item.get("region", "") or "").strip()
+            continent = _continent_from_lsib_region(region)
+            reliable = match_count == 1 and bool(country and region and continent)
+            item["country"] = country if reliable else "unknown"
+            item["country_code"] = str(item.get("country_code", "") or "").strip() if reliable else "unknown"
+            item["region"] = region if reliable else "unknown"
+            item["continent"] = continent if reliable else "unknown"
+            item["admin_geography_reliable"] = int(reliable)
         for variable in ("ghsl_urbanization", "population_density", "nightlights", "reference_confidence"):
             values = [_float(row.get(variable)) for row in rows]
             clean = [value for value in values if math.isfinite(value)]
@@ -381,11 +390,7 @@ def covariate_qa(task: str, rows: Sequence[Mapping[str, Any]], target_units: int
         "observed": len(set(units)), "expected": len(units),
     })
     if task == "fMoW":
-        exact_geography = sum(
-            int(float(row.get("geography_match_count") or 0)) == 1
-            and all(str(row.get(field, "") or "").strip() for field in ("country", "continent", "region"))
-            for row in rows
-        )
+        exact_geography = sum(int(float(row.get("admin_geography_reliable") or 0)) == 1 for row in rows)
         checks.extend([
             {
                 "task": task, "check": "exact_key_covariate_coverage",
@@ -394,8 +399,10 @@ def covariate_qa(task: str, rows: Sequence[Mapping[str, Any]], target_units: int
             },
             {
                 "task": task, "check": "point_in_admin_polygon_no_ocean_or_cross_continent",
-                "status": "pass" if exact_geography == len(rows) == target_units else "fail",
+                "status": "pass" if exact_geography == len(rows) == target_units else "partial",
                 "observed": exact_geography, "expected": target_units,
+                "unmatched_site_count": len(rows) - exact_geography,
+                "interpretation": "unmatched sites remain in global associations and are excluded only from administrative summaries",
             },
             {
                 "task": task, "check": "polygon_centroid_span_below_1m",
@@ -435,6 +442,42 @@ def covariate_qa(task: str, rows: Sequence[Mapping[str, Any]], target_units: int
     return checks
 
 
+def admin_geography_coverage_qa(
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    unmatched = []
+    exact = 0
+    for row in rows:
+        reliable = int(float(row.get("admin_geography_reliable") or 0)) == 1
+        if reliable:
+            exact += 1
+            continue
+        unmatched.append({
+            "spatial_unit": row.get("spatial_unit", ""),
+            "fmow_geographic_site_id": row.get("fmow_geographic_site_id", ""),
+            "split_original": row.get("split_original", ""),
+            "category": row.get("category", ""),
+            "location_id": row.get("location_id", ""),
+            "latitude": row.get("latitude", ""), "longitude": row.get("longitude", ""),
+            "geography_match_count": row.get("geography_match_count", ""),
+            "country": row.get("country", "unknown"),
+            "continent": row.get("continent", "unknown"),
+            "region": row.get("region", "unknown"),
+            "reason": "no_unique_reliable_LSIB_match_or_unmapped_region_taxonomy",
+        })
+    total = len(rows)
+    return {
+        "task": "fMoW", "status": "complete",
+        "exact_admin_match_count": exact,
+        "unmatched_admin_site_count": len(unmatched),
+        "total_site_count": total,
+        "admin_match_coverage": exact / total if total else 0.0,
+        "global_association_site_count": total,
+        "administrative_summary_eligible_site_count": exact,
+        "nearest_country_fallback": "forbidden",
+    }, unmatched
+
+
 def _read_cache(path: Path, protocol_hash: str, expected_rows: int) -> list[dict[str, str]] | None:
     if not path.is_file():
         return None
@@ -454,6 +497,7 @@ def prepare_geographic_risk_covariates(
     output_dir: str | Path, cache_dir: str | Path, batch_size: int = 400,
     ee_module: Any | None = None,
     expected_fmow_site_count: int = FMOW_GEOGRAPHIC_SITE_COUNT,
+    reuse_cache_only: bool = False,
 ) -> dict[str, Any]:
     atlas, output, cache = Path(atlas_dir), ensure_dir(output_dir), ensure_dir(cache_dir)
     alpha_risk = atlas / "alphaearth_spatial_unit_risk.csv"
@@ -513,6 +557,8 @@ def prepare_geographic_risk_covariates(
         "fMoW": (fmow_sampling, fmow_alignment, False, fmow_risk, fmow_risk),
     }
     artifacts, qa_rows, task_manifests = {}, [], []
+    admin_qa: dict[str, Any] | None = None
+    unmatched_admin_sites: list[dict[str, Any]] = []
     for task, (sampling, alignment, include_dw, source, risk) in sources.items():
         source_hash, target_hash = _sha256(source), _sha256(risk)
         protocol_hash = _protocol_hash(task, source_hash, target_hash)
@@ -520,6 +566,11 @@ def prepare_geographic_risk_covariates(
         extracted = _read_cache(cache_path, protocol_hash, len(sampling))
         cache_status = "reused"
         if extracted is None:
+            if reuse_cache_only:
+                raise RuntimeError(
+                    f"Cache-only mode forbids Earth Engine sampling, but no valid cache matched "
+                    f"protocol_hash={protocol_hash}: {cache_path}"
+                )
             extracted = extract_official_covariates_gee(
                 sampling, include_dynamic_world=include_dw, batch_size=batch_size, ee_module=ee_module,
             )
@@ -535,6 +586,8 @@ def prepare_geographic_risk_covariates(
                 f"extra={sorted(observed_row_ids - expected_row_ids)[:5]}"
             )
         canonical = aggregate_covariates(task, extracted)
+        if task == "fMoW":
+            admin_qa, unmatched_admin_sites = admin_geography_coverage_qa(canonical)
         canonical_path = output / ("alphaearth_covariates.csv" if task == "AlphaEarth" else "fmow_covariates.csv")
         write_csv(canonical_path, canonical)
         task_qa = covariate_qa(task, canonical, int(alignment["target_unit_count"]))
@@ -554,8 +607,12 @@ def prepare_geographic_risk_covariates(
     qa_path = output / "covariate_qa.csv"
     write_csv(qa_path, qa_rows)
     write_csv(output / "fmow_model_unit_alignment.csv", model_unit_audit)
+    if admin_qa is not None:
+        write_csv(output / "fmow_admin_geography_coverage_qa.csv", [admin_qa])
+        write_csv(output / "fmow_unmatched_admin_sites.csv", unmatched_admin_sites)
     manifest = {
         "schema": SCHEMA, "status": "complete", "training": False, "gpu_required": False,
+        "cache_policy": "reuse_only_fail_closed" if reuse_cache_only else "reuse_then_sample_if_missing",
         "extraction_backend": "Google Earth Engine official public catalog",
         "products": PRODUCTS, "epoch_policy": "fixed_before_association_results: GHSL/VIIRS=2020; DynamicWorld=2021",
         "spatial_matching": {
@@ -581,6 +638,9 @@ def prepare_geographic_risk_covariates(
             "location_id, category|location_id, and canonical lat/lon predecessors are invalid"
         ),
         "fmow_expected_site_count": expected_fmow_site_count,
+        "fmow_admin_geography_coverage": admin_qa,
+        "fmow_unmatched_admin_site_count": len(unmatched_admin_sites),
+        "admin_summary_policy": "reliable_exact_matches_only; unmatched retained in global associations",
         "tasks": task_manifests, "artifacts": artifacts,
         "qa_csv": str(qa_path), "fmow_model_unit_alignment": model_unit_audit,
     }

@@ -4,6 +4,8 @@ import csv
 from pathlib import Path
 
 from rsfm_fairness_audit.geographic_risk_association import (
+    _geographic_summaries,
+    _validate_fmow_rebuilt_geography,
     _maximum_spatial_cell_count,
     _spatial_cell,
     _spatial_cluster_qa,
@@ -156,3 +158,23 @@ def test_fmow_association_rejects_location_id_only_predecessor(tmp_path: Path) -
         build_geographic_risk_association(
             atlas, tmp_path / "output", n_boot=20, fmow_expected_site_count=1,
         )
+
+
+def test_admin_unmatched_sites_are_excluded_only_from_geographic_summaries(tmp_path: Path) -> None:
+    rows = []
+    for index in range(40):
+        reliable = index < 20
+        rows.append({
+            "spatial_unit": f"test|airport|{index}",
+            "mean_risk": index / 50, "nightlights": index,
+            "geography_match_count": 1 if reliable else 0,
+            "country": "USA" if reliable else "unknown",
+            "continent": "North America" if reliable else "unknown",
+            "region": "North America" if reliable else "unknown",
+        })
+    coverage = _validate_fmow_rebuilt_geography(rows, tmp_path / "covariates.csv")
+    assert coverage["exact_admin_match_count"] == 20
+    assert coverage["unmatched_admin_site_count"] == 20
+    summaries, qa = _geographic_summaries("fMoW", "DOFAv2", rows, "nightlights")
+    assert {row["geography"] for row in summaries} == {"USA", "North America"}
+    assert all(row["admin_match_coverage"] == .5 for row in qa)

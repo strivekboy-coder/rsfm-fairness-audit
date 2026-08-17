@@ -14,21 +14,30 @@ def main() -> None:
     parser.add_argument("--cache-dir", type=Path, required=True)
     parser.add_argument("--ee-project", required=True)
     parser.add_argument("--batch-size", type=int, default=400)
+    parser.add_argument(
+        "--reuse-cache-only", action="store_true",
+        help="Fail if a protocol-matched cache is absent; never initialize or call Earth Engine sampling.",
+    )
     args = parser.parse_args()
 
-    import ee  # type: ignore[import-not-found]
-
-    try:
-        ee.Initialize(project=args.ee_project)
-    except Exception:
-        print("[covariates] Earth Engine authentication required", flush=True)
-        ee.Authenticate()
-        ee.Initialize(project=args.ee_project)
-    print(f"[covariates] Earth Engine project: {args.ee_project}", flush=True)
+    ee = None
+    if args.reuse_cache_only:
+        print("[covariates] cache-only mode: Earth Engine import/init/sampling disabled", flush=True)
+    else:
+        import ee as ee_module  # type: ignore[import-not-found]
+        ee = ee_module
+        try:
+            ee.Initialize(project=args.ee_project)
+        except Exception:
+            print("[covariates] Earth Engine authentication required", flush=True)
+            ee.Authenticate()
+            ee.Initialize(project=args.ee_project)
+        print(f"[covariates] Earth Engine project: {args.ee_project}", flush=True)
     result = prepare_geographic_risk_covariates(
         atlas_dir=args.atlas_dir, alphaearth_sample_csv=args.alphaearth_sample_csv,
         output_dir=args.output_dir, cache_dir=args.cache_dir,
         batch_size=args.batch_size, ee_module=ee,
+        reuse_cache_only=args.reuse_cache_only,
     )
     print(f"status={result['status']}")
     print(f"manifest={args.output_dir / 'geographic_covariate_manifest.json'}")

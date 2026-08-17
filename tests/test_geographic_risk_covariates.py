@@ -9,6 +9,8 @@ import pytest
 from rsfm_fairness_audit.geographic_risk_association import load_external_covariates
 from rsfm_fairness_audit.geographic_risk_covariates import (
     PRODUCTS,
+    _continent_from_lsib_region,
+    admin_geography_coverage_qa,
     aggregate_covariates,
     build_alphaearth_sampling_rows,
     extract_official_covariates_gee,
@@ -109,6 +111,13 @@ def test_population_density_is_sampled_separately_at_native_100m(monkeypatch) ->
     assert "native_100m_cell" in PRODUCTS["population_density"]["transform"]
 
 
+def test_lsib_region_taxonomy_covers_caribbean_and_central_america() -> None:
+    assert _continent_from_lsib_region("Caribbean") == "North America"
+    assert _continent_from_lsib_region("Central America") == "North America"
+    assert _continent_from_lsib_region("Middle East") == "Asia"
+    assert _continent_from_lsib_region("Pacific") == "Oceania"
+
+
 def test_prepare_writes_canonical_manifest_qa_and_reuses_fixed_task_contract(tmp_path: Path, monkeypatch) -> None:
     atlas = tmp_path / "atlas"
     alpha_samples = tmp_path / "alpha.csv"
@@ -156,6 +165,67 @@ def test_prepare_writes_canonical_manifest_qa_and_reuses_fixed_task_contract(tmp
     assert manifest["spatial_matching"]["buffer_selection"] == "none"
     assert manifest["fmow_spatial_unit_contract"].startswith("split_original|category|location_id")
     assert "no outcome-informed" in manifest["scientific_boundary"]["selection_policy"]
+
+    def forbidden_extract(*args, **kwargs):
+        raise AssertionError("Earth Engine sampling must not be called in cache-only mode")
+
+    monkeypatch.setattr(
+        "rsfm_fairness_audit.geographic_risk_covariates.extract_official_covariates_gee",
+        forbidden_extract,
+    )
+    reused = prepare_geographic_risk_covariates(
+        atlas_dir=atlas, alphaearth_sample_csv=alpha_samples,
+        output_dir=output, cache_dir=tmp_path / "cache",
+        expected_fmow_site_count=1, reuse_cache_only=True,
+    )
+    assert reused["cache_policy"] == "reuse_only_fail_closed"
+
+
+def test_unmatched_admin_site_is_unknown_but_retained_for_global_covariates() -> None:
+    rows = aggregate_covariates("fMoW", [{
+        "spatial_unit": "test|airport|1", "fmow_geographic_site_id": "test|airport|1",
+        "split_original": "test", "category": "airport", "location_id": "1",
+        "archive_parent": "fmow-sentinel/test/airport/airport_1",
+        "polygon_centroid_span_m": 0, "coordinate_source": "original_polygon_wkt_centroid",
+        "latitude": 10, "longitude": 20, "geography_match_count": 0,
+        "ghsl_urbanization": 21, "population_density": 100, "nightlights": 3,
+    }])
+    assert len(rows) == 1
+    assert rows[0]["country"] == rows[0]["continent"] == rows[0]["region"] == "unknown"
+    assert rows[0]["nightlights"] == 3
+    qa, unmatched = admin_geography_coverage_qa(rows)
+    assert qa["exact_admin_match_count"] == 0
+    assert qa["unmatched_admin_site_count"] == 1
+    assert unmatched[0]["spatial_unit"] == "test|airport|1"
+
+
+def test_cache_only_mode_fails_without_sampling_when_cache_is_missing(tmp_path: Path, monkeypatch) -> None:
+    atlas = tmp_path / "atlas"
+    alpha_samples = tmp_path / "alpha.csv"
+    _write(atlas / "alphaearth_spatial_unit_risk.csv", [
+        {"spatial_unit": "a", "latitude": 10, "longitude": 20, "mean_risk": .2},
+    ])
+    _write(atlas / "fmow_dofa_spatial_unit_risk.csv", [{
+        "spatial_unit": "test|airport|1", "fmow_geographic_site_id": "test|airport|1",
+        "split_original": "test", "category": "airport", "location_id": "1",
+        "archive_parent": "fmow-sentinel/test/airport/airport_1",
+        "polygon_centroid_span_m": 0, "coordinate_source": "original_polygon_wkt_centroid",
+        "latitude": 30, "longitude": 40, "mean_risk": .3,
+    }])
+    _write(alpha_samples, [{
+        "sample_id": "x", "spatial_block_id": "a", "split": "test",
+        "latitude": 10, "longitude": 20, "worldcover_label": 10,
+    }])
+    monkeypatch.setattr(
+        "rsfm_fairness_audit.geographic_risk_covariates.extract_official_covariates_gee",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("sampling called")),
+    )
+    with pytest.raises(RuntimeError, match="Cache-only mode forbids Earth Engine sampling"):
+        prepare_geographic_risk_covariates(
+            atlas_dir=atlas, alphaearth_sample_csv=alpha_samples,
+            output_dir=tmp_path / "output", cache_dir=tmp_path / "missing_cache",
+            expected_fmow_site_count=1, reuse_cache_only=True,
+        )
 
 
 def test_association_loader_reads_recovered_reference_fields(tmp_path: Path) -> None:

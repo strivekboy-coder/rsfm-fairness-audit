@@ -1,8 +1,8 @@
-"""Prepare fixed official covariates and rerun the CPU-only association stage.
+"""Rebuild covariates/associations from protocol-matched existing GEE caches.
 
 This runner does not rebuild the atlas, train a model, or start experiments #8/#9.
-Earth Engine performs public-raster point sampling; all joins, QA, statistics,
-bootstraps, and figures run on CPU.
+Earth Engine import, initialization, authentication, and sampling are disabled;
+all joins, QA, statistics, bootstraps, and figures run on CPU.
 """
 from __future__ import annotations
 
@@ -52,6 +52,7 @@ def main() -> None:
         "--atlas-dir", str(atlas), "--alphaearth-sample-csv", str(alpha_samples),
         "--output-dir", str(covariates), "--cache-dir", str(cache),
         "--ee-project", args.ee_project, "--batch-size", str(args.batch_size),
+        "--reuse-cache-only",
     ]
     print("[prepare]", " ".join(map(str, prepare)), flush=True)
     subprocess.run(prepare, cwd=repo, env=env, check=True)
@@ -73,6 +74,7 @@ def main() -> None:
     print(f"Covariates complete: {covariates}")
     print(f"Association complete: {association}")
     print("GPU required: no")
+    print("Earth Engine sampling: disabled (existing protocol-matched cache only)")
     print("Experiments #8/#9: not started")
 
 
