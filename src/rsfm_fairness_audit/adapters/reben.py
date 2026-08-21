@@ -565,7 +565,11 @@ class LmdbSafetensorsRebenDatasetAdapter(DatasetAdapter):
             image_payload: Any = self._stack_bands(s1_payload, S1_BANDS)
             metadata["lmdb_s1_key"] = s1_key
         elif self.sensor_mode == "S2":
-            bands = S2_10_BANDS if self.channel_profile == "bifold_resnet101" else S2_12_BANDS
+            bands = (
+                ("B04", "B03", "B02", "B05", "B06", "B07", "B08", "B11", "B12")
+                if self.channel_profile == "dofav2_s2_9"
+                else S2_10_BANDS if self.channel_profile == "bifold_resnet101" else S2_12_BANDS
+            )
             s2_payload, s2_key = self._load_first_available_key(s2_keys, expected_bands=bands)
             image_payload = self._stack_bands(s2_payload, bands)
             metadata["lmdb_s2_key"] = s2_key

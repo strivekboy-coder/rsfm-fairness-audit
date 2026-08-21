@@ -62,6 +62,16 @@ BAND_PROFILES: dict[str, dict[str, Any]] = {
             42.55886798,
         ],
     },
+    "sentinel2_12_fmow_l2a": {
+        "expected_bands": 12,
+        "band_names": ["B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B09", "B11", "B12"],
+        "source_expected_bands": 13,
+        "source_band_indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12],
+        "wavelength_list": [0.443, 0.49, 0.56, 0.665, 0.705, 0.74, 0.783, 0.842, 0.865, 0.945, 1.61, 2.19],
+        # TerraMind applies its pinned S2L2A normalization inside its adapter.
+        "normalization_mean": [0.0] * 12,
+        "normalization_std": [1.0] * 12,
+    },
 }
 
 

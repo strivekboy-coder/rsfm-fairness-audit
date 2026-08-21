@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+
+from rsfm_fairness_audit.io import read_csv_rows, write_csv
+from rsfm_fairness_audit.model_task_generalization import analyze_model_task_matrix
+from rsfm_fairness_audit.reben_adaptation_ablation import _decision_partition, directional_recovery
+
+
+def test_directional_recovery_handles_higher_and_lower_is_better() -> None:
+    assert np.isclose(directional_recovery(0.9, 0.5, 0.8, higher_is_better=True)["recovery"], 0.75)
+    assert np.isclose(directional_recovery(0.1, 0.5, 0.2, higher_is_better=False)["recovery"], 0.75)
+    assert directional_recovery(0.5, 0.5, 0.6, higher_is_better=True)["identifiable"] is False
+
+
+def test_validation_partition_is_unit_disjoint_and_deterministic() -> None:
+    rows = [{"independent_unit_id": f"tile_{index // 2}"} for index in range(20)]
+    left_a, right_a = _decision_partition(rows, 42)
+    left_b, right_b = _decision_partition(rows, 42)
+    assert np.array_equal(left_a, left_b) and np.array_equal(right_a, right_b)
+    assert set(left_a).isdisjoint(set(right_a))
+    assert set(left_a) | set(right_a) == set(range(len(rows)))
+    left_units = {rows[index]["independent_unit_id"] for index in left_a}
+    right_units = {rows[index]["independent_unit_id"] for index in right_a}
+    assert left_units.isdisjoint(right_units)
+
+
+def _cell(root: Path, model: str, task: str, model_offset: float) -> None:
+    for seed, seed_offset in ((42, 0.00), (73, 0.01), (101, -0.01)):
+        run = root / "probe_seeds" / f"seed_{seed}"
+        write_csv(run / "formal_outputs" / "formal_audit_table.csv", [
+            {"sample_id": f"sample_{index}", "risk": model_offset + seed_offset + index * 0.01}
+            for index in range(4)
+        ])
+        formal = run / "formal_outputs" / "probabilities.npz"
+        formal.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(
+            formal,
+            sample_id=np.asarray([f"sample_{index}" for index in range(4)]),
+            probabilities=np.full((4, 2), 0.5, dtype=np.float32),
+            targets=np.asarray([0, 1, 0, 1], dtype=np.int64),
+            class_names=np.asarray(["a", "b"]),
+        )
+        write_csv(run / "geobwer_raw" / "geobwer_summary.csv", [{
+            "axis": "country", "mean_risk": model_offset + seed_offset,
+            "tail_risk": model_offset + seed_offset + 0.1,
+            "bwer": 0.1, "evidence_status": "descriptive",
+            "risk_spec_signature": f"risk-{task}",
+        }])
+
+
+def test_model_task_analysis_never_averages_raw_cross_task_geobwer() -> None:
+    tmp_path = Path("work/test_experiment8_9_matrix")
+    roots = {}
+    for model, offset in (("dofav2", 0.3), ("terramind", 0.2)):
+        for task in ("fmow", "reben"):
+            root = tmp_path / f"{model}_{task}"
+            _cell(root, model, task, offset + (0.1 if task == "reben" else 0.0))
+            roots[(model, task)] = root
+    artifacts = analyze_model_task_matrix(roots, tmp_path / "analysis")
+    manifest = artifacts["manifest"].read_text(encoding="utf-8")
+    assert '"raw_geobwer_averaged_across_tasks": false' in manifest
+    effects = read_csv_rows(artifacts["effects"])
+    assert len(effects) == 8
+    assert {row["task"] for row in effects} == {"fmow", "reben"}

@@ -1,0 +1,25 @@
+schema: geobwer.experiment8.reben_adaptation_config.v1
+frozen_protocol:
+  split: official reBEN train/val/test
+  paired_test_samples: 119825
+  seeds: [42, 73, 101]
+  risk_spec: configs/geobwer/reben.yaml
+  beta: 0.10
+stages:
+  A: read_only_existing_s2_head_s2_validation_thresholds_on_paired_s1_test
+  B: unchanged_s2_head_s1_validation_threshold_recalibration
+  C: frozen_encoder_s1_train_linear_head_s1_validation_thresholds
+  D: gated_lora_or_lightweight_representation_adaptation_not_run_by_default
+selection:
+  threshold_source: validation_only
+  stop_go_partition: independent_unit_hash_50_50_within_validation
+  test_tuning: forbidden
+  recovery_definition: directional_fraction_of_A_shift_gap_restored
+  stop_recovery: 0.80
+  no_harm_tolerance: 0.002
+  required_metrics: [macro_auroc, mean_risk, tail_risk_beta_0_10]
+analysis:
+  ordinary_metrics: [macro_auroc, macro_ap, macro_f1]
+  tail_metrics: [mean_risk, tail_risk_beta_0_10, geobwer_beta_0_10]
+  slices: [label, country, country_x_label]
+  diagnostics: [no_harm, levelling_down, mean_tail_consistency]

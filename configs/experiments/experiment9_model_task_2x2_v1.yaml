@@ -1,0 +1,19 @@
+schema: geobwer.experiment9.model_task_matrix_config.v1
+models: [dofav2, terramind]
+tasks: [fmow, reben]
+cells:
+  dofav2_x_fmow: frozen_existing
+  terramind_x_reben: frozen_existing_s2
+  dofav2_x_reben: run_missing_cell_s2_9band_native_dofa
+  terramind_x_fmow: run_missing_cell_s2l2a_12band_native_terramind
+comparison_contract:
+  equal_within_task: [sample_ids, labels, split_roles, seeds, RiskSpec]
+  native_model_preprocessing_allowed: true
+  model_pipeline_estimand: true
+  backbone_only_causal_claim: false
+  average_raw_geobwer_across_tasks: false
+analysis:
+  within_task: [rank, primary_risk, M, T, D, mean_tail_consistency]
+  cross_task: [within_task_standardized_effect, descriptive_model_x_task_interaction]
+  standardization: pooled_seed_scale_within_task
+  seeds: [42, 73, 101]

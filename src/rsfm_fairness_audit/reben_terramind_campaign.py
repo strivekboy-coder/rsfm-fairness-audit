@@ -95,7 +95,7 @@ def _dataset(config: RebenTerraMindConfig, split: str):
         "split": split,
         "sensor_mode": config.sensor_mode,
         "max_samples": config.max_samples,
-        "channel_profile": "croma",
+        "channel_profile": str(getattr(config, "channel_profile", "croma")),
     }
     if payload == "safetensors":
         return LmdbSafetensorsRebenDatasetAdapter(
