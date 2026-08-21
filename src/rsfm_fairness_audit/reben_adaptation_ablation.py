@@ -219,7 +219,10 @@ def _validate_frozen_seed(source: Path, checkpoint: Path, thresholds_path: Path)
         failures.append("status_not_complete")
     if contract.get("same_head") is not True or contract.get("test_used_for_selection") is not False:
         failures.append("same_head_or_test_selection_contract_failed")
-    if str(contract.get("model_family", "")).lower() != "terramind":
+    # Legacy frozen paired-shift contracts predate the optional model_family
+    # provenance field. Preserve compatibility without weakening validation of
+    # an explicitly declared family.
+    if "model_family" in contract and str(contract["model_family"]).lower() != "terramind":
         failures.append("unexpected_model_family")
     if contract.get("checkpoint_sha256") != file_sha256(checkpoint):
         failures.append("checkpoint_hash_mismatch")

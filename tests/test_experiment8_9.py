@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
 
 from rsfm_fairness_audit.io import read_csv_rows, write_csv
+from rsfm_fairness_audit.formal_outputs import file_sha256
 from rsfm_fairness_audit.model_task_generalization import analyze_model_task_matrix
-from rsfm_fairness_audit.reben_adaptation_ablation import _decision_partition, directional_recovery
+from rsfm_fairness_audit.reben_adaptation_ablation import (
+    _decision_partition,
+    _validate_frozen_seed,
+    directional_recovery,
+)
 
 
 def test_directional_recovery_handles_higher_and_lower_is_better() -> None:
@@ -25,6 +31,29 @@ def test_validation_partition_is_unit_disjoint_and_deterministic() -> None:
     left_units = {rows[index]["independent_unit_id"] for index in left_a}
     right_units = {rows[index]["independent_unit_id"] for index in right_a}
     assert left_units.isdisjoint(right_units)
+
+
+def test_frozen_seed_accepts_legacy_contract_without_model_family() -> None:
+    source = Path("work/test_experiment8_legacy_contract")
+    checkpoint = source / "s2_trained_probe" / "linear_probe.pt"
+    thresholds = source / "s2_validation_locked_thresholds.csv"
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint.write_bytes(b"legacy-frozen-checkpoint")
+    thresholds.write_text("class_index,threshold\n0,0.5\n", encoding="utf-8")
+    (source / "paired_shift_contract.json").write_text(
+        json.dumps(
+            {
+                "status": "complete",
+                "same_head": True,
+                "test_used_for_selection": False,
+                "checkpoint_sha256": file_sha256(checkpoint),
+                "thresholds_sha256": file_sha256(thresholds),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _validate_frozen_seed(source, checkpoint, thresholds)
 
 
 def _cell(root: Path, model: str, task: str, model_offset: float) -> None:
