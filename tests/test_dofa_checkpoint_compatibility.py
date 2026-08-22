@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -68,6 +69,50 @@ def test_dofav2_config_freezes_exact_architecture_contract() -> None:
     assert adapter.require_exact_checkpoint_match is True
     assert adapter.image_size == 224
     assert adapter.embedding_pooling == "mean_tokens"
+
+
+def test_dofav2_provenance_is_complete_and_json_serializable() -> None:
+    adapter = DOFAAdapter.from_config_file("configs/models/dofav2_fmow_sentinel.yaml")
+    adapter.actual_repo_revision = adapter.repo_revision
+    adapter.actual_checkpoint_sha256 = adapter.checkpoint_sha256
+    adapter.actual_timm_version = adapter.required_timm_version
+    adapter.checkpoint_load_report = {"matched_keys": np.int64(194), "load_missing_keys": []}
+
+    provenance = adapter.provenance()
+    json.dumps(provenance)
+
+    assert {
+        "model_variant", "model_release", "sensor_mode", "band_profile", "expected_bands",
+        "image_size", "input_scale", "embedding_layer", "embedding_pooling",
+        "embedding_semantics", "wavelength_list", "resolved_official_wavelength_profile",
+        "checkpoint_path", "checkpoint_expected_sha256", "checkpoint_actual_sha256",
+        "repo_path", "repo_revision_expected", "repo_revision_actual",
+        "architecture_source_repo", "architecture_source_revision", "required_timm_version",
+        "actual_timm_version", "checkpoint_load_report", "normalization", "preprocessing",
+    } <= provenance.keys()
+    assert provenance["model_variant"] == "dofav2_vit_base"
+    assert provenance["model_release"] == "dofav2_vit_base_e150"
+    assert provenance["sensor_mode"] == "S2"
+    assert provenance["band_profile"] == "sentinel2_9_legacy"
+    assert provenance["expected_bands"] == 9
+    assert provenance["image_size"] == 224
+    assert provenance["input_scale"] == pytest.approx(39.21568627450981)
+    assert provenance["embedding_layer"] == "forward_features"
+    assert provenance["embedding_pooling"] == "mean_tokens"
+    assert provenance["embedding_semantics"] == DOFAAdapter.official_dofav2_embedding_semantics
+    assert provenance["wavelength_list"] == DOFAAdapter.verified_wavelengths["S2_OFFICIAL_DEMO_9CH"]
+    assert provenance["resolved_official_wavelength_profile"] == "sentinel2_9_legacy"
+    assert provenance["checkpoint_expected_sha256"] == DOFAAdapter.official_dofav2_checkpoint_sha256
+    assert provenance["checkpoint_actual_sha256"] == DOFAAdapter.official_dofav2_checkpoint_sha256
+    assert provenance["repo_revision_expected"] == DOFAAdapter.official_dofav2_repo_revision
+    assert provenance["repo_revision_actual"] == DOFAAdapter.official_dofav2_repo_revision
+    assert provenance["architecture_source_repo"] == DOFAAdapter.official_dofav2_architecture_repo
+    assert provenance["architecture_source_revision"] == DOFAAdapter.official_dofav2_architecture_revision
+    assert provenance["required_timm_version"] == "1.0.15"
+    assert provenance["actual_timm_version"] == "1.0.15"
+    assert provenance["checkpoint_load_report"]["matched_keys"] == 194
+    assert provenance["normalization"]["source"] == "configured_band_profile_or_override"
+    assert provenance["preprocessing"]["normalization_order"] == "scale_then_normalize"
 
 
 def test_dofav2_runtime_rejects_unfrozen_timm(monkeypatch: pytest.MonkeyPatch) -> None:

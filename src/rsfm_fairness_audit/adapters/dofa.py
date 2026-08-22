@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import partial
 import hashlib
+import importlib.metadata
 from pathlib import Path
 import re
 import subprocess
@@ -712,3 +713,98 @@ class DOFAAdapter(ModelAdapter):
 
     def get_supported_modalities(self) -> Sequence[str]:
         return ("S1", "S2")
+
+    @staticmethod
+    def _json_serializable(value: Any) -> Any:
+        if value is None or isinstance(value, (str, bool, int, float)):
+            return value
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, Mapping):
+            return {str(key): DOFAAdapter._json_serializable(item) for key, item in value.items()}
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            return [DOFAAdapter._json_serializable(item) for item in value]
+        return str(value)
+
+    def provenance(self) -> dict[str, Any]:
+        """Return the complete JSON-safe lineage contract for DOFA embeddings."""
+
+        actual_timm_version = self.actual_timm_version
+        if actual_timm_version is None:
+            try:
+                actual_timm_version = importlib.metadata.version("timm")
+            except importlib.metadata.PackageNotFoundError:
+                actual_timm_version = None
+
+        if self.wavelengths is not None:
+            wavelength_list = [float(value) for value in self.wavelengths]
+            wavelength_profile = self.band_profile or "explicit_wavelength_list"
+        elif self.sensor_mode == "S1" and self.expected_bands == 2:
+            wavelength_list = list(self.verified_wavelengths["S1"])
+            wavelength_profile = "S1"
+        elif self.sensor_mode == "S2" and self.expected_bands == 9:
+            wavelength_list = list(self.verified_wavelengths["S2_OFFICIAL_DEMO_9CH"])
+            wavelength_profile = "S2_OFFICIAL_DEMO_9CH"
+        else:
+            wavelength_list = None
+            wavelength_profile = "unresolved"
+
+        if self.normalization_mean is None and self.normalization_std is None:
+            normalization_mean = self.official_means.get(self.sensor_mode)
+            normalization_std = self.official_stds.get(self.sensor_mode)
+            normalization_source = "official_sensor_profile" if normalization_mean is not None else "none"
+        else:
+            normalization_mean = self.normalization_mean
+            normalization_std = self.normalization_std
+            normalization_source = "configured_band_profile_or_override"
+
+        embedding_semantics = (
+            self.official_dofav2_embedding_semantics
+            if self.model_variant == "dofav2_vit_base"
+            else self.embedding_pooling
+        )
+        lineage = {
+            "model_variant": self.model_variant,
+            "model_release": self.model_release,
+            "sensor_mode": self.sensor_mode,
+            "band_profile": self.band_profile,
+            "expected_bands": self.expected_bands,
+            "image_size": self.image_size,
+            "input_scale": self.input_scale,
+            "embedding_layer": self.embedding_layer,
+            "embedding_pooling": self.embedding_pooling,
+            "embedding_semantics": embedding_semantics,
+            "wavelength_list": wavelength_list,
+            "resolved_official_wavelength_profile": wavelength_profile,
+            "checkpoint_path": self.checkpoint_path,
+            "checkpoint_expected_sha256": self.checkpoint_sha256,
+            "checkpoint_actual_sha256": self.actual_checkpoint_sha256,
+            "repo_path": self.repo_path,
+            "repo_revision_expected": self.repo_revision,
+            "repo_revision_actual": self.actual_repo_revision,
+            "architecture_source_repo": self.architecture_source_repo,
+            "architecture_source_revision": self.architecture_source_revision,
+            "required_timm_version": self.required_timm_version,
+            "actual_timm_version": actual_timm_version,
+            "checkpoint_load_report": self.checkpoint_load_report,
+            "normalization": {
+                "source": normalization_source,
+                "mean": normalization_mean,
+                "std": normalization_std,
+            },
+            "preprocessing": {
+                "input_dtype": "float32",
+                "input_layout": "batch_channels_height_width",
+                "input_scale_divisor": self.input_scale,
+                "normalization_order": "scale_then_normalize",
+                "resize": {
+                    "target_size": self.image_size,
+                    "mode": "bilinear",
+                    "align_corners": False,
+                },
+                "wavelength_profile": wavelength_profile,
+            },
+        }
+        return self._json_serializable(lineage)
