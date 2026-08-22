@@ -57,26 +57,83 @@ def test_frozen_seed_accepts_legacy_contract_without_model_family() -> None:
 
 
 def _cell(root: Path, model: str, task: str, model_offset: float) -> None:
+    from rsfm_fairness_audit.risk_spec import RiskSpec
+
     for seed, seed_offset in ((42, 0.00), (73, 0.01), (101, -0.01)):
         run = root / "probe_seeds" / f"seed_{seed}"
+        if task == "fmow":
+            targets = np.asarray([0, 1, 0, 1], dtype=np.int64)
+            errors = np.asarray([0, 1, 1, 0] if model == "dofav2" else [0, 0, 0, 1], dtype=np.int64)
+            predictions = np.where(errors == 1, 1 - targets, targets)
+            probabilities = np.full((4, 2), 0.1, dtype=np.float32)
+            probabilities[np.arange(4), predictions] = 0.9
+            risks = errors.astype(float)
+            formal_task, loss_name, task_adapter = "multiclass_classification", "risk", "multiclass"
+            balance_variable = "class_label"
+        else:
+            targets = np.asarray([[1, 0], [0, 1], [1, 1], [0, 0]], dtype=np.int8)
+            predictions = np.asarray(
+                [[1, 0], [1, 0], [1, 0], [0, 0]]
+                if model == "dofav2"
+                else [[1, 0], [0, 1], [1, 1], [1, 0]],
+                dtype=np.int8,
+            )
+            probabilities = np.where(predictions == 1, 0.9, 0.1).astype(np.float32)
+            risks = np.mean(predictions != targets, axis=1)
+            formal_task, loss_name, task_adapter = "multilabel_classification", "hamming_loss", "multilabel"
+            balance_variable = ""
+        protocol = {
+            "beta": 0.1,
+            "deployment_weighting": "equal",
+            "audit_measure": "balanced",
+            "partition_rule": "one_axis_at_a_time",
+            "missingness_rule": "strict",
+            "standardization_target": "uniform",
+            "standardization_weights": {},
+            "support_rule": f"{task}_country_preflight",
+            "inference_target": "fixed_slice_universe",
+            "estimand_scope": "fixed_slice_universe",
+            "group_variable": "country",
+            "balance_variable": balance_variable,
+            "independent_unit_column": "sample_id",
+            "metric_version": "geobwer_fractional_1.1",
+            "loss_name": loss_name,
+            "task_adapter": task_adapter,
+            "risk_spec": RiskSpec(name=loss_name, task_adapter=task_adapter).to_dict(),
+        }
         write_csv(run / "formal_outputs" / "formal_audit_table.csv", [
-            {"sample_id": f"sample_{index}", "risk": model_offset + seed_offset + index * 0.01}
+            {
+                "sample_id": f"sample_{index}",
+                "country": "AA" if index < 2 else "BB",
+                "class_label": "a" if index % 2 == 0 else "b",
+                "task": formal_task,
+                "risk": risks[index],
+            }
             for index in range(4)
         ])
         formal = run / "formal_outputs" / "probabilities.npz"
         formal.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(
-            formal,
+        probability_payload = dict(
             sample_id=np.asarray([f"sample_{index}" for index in range(4)]),
-            probabilities=np.full((4, 2), 0.5, dtype=np.float32),
-            targets=np.asarray([0, 1, 0, 1], dtype=np.int64),
+            probabilities=probabilities,
+            targets=targets,
             class_names=np.asarray(["a", "b"]),
         )
+        if task == "reben":
+            probability_payload["thresholds"] = np.asarray([0.5, 0.5], dtype=np.float32)
+        np.savez_compressed(formal, **probability_payload)
+        (run / "formal_outputs" / "formal_output_manifest.json").write_text(
+            json.dumps({"protocol": protocol}), encoding="utf-8"
+        )
+        geobwer = run / "geobwer_raw"
+        geobwer.mkdir(parents=True, exist_ok=True)
+        (geobwer / "geobwer_protocol.json").write_text(json.dumps(protocol), encoding="utf-8")
         write_csv(run / "geobwer_raw" / "geobwer_summary.csv", [{
             "axis": "country", "mean_risk": model_offset + seed_offset,
             "tail_risk": model_offset + seed_offset + 0.1,
             "bwer": 0.1, "evidence_status": "descriptive",
-            "risk_spec_signature": f"risk-{task}",
+            "risk_spec_signature": RiskSpec(name=loss_name, task_adapter=task_adapter).signature,
+            **{key: value for key, value in protocol.items() if key != "risk_spec"},
         }])
 
 
