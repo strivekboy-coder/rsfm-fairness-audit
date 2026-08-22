@@ -20,6 +20,7 @@ TERRAMIND_OFFICIAL_HF_REPO = "ibm-esa-geospatial/TerraMind-1.0-base"
 TERRAMIND_OFFICIAL_HF_FILENAME = "TerraMind_v1_base.pt"
 TERRAMIND_OFFICIAL_REVISION = "fb96c70d0a5f68dcc44030b89cbfd8ec3fb0c67a"
 TERRAMIND_OFFICIAL_SHA256 = "83c3a0938067c83867a46e564443c2fa38383bf4f966d931b11cb025b847d7ec"
+S2_DN_Q999_UPPER_GUARD = 32767.0
 
 
 _CHECKPOINT_HASH_CACHE: dict[tuple[str, int, int], str] = {}
@@ -418,7 +419,9 @@ class TerraMindAdapter(ModelAdapter):
 
     def _validate_s2(self, array: np.ndarray) -> np.ndarray:
         summary = self._quantiles(array)
-        if self.strict_range_check and (summary["q001"] < -1000.0 or summary["q999"] > 20000.0):
+        if self.strict_range_check and (
+            summary["q001"] < -1000.0 or summary["q999"] > S2_DN_Q999_UPPER_GUARD
+        ):
             raise TerraMindConfigurationError(
                 f"S2 values are inconsistent with unscaled Sentinel reflectance/DN values: {summary}. "
                 "TerraMind official means/std are not defined on [0,1] inputs."
@@ -561,6 +564,7 @@ class TerraMindAdapter(ModelAdapter):
             "layer_index": self.layer_index,
             "s1_unit_policy": self.s1_unit_policy,
             "strict_range_check": self.strict_range_check,
+            "s2_dn_q999_upper_guard": S2_DN_Q999_UPPER_GUARD,
             "terratorch_version": terratorch_version,
             "preprocessing_report": dict(self.preprocessing_report),
         }
@@ -570,6 +574,7 @@ __all__ = [
     "INPUT_PROFILES",
     "S1_MEAN",
     "S1_STD",
+    "S2_DN_Q999_UPPER_GUARD",
     "TERRAMIND_OFFICIAL_HF_FILENAME",
     "TERRAMIND_OFFICIAL_HF_REPO",
     "TERRAMIND_OFFICIAL_REVISION",

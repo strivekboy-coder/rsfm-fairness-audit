@@ -5,7 +5,25 @@ cells:
   dofav2_x_fmow: frozen_existing
   terramind_x_reben: frozen_existing_s2
   dofav2_x_reben: run_missing_cell_s2_9band_native_dofa
-  terramind_x_fmow: run_missing_cell_s2l2a_12band_native_terramind
+  terramind_x_fmow: completed_frozen_s2l2a_12band_native_terramind
+cell_status:
+  terramind_x_fmow:
+    status: completed_frozen
+    completed_date: 2026-08-22
+    immutable: true
+    drive_path: /content/drive/MyDrive/rsfm_fairness_audit/outputs/experiment9_terramind_fmow_v1
+    sample_count: 30000
+    seeds: [42, 73, 101]
+    geobwer_audit: complete
+    scientific_provenance:
+      correction_type: Sentinel-2_DN_validity_guard_correction
+      prescan: {min: 0.0, max: 28000.0, q999_max: 28000.0}
+      old_q999_upper_guard: 20000.0
+      corrected_q999_upper_guard: 32767.0
+      rationale: The complete fMoW-Sentinel L2A prescan established valid unscaled DN values above 20000.
+      experimental_tuning: false
+      test_used_for_selection: false
+      frozen_outputs_modified: false
 comparison_contract:
   equal_within_task: [sample_ids, labels, split_roles, seeds, RiskSpec]
   native_model_preprocessing_allowed: true

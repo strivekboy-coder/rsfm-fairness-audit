@@ -79,6 +79,23 @@ def test_s1_unit_mismatch_hard_fails():
         adapter.preprocess({"samples": [sample], "metadata": [{}]})
 
 
+def test_s2_dn_q999_guard_accepts_28000_and_rejects_above_int16_max():
+    adapter = TerraMindAdapter(
+        sensor_mode="S2",
+        input_profile="reben_l2a",
+        image_size=8,
+        strict_range_check=True,
+        model=_NumpyTerraMind(),
+    )
+    valid = _sample(s2_value=28_000.0)
+    prepared = adapter.preprocess({"samples": [valid], "metadata": [{}]})
+    assert prepared["images"]["S2L2A"].shape == (1, 12, 8, 8)
+
+    invalid = _sample(s2_value=32_768.0)
+    with pytest.raises(TerraMindConfigurationError, match="unscaled Sentinel reflectance/DN"):
+        adapter.preprocess({"samples": [invalid], "metadata": [{}]})
+
+
 def test_sen1floods_profile_is_official_13_band_l1c():
     profile = INPUT_PROFILES["sen1floods11_l1c"]
     assert profile.s2_modality == "S2L1C"
