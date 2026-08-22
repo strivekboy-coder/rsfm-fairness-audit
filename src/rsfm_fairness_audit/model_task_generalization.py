@@ -48,22 +48,55 @@ def _candidate_seed_dirs(root: Path) -> list[Path]:
     return sorted({path.resolve() for path in candidates if path.is_dir()}, key=_seed)
 
 
-def _one(seed_dir: Path, pattern: str, preferred_parent: tuple[str, ...]) -> Path:
-    candidates = [path for path in seed_dir.rglob(pattern) if path.parent.name in preferred_parent]
+def _is_derived_geobwer_path(seed_dir: Path, path: Path) -> bool:
+    relative_parts = path.relative_to(seed_dir).parts[:-1]
+    return any(
+        part == "uncertainty_extensions"
+        or part.startswith("conformal_risk_control")
+        or part.startswith("selective_")
+        for part in relative_parts
+    )
+
+
+def _canonical_geobwer_summary(seed_dir: Path) -> Path:
+    for relative in (
+        Path("geobwer") / "geobwer_summary.csv",
+        Path("geobwer_raw") / "geobwer_summary.csv",
+    ):
+        candidate = seed_dir / relative
+        if candidate.is_file():
+            return candidate
+
+    candidates = sorted([
+        path
+        for path in seed_dir.rglob("geobwer_summary.csv")
+        if path.parent.name in {"geobwer", "geobwer_raw"}
+        and not _is_derived_geobwer_path(seed_dir, path)
+    ])
     if len(candidates) != 1:
-        raise ModelTaskGeneralizationError(f"Expected one {pattern} below {seed_dir}; found {candidates}")
+        raise ModelTaskGeneralizationError(
+            f"Canonical geobwer/geobwer_summary.csv and geobwer_raw/geobwer_summary.csv are missing "
+            f"below {seed_dir}; expected one non-derived legacy fallback, found {candidates}"
+        )
     return candidates[0]
+
+
+def _canonical_formal_artifact(seed_dir: Path, filename: str) -> Path:
+    candidate = seed_dir / "formal_outputs" / filename
+    if not candidate.is_file():
+        raise ModelTaskGeneralizationError(f"Missing canonical formal artifact: {candidate}")
+    return candidate
 
 
 def summarize_cell(root: str | Path, *, model: str, task: str) -> list[dict[str, Any]]:
     root = Path(root)
     output = []
     for seed_dir in _candidate_seed_dirs(root):
-        summary_path = _one(seed_dir, "geobwer_summary.csv", ("geobwer", "geobwer_raw"))
+        summary_path = _canonical_geobwer_summary(seed_dir)
         country = next((row for row in read_csv_rows(summary_path) if str(row.get("axis")) == "country"), None)
         if country is None:
             raise ModelTaskGeneralizationError(f"No country axis in {summary_path}")
-        audit_path = _one(seed_dir, "formal_audit_table.csv", ("formal_outputs",))
+        audit_path = _canonical_formal_artifact(seed_dir, "formal_audit_table.csv")
         audit = read_csv_rows(audit_path)
         risk = np.asarray([float(row["risk"]) for row in audit], dtype=float)
         if not len(risk) or not np.all(np.isfinite(risk)):
@@ -71,9 +104,7 @@ def summarize_cell(root: str | Path, *, model: str, task: str) -> list[dict[str,
         sample_ids = sorted({str(row["sample_id"]) for row in audit})
         import hashlib
         sample_hash = hashlib.sha256("\n".join(sample_ids).encode()).hexdigest()
-        probability_path = audit_path.parent / "probabilities.npz"
-        if not probability_path.is_file():
-            raise ModelTaskGeneralizationError(f"Missing formal probability artifact: {probability_path}")
+        probability_path = _canonical_formal_artifact(seed_dir, "probabilities.npz")
         with np.load(probability_path, allow_pickle=False) as formal:
             probability_sample_ids = [str(value) for value in formal["sample_id"]]
             targets = np.asarray(formal["targets"])
