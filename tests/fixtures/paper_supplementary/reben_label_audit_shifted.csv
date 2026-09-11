@@ -1,0 +1,7 @@
+sample_id,class_index,class_label,label_true,label_prediction,country
+T31UFS_patch_001,0,wetland,1,0,BEL
+T31UFS_patch_001,1,urban,0,1,BEL
+T31UFS_patch_002,0,wetland,1,0,BEL
+T31UFS_patch_002,1,urban,0,1,BEL
+T29SNC_patch_003,0,wetland,0,0,PRT
+T29SNC_patch_003,1,urban,1,0,PRT

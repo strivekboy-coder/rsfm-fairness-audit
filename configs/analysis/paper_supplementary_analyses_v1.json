@@ -1,0 +1,49 @@
+{
+  "schema": "geobwer.paper_supplementary_analyses.v1",
+  "status": "implementation_complete_awaiting_colab_outputs",
+  "frozen_outputs_are_read_only": true,
+  "output_directory": "outputs/paper_supplementary_analyses_v1",
+  "beta": 0.1,
+  "seeds": [42, 73, 101],
+  "analyses": {
+    "sen1_event_descriptors": {
+      "independent_unit": "flood_event",
+      "n_events": 11,
+      "descriptors": [
+        "reference_flood_fraction",
+        "S1_water_land_robust_contrast",
+        "S2_water_land_robust_contrast",
+        "DEM_elevation_standard_deviation",
+        "DEM_relief"
+      ],
+      "season_rule": "include only if acquisition date is verified from source metadata; never infer from event name",
+      "primary_risk": "mean event risk across six replicated U-Net/TerraMind model-modality cells and three seeds",
+      "inference": "descriptive Spearman plus leave-one-event-out range; no causal claim"
+    },
+    "reben_shift_error_structure": {
+      "comparison": "paired S2 ID versus unchanged-head S1 shift",
+      "same_samples_required": true,
+      "outputs": ["labelwise FNR/FPR transitions", "new/persistent/repaired errors", "country-by-label transitions", "conditional FN-FP co-error"],
+      "prohibited_interpretation": "exclusive multiclass substitution or causal SAR mechanism"
+    },
+    "alphaearth_boundary_distance": {
+      "reference": "ESA WorldCover 2021",
+      "distance": "10 m class-edge distance, right-censored at 512 pixels",
+      "primary_association": "partial Spearman of disagreement risk versus log1p boundary distance controlling country and reference class",
+      "inference": "fixed-residual spatial-cluster bootstrap",
+      "prohibited_interpretation": "independent ground truth or causal model failure"
+    },
+    "sen1_decision_scenario": {
+      "comparison": "U-Net S1+S2 mean-selected versus U-Net S2 tail-selected",
+      "role": "retrospective operational illustration",
+      "prohibited_interpretation": "prospective utility-policy validation"
+    },
+    "cluster_mtd_intervals": {
+      "replicates": 2000,
+      "minimum_clusters_per_slice": 2,
+      "interval": 0.95,
+      "seed_variation_separate": true,
+      "unsupported_result": "insufficient_independent_clusters or partial identification; never forced CI"
+    }
+  }
+}

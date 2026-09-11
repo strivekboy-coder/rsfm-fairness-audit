@@ -1,0 +1,9 @@
+sample_id,risk,country_iso3,spatial_block_id,class_label
+s1,1,BEL,b1,Shrubland
+s2,0,BEL,b1,Urban
+s3,1,BEL,b2,Shrubland
+s4,0,BEL,b2,Urban
+s5,0,PRT,b3,Shrubland
+s6,1,PRT,b3,Urban
+s7,0,PRT,b4,Shrubland
+s8,1,PRT,b4,Urban
