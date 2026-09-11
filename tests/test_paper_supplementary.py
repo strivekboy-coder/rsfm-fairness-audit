@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+import pandas as pd
 
 from rsfm_fairness_audit.paper_supplementary import (
     ClusterSliceSufficient,
@@ -17,6 +18,11 @@ from rsfm_fairness_audit.paper_supplementary import (
     summarize_paired_multilabel_arrays,
 )
 from scripts.analysis.build_cluster_mtd_intervals import aggregate, verify_canonical_point
+from scripts.analysis.finish_sen1_event_descriptor_analysis import merge_chip_dem_descriptors
+from scripts.colab.run_paper_supplementary_analyses_v1_colab import (
+    expected_alpha_country_shards,
+    resolve_alpha_boundary_exports,
+)
 
 
 def test_fractional_mtd_uses_exact_tail_mass():
@@ -152,3 +158,49 @@ def test_canonical_point_verification_is_exact_and_explicit():
         {"canonical_summary_path": str(fixture), "canonical_axis": "country", "balance_col": "class_label"},
     )
     assert verified["point_reconstruction_verified"] is True
+
+
+def test_sen1_dem_merge_validates_exported_event_id_and_preserves_canonical_column():
+    sample_ids = [f"chip_{index:03d}" for index in range(446)]
+    event_ids = [f"event_{index % 11:02d}" for index in range(446)]
+    chip = pd.DataFrame({
+        "sample_id": sample_ids,
+        "event_id": event_ids,
+        "reference_flood_fraction": 0.2,
+    })
+    dem = pd.DataFrame({
+        "sample_id": sample_ids,
+        "event_id": event_ids,
+        "elevation_stdDev": np.arange(446, dtype=float),
+    })
+    merged = merge_chip_dem_descriptors(chip, dem)
+    assert len(merged) == 446
+    assert list(merged.columns).count("event_id") == 1
+    assert "event_id_x" not in merged and "event_id_y" not in merged
+    assert merged["event_id"].tolist() == event_ids
+
+    mismatched = dem.copy()
+    mismatched.loc[17, "event_id"] = "wrong_event"
+    with __import__("pytest").raises(ValueError, match="disagrees with canonical chip event_id"):
+        merge_chip_dem_descriptors(chip, mismatched)
+    with __import__("pytest").raises(ValueError, match="Incomplete DEM sample_id coverage"):
+        merge_chip_dem_descriptors(chip, dem.iloc[:-1])
+
+
+def test_alphaearth_requires_exact_111_country_export_set(tmp_path):
+    shard_root = tmp_path / "outputs/alphaearth_gee_full_v2_150k"
+    shard_root.mkdir(parents=True)
+    countries = {f"C{index:03d}" for index in range(111)}
+    for country in countries:
+        (shard_root / f"alphaearth_worldcover_full_2021_{country}_shard.csv").touch()
+    resolved = expected_alpha_country_shards(tmp_path)
+    assert set(resolved) == countries
+
+    export_root = tmp_path / "exports"
+    export_root.mkdir()
+    for country in countries:
+        (export_root / f"alpha_boundary_{country}_v1.csv").touch()
+    assert len(resolve_alpha_boundary_exports(export_root, countries)) == 111
+    (export_root / "alpha_boundary_C000_v1 (1).csv").touch()
+    with __import__("pytest").raises(RuntimeError, match="exact one-per-country match"):
+        resolve_alpha_boundary_exports(export_root, countries)

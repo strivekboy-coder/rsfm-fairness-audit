@@ -53,8 +53,9 @@ python scripts/colab/run_paper_supplementary_analyses_v1_colab.py \
 ```
 
 The preflight must find the canonical Sen1 19-route event metrics, source
-contract, and validation-locked threshold profile on Drive, 446 Sen1 coordinate rows, all three raw TIFF folders, at
-least 100 AlphaEarth country shards, AlphaEarth evaluation predictions, and
+contract, and validation-locked threshold profile on Drive, 446 Sen1 coordinate
+rows, all three raw TIFF folders, the exact frozen set of 111 AlphaEarth country
+shards, AlphaEarth evaluation predictions, and
 three paired seeds for both TerraMind and CROMA. The Colab pipeline does not
 depend on local thesis drafts or ignored optimization derivatives.
 
@@ -98,6 +99,11 @@ folder `rsfm_fairness_audit_paper_supplement_ee_v1`. Wait until all tasks are
 complete before continuing. The command is resume-safe: completed CSV exports
 and currently active Earth Engine task descriptions are skipped rather than
 submitted again.
+
+`finish-ee` requires exactly one completed boundary export for each country in
+the frozen 111-country shard inventory. A partial set such as 105/111,
+duplicate exports, or unexpected country exports is a hard failure rather than
+a partial merge.
 
 ### 4. Merge Earth Engine exports and finish associations
 

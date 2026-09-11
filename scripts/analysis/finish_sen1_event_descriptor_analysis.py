@@ -19,6 +19,64 @@ DESCRIPTORS = [
 ]
 
 
+def merge_chip_dem_descriptors(
+    chip: pd.DataFrame,
+    dem: pd.DataFrame,
+    *,
+    expected_samples: int = 446,
+) -> pd.DataFrame:
+    """Join a complete EE DEM export while preserving chip event lineage."""
+    for name, frame in (("chip descriptors", chip), ("DEM export", dem)):
+        if "sample_id" not in frame:
+            raise ValueError(f"{name} lacks sample_id.")
+        if frame["sample_id"].isna().any():
+            raise ValueError(f"{name} contains missing sample_id values.")
+        if frame["sample_id"].astype(str).duplicated().any():
+            raise ValueError(f"{name} contains duplicate sample_id values.")
+    if "event_id" not in chip:
+        raise ValueError("Chip descriptors lack canonical event_id.")
+    if chip["event_id"].isna().any():
+        raise ValueError("Chip descriptors contain missing canonical event_id values.")
+
+    chip = chip.copy()
+    dem = dem.copy()
+    chip["sample_id"] = chip["sample_id"].astype(str)
+    dem["sample_id"] = dem["sample_id"].astype(str)
+    chip_ids = set(chip["sample_id"])
+    dem_ids = set(dem["sample_id"])
+    if len(chip) != expected_samples or len(dem) != expected_samples or chip_ids != dem_ids:
+        missing = sorted(chip_ids - dem_ids)[:10]
+        extra = sorted(dem_ids - chip_ids)[:10]
+        raise ValueError(
+            "Incomplete DEM sample_id coverage: "
+            f"chip_rows={len(chip)}, dem_rows={len(dem)}, expected={expected_samples}, "
+            f"missing_examples={missing}, extra_examples={extra}."
+        )
+
+    dem_event_column = None
+    if "event_id" in dem:
+        if dem["event_id"].isna().any():
+            raise ValueError("DEM export contains missing event_id values.")
+        dem_event_column = "_dem_event_id_for_validation"
+        dem = dem.rename(columns={"event_id": dem_event_column})
+
+    merged = chip.merge(dem, on="sample_id", how="left", validate="one_to_one")
+    if dem_event_column is not None:
+        mismatch = merged["event_id"].astype(str) != merged[dem_event_column].astype(str)
+        if mismatch.any():
+            examples = merged.loc[mismatch, ["sample_id", "event_id", dem_event_column]].head(10)
+            raise ValueError(
+                "DEM event_id disagrees with canonical chip event_id for "
+                f"{int(mismatch.sum())} samples: {examples.to_dict(orient='records')}"
+            )
+        merged = merged.drop(columns=[dem_event_column])
+    if list(merged.columns).count("event_id") != 1 or any(
+        column in merged for column in ("event_id_x", "event_id_y")
+    ):
+        raise RuntimeError("DEM merge did not preserve exactly one canonical event_id column.")
+    return merged
+
+
 def spearman(x, y):
     return float(pd.Series(x).corr(pd.Series(y), method="spearman"))
 
@@ -75,14 +133,12 @@ def main() -> None:
 
     chip = pd.read_csv(args.chip_descriptors)
     dem = pd.read_csv(args.dem_export)
-    if "sample_id" not in dem:
-        raise ValueError("DEM export lacks sample_id.")
     rename = {}
     for old, new in (("elevation_stdDev", "dem_elevation_std"), ("elevation_min", "dem_elevation_min"), ("elevation_max", "dem_elevation_max"), ("mean", "dem_elevation_mean"), ("stdDev", "dem_elevation_std"), ("min", "dem_elevation_min"), ("max", "dem_elevation_max")):
         if old in dem and new not in dem:
             rename[old] = new
     dem = dem.rename(columns=rename)
-    merged = chip.merge(dem, on="sample_id", how="left", validate="one_to_one")
+    merged = merge_chip_dem_descriptors(chip, dem)
     if {"dem_elevation_min", "dem_elevation_max"}.issubset(merged):
         merged["dem_relief"] = pd.to_numeric(merged.dem_elevation_max, errors="coerce") - pd.to_numeric(merged.dem_elevation_min, errors="coerce")
     else:

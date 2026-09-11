@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 
@@ -66,6 +67,49 @@ def find_paired_roots(project: Path) -> dict[str, Path]:
             raise FileNotFoundError(f"No canonical paired root for {model}: {values}")
         found[model] = root
     return found
+
+
+def expected_alpha_country_shards(project: Path) -> dict[str, Path]:
+    """Resolve the frozen 111-country shard inventory without guessing."""
+    root = project / "outputs/alphaearth_gee_full_v2_150k"
+    prefix = "alphaearth_worldcover_full_2021_"
+    suffix = "_shard.csv"
+    by_country: dict[str, Path] = {}
+    for path in sorted(root.glob(f"{prefix}*{suffix}")):
+        country = path.name[len(prefix):-len(suffix)]
+        if not country or country in by_country:
+            raise RuntimeError(f"Duplicate or invalid AlphaEarth country shard: {path}")
+        by_country[country] = path
+    if len(by_country) != 111:
+        raise RuntimeError(
+            f"Expected the frozen set of 111 AlphaEarth country shards below {root}; "
+            f"found {len(by_country)}."
+        )
+    return by_country
+
+
+def resolve_alpha_boundary_exports(root: Path, expected_countries: set[str]) -> list[Path]:
+    """Require exactly one completed boundary export for every frozen country."""
+    by_country: dict[str, list[Path]] = defaultdict(list)
+    for country in sorted(expected_countries):
+        by_country[country] = sorted(root.glob(f"alpha_boundary_{country}_v1*.csv"))
+    missing = sorted(country for country, paths in by_country.items() if not paths)
+    duplicates = {
+        country: [str(path) for path in paths]
+        for country, paths in by_country.items()
+        if len(paths) > 1
+    }
+    all_candidates = sorted(root.glob("alpha_boundary_*_v1*.csv"))
+    claimed = {path.resolve() for paths in by_country.values() for path in paths}
+    unexpected = [str(path) for path in all_candidates if path.resolve() not in claimed]
+    if missing or duplicates or unexpected:
+        raise RuntimeError(
+            "AlphaEarth boundary export set is not an exact one-per-country match: "
+            f"expected={len(expected_countries)}, "
+            f"completed={sum(bool(paths) for paths in by_country.values())}, "
+            f"missing={missing}, duplicates={duplicates}, unexpected={unexpected}."
+        )
+    return [by_country[country][0] for country in sorted(expected_countries)]
 
 
 def preflight(repo: Path, project: Path) -> dict[str, object]:
@@ -132,9 +176,7 @@ def preflight(repo: Path, project: Path) -> dict[str, object]:
         raise RuntimeError(f"Expected 446 Sen1 metadata rows; found {sen_metadata_rows}")
     if any(value != 446 for value in sen_tiff_counts.values()):
         raise RuntimeError(f"Expected 446 TIFFs in each Sen1 source folder; found {sen_tiff_counts}")
-    alpha_shard_count = len(list(Path(assets["alpha_shards"]).glob("alphaearth_worldcover_full_2021_*_shard.csv")))
-    if alpha_shard_count < 100:
-        raise RuntimeError(f"Expected at least 100 AlphaEarth country shards; found {alpha_shard_count}")
+    alpha_shard_count = len(expected_alpha_country_shards(project))
     return {
         "status": "pass",
         "sen_metadata_rows": sen_metadata_rows,
@@ -302,10 +344,8 @@ def start_ee(project: Path, out: Path, ee_project: str, export_folder: str) -> N
         .min(5120)
         .rename("boundary_distance_m")
     )
-    shard_root = project / "outputs/alphaearth_gee_full_v2_150k"
     import pandas as pd
-    for shard in sorted(shard_root.glob("alphaearth_worldcover_full_2021_*_shard.csv")):
-        country = shard.stem.split("_")[-2]
+    for country, shard in expected_alpha_country_shards(project).items():
         description = f"geobwer_alpha_boundary_{country}_v1"
         if list(export_root.glob(f"alpha_boundary_{country}_v1*.csv")):
             tasks.append({"kind": "alpha_boundary", "country": country, "description": description, "status": "skipped_completed_export"})
@@ -327,9 +367,8 @@ def start_ee(project: Path, out: Path, ee_project: str, export_folder: str) -> N
 def finish_ee(repo: Path, project: Path, out: Path, export_folder: str, n_boot: int) -> None:
     import pandas as pd
     root = Path("/content/drive/MyDrive") / export_folder
-    boundary_files = sorted(root.glob("alpha_boundary_*_v1*.csv"))
-    if len(boundary_files) < 100:
-        raise RuntimeError(f"Earth Engine exports are incomplete: found {len(boundary_files)} Alpha boundary CSVs below {root}")
+    expected_countries = set(expected_alpha_country_shards(project))
+    boundary_files = resolve_alpha_boundary_exports(root, expected_countries)
     boundary = pd.concat([pd.read_csv(path) for path in boundary_files], ignore_index=True)
     boundary_path = out / "alphaearth_boundary_distance/alphaearth_boundary_distance_samples.csv"
     boundary_path.parent.mkdir(parents=True, exist_ok=True); boundary.to_csv(boundary_path, index=False)
@@ -341,9 +380,11 @@ def finish_ee(repo: Path, project: Path, out: Path, export_folder: str, n_boot: 
     dem = pd.concat([pd.read_csv(path) for path in dem_files], ignore_index=True)
     if "sample_id" not in dem:
         raise RuntimeError("Sen1 DEM exports lack sample_id.")
-    dem = dem.drop_duplicates("sample_id")
-    if len(dem) != 446:
-        raise RuntimeError(f"Expected complete DEM coverage for 446 Sen1 chips; found {len(dem)} unique sample IDs.")
+    if dem["sample_id"].isna().any() or dem["sample_id"].astype(str).duplicated().any() or len(dem) != 446:
+        raise RuntimeError(
+            "Expected one complete DEM row for each of 446 Sen1 chips; "
+            f"rows={len(dem)}, unique_sample_ids={dem['sample_id'].astype(str).nunique()}."
+        )
     dem_path = out / "sen1_event_descriptors/sen1_dem_descriptors_merged.csv"
     dem_path.parent.mkdir(parents=True, exist_ok=True)
     dem.to_csv(dem_path, index=False)
