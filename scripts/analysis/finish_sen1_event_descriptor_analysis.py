@@ -66,12 +66,12 @@ def main() -> None:
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument("--chip-descriptors", type=Path, required=True)
     parser.add_argument("--dem-export", type=Path, required=True)
-    parser.add_argument("--slice-atlas", type=Path, required=True)
+    parser.add_argument("--event-metrics", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     repo = args.repo.resolve()
     sys.path.insert(0, str(repo / "src"))
-    from rsfm_fairness_audit.paper_supplementary import write_csv, write_json
+    from rsfm_fairness_audit.paper_supplementary import build_sen1_consensus_event_risk, write_csv, write_json
 
     chip = pd.read_csv(args.chip_descriptors)
     dem = pd.read_csv(args.dem_export)
@@ -94,15 +94,9 @@ def main() -> None:
         merged[column] = pd.to_numeric(merged[column], errors="coerce")
     event = merged.groupby("event_id", as_index=False)[numeric].mean().rename(columns={column: f"{column}_mean" for column in numeric})
 
-    slices = pd.read_csv(args.slice_atlas)
-    mask = (
-        slices.dataset.eq("Sen1Floods11") & slices.slice_axis.eq("event")
-        & slices.model_family.isin(["supervised_resnet34_unet", "terramind_v1_base"])
-        & slices.eligible_for_primary_metric.astype(str).str.lower().isin(["true", "1"])
-    )
-    risk = slices.loc[mask].copy()
-    risk["risk"] = pd.to_numeric(risk.risk, errors="coerce")
-    consensus = risk.groupby("slice_value", as_index=False).risk.mean().rename(columns={"slice_value": "event_id", "risk": "consensus_event_risk"})
+    with args.event_metrics.open(encoding="utf-8", newline="") as handle:
+        consensus_rows = build_sen1_consensus_event_risk(list(__import__("csv").DictReader(handle)))
+    consensus = pd.DataFrame(consensus_rows)
     event = event.merge(consensus, on="event_id", how="inner", validate="one_to_one")
     if len(event) != 11:
         raise ValueError(f"Expected 11 event rows after merge; found {len(event)}")

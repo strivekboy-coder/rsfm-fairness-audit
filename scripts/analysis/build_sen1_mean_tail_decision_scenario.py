@@ -1,7 +1,7 @@
 """Build the frozen Sen1Floods11 mean-vs-tail decision illustration.
 
-This is a retrospective derivative of the existing 19-run slice atlas. It does
-not select a new operating point, rerun a model, or modify canonical outputs.
+This is a retrospective derivative of the canonical 19-route event metrics. It
+does not select a new operating point, rerun a model, or modify canonical outputs.
 """
 from __future__ import annotations
 
@@ -25,9 +25,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument(
-        "--source",
+        "--event-metrics",
         type=Path,
-        default=Path("outputs/optimization_1_7_v1/full_slice_distribution.csv"),
+        default=Path("outputs/geobwer_final_v3/sen1_19model_descriptive_v2/event_level_metrics.csv"),
     )
     parser.add_argument(
         "--output-dir",
@@ -35,42 +35,37 @@ def main() -> None:
         default=Path("outputs/paper_supplementary_analyses_v1/sen1_decision_scenario"),
     )
     parser.add_argument(
-        "--omnibus",
+        "--threshold-profile",
         type=Path,
-        default=Path("outputs/thesis_draft_v0_1/derived/sen1_omnibus_summary.csv"),
-        help="Authoritative configuration-level M/T/D summary used in the thesis.",
+        default=Path("outputs/geobwer_final_v3/geobwer_evidence_rebuild_v060/sen1_validation_locked_threshold_v12/validation_locked_threshold_profile.csv"),
+        help="Canonical validation-locked M/T/D profile; never a thesis-derived table.",
     )
     args = parser.parse_args()
     repo = args.repo.resolve()
     sys.path.insert(0, str(repo / "src"))
     from rsfm_fairness_audit.paper_supplementary import (
         build_sen1_decision_scenario,
+        summarize_sen1_validation_locked_mtd,
         write_csv,
         write_json,
     )
 
-    source = args.source if args.source.is_absolute() else repo / args.source
+    source = args.event_metrics if args.event_metrics.is_absolute() else repo / args.event_metrics
     output = args.output_dir if args.output_dir.is_absolute() else repo / args.output_dir
     if not source.is_file():
         raise FileNotFoundError(source)
     detail, summary = build_sen1_decision_scenario(read_rows(source))
-    omnibus = args.omnibus if args.omnibus.is_absolute() else repo / args.omnibus
-    if not omnibus.is_file():
-        raise FileNotFoundError(omnibus)
-    authoritative = read_rows(omnibus)
+    threshold_profile = args.threshold_profile if args.threshold_profile.is_absolute() else repo / args.threshold_profile
+    if not threshold_profile.is_file():
+        raise FileNotFoundError(threshold_profile)
+    locked = summarize_sen1_validation_locked_mtd(read_rows(threshold_profile))
     mode_map = {"S1+S2": "s1_plus_s2", "S2": "s2"}
     for item in summary:
-        match = [
-            row for row in authoritative
-            if row.get("model") == "supervised_resnet34_unet"
-            and row.get("mode") == mode_map[str(item["mode"])]
-        ]
-        if len(match) != 1:
-            raise ValueError(f"Expected one authoritative omnibus row for {item['mode']}; found {len(match)}")
+        card = locked[mode_map[str(item["mode"])]]
         for metric in ("M", "T", "D"):
-            item[metric] = float(match[0][f"{metric}_mean"])
-            item[f"{metric}_seed_sd"] = float(match[0][f"{metric}_sd"])
-        item["metric_source"] = str(omnibus.resolve())
+            item[metric] = card[metric]
+            item[f"{metric}_seed_sd"] = card[f"{metric}_seed_sd"]
+        item["metric_source"] = str(threshold_profile.resolve())
     output.mkdir(parents=True, exist_ok=True)
     write_csv(output / "sen1_event_mean_vs_tail_choice.csv", detail)
     write_csv(output / "sen1_mean_vs_tail_choice_summary.csv", summary)
@@ -125,7 +120,7 @@ def main() -> None:
         "status": "complete",
         "scientific_role": "retrospective operational illustration",
         "source": str(source.resolve()),
-        "authoritative_mtd_source": str(omnibus.resolve()),
+        "authoritative_mtd_source": str(threshold_profile.resolve()),
         "frozen_outputs_modified": False,
         "model_rerun": False,
         "comparison": "U-Net S1+S2 mean-selected versus U-Net S2 tail-selected",

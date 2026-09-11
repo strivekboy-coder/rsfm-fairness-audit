@@ -52,9 +52,18 @@ python scripts/colab/run_paper_supplementary_analyses_v1_colab.py \
   --project-root /content/drive/MyDrive/rsfm_fairness_audit
 ```
 
-The preflight must find 446 Sen1 coordinate rows, all three raw TIFF folders,
-at least 100 AlphaEarth country shards, AlphaEarth evaluation predictions, and
-three paired seeds for both TerraMind and CROMA.
+The preflight must find the canonical Sen1 19-route event metrics, source
+contract, and validation-locked threshold profile on Drive, 446 Sen1 coordinate rows, all three raw TIFF folders, at
+least 100 AlphaEarth country shards, AlphaEarth evaluation predictions, and
+three paired seeds for both TerraMind and CROMA. The Colab pipeline does not
+depend on local thesis drafts or ignored optimization derivatives.
+
+The two Sen1 sources are read from
+`outputs/geobwer_final_v3/sen1_19model_descriptive_v2/event_level_metrics.csv`
+and
+`outputs/geobwer_final_v3/geobwer_evidence_rebuild_v060/sen1_validation_locked_threshold_v12/validation_locked_threshold_profile.csv`.
+Preflight verifies the 19-route inventory, the complete 11-event replicated
+panel, and all six validation-locked U-Net rows before analysis.
 
 ### 2. CPU analyses
 

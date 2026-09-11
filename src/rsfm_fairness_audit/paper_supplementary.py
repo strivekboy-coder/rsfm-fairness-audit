@@ -84,23 +84,38 @@ def build_sen1_decision_scenario(
     beta: float = 0.10,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Build the retrospective event comparison used to illustrate M-vs-T choice."""
-    selected = [
-        row for row in rows
-        if str(row.get("dataset")) == "Sen1Floods11"
-        and str(row.get("slice_axis")) == "event"
-        and str(row.get("model_family")) == model_family
-        and str(row.get("mode")) in {mean_choice_mode, tail_choice_mode}
-        and _truthy(row.get("eligible_for_primary_metric", True))
-    ]
+    # Accept both the historical optimization atlas and the canonical
+    # Sen1Floods11 event-level artifact.  The latter is the portable source used
+    # by Colab; the atlas is a local, ignored derivative and is retained only
+    # for backwards-compatible local calls.
+    canonical = bool(rows) and "event_id" in rows[0] and "mean_chip_iou_risk" in rows[0]
+    if canonical:
+        selected = [
+            row for row in rows
+            if str(row.get("family")) == model_family
+            and str(row.get("mode")) in {mean_choice_mode, tail_choice_mode}
+            and str(row.get("split")) == "combined_held_out"
+            and str(row.get("comparison_role")) == "same_grid_primary_panel"
+        ]
+    else:
+        selected = [
+            row for row in rows
+            if str(row.get("dataset")) == "Sen1Floods11"
+            and str(row.get("slice_axis")) == "event"
+            and str(row.get("model_family")) == model_family
+            and str(row.get("mode")) in {mean_choice_mode, tail_choice_mode}
+            and _truthy(row.get("eligible_for_primary_metric", True))
+        ]
     by_mode_event: dict[tuple[str, str], list[float]] = defaultdict(list)
     supports: dict[tuple[str, str], float] = {}
     for row in selected:
-        risk = _float(row.get("risk"))
+        risk = _float(row.get("mean_chip_iou_risk") if canonical else row.get("risk"))
         if not math.isfinite(risk):
             continue
-        key = (str(row["mode"]), str(row["slice_value"]))
+        event = str(row["event_id"] if canonical else row["slice_value"])
+        key = (str(row["mode"]), event)
         by_mode_event[key].append(risk)
-        supports[key] = _float(row.get("support"))
+        supports[key] = _float(row.get("auditable_sample_count") if canonical else row.get("support"))
     events = sorted({event for mode, event in by_mode_event if mode in {mean_choice_mode, tail_choice_mode}})
     if not events:
         raise SupplementaryAnalysisError("No matching Sen1 event rows were found.")
@@ -140,6 +155,105 @@ def build_sen1_decision_scenario(
             "interpretation": "retrospective observed comparison; not a prospective utility policy",
         })
     return detail, summary
+
+
+def build_sen1_consensus_event_risk(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    families: Sequence[str] = ("supervised_resnet34_unet", "terramind_v1_base"),
+    modes: Sequence[str] = ("S1", "S2", "S1+S2"),
+) -> list[dict[str, Any]]:
+    """Average canonical held-out event risks over the frozen 6-cell panel.
+
+    Every event must contain three seeds for each family-by-modality cell.  The
+    strict check prevents incomplete Drive copies from silently changing the
+    consensus risk used by the descriptive event-association analysis.
+    """
+    selected = [
+        row for row in rows
+        if str(row.get("family")) in set(families)
+        and str(row.get("mode")) in set(modes)
+        and str(row.get("split")) == "combined_held_out"
+        and str(row.get("comparison_role")) == "same_grid_primary_panel"
+    ]
+    expected_cells = {(family, mode) for family in families for mode in modes}
+    by_event_cell: dict[tuple[str, str, str], dict[str, float]] = defaultdict(dict)
+    supports: dict[str, set[int]] = defaultdict(set)
+    for row in selected:
+        event = str(row.get("event_id", ""))
+        family = str(row.get("family", ""))
+        mode = str(row.get("mode", ""))
+        seed = str(row.get("seed", ""))
+        risk = _float(row.get("mean_chip_iou_risk"))
+        support = _float(row.get("auditable_sample_count"))
+        if event and seed and math.isfinite(risk):
+            by_event_cell[(event, family, mode)][seed] = risk
+        if event and math.isfinite(support):
+            supports[event].add(int(support))
+    events = sorted({key[0] for key in by_event_cell})
+    if len(events) != 11:
+        raise SupplementaryAnalysisError(f"Expected 11 canonical Sen1 events; found {len(events)}.")
+    output: list[dict[str, Any]] = []
+    for event in events:
+        cell_values = []
+        for family, mode in sorted(expected_cells):
+            seed_values = by_event_cell.get((event, family, mode), {})
+            if set(seed_values) != {"42", "73", "101"}:
+                raise SupplementaryAnalysisError(
+                    f"Incomplete canonical Sen1 panel for {event}/{family}/{mode}: "
+                    f"seeds={sorted(seed_values)}"
+                )
+            cell_values.extend(seed_values.values())
+        if len(supports[event]) != 1:
+            raise SupplementaryAnalysisError(
+                f"Inconsistent support for canonical Sen1 event {event}: {sorted(supports[event])}"
+            )
+        output.append({
+            "event_id": event,
+            "consensus_event_risk": float(np.mean(cell_values)),
+            "panel_cell_count": len(expected_cells),
+            "replicate_count": len(cell_values),
+            "auditable_sample_count": next(iter(supports[event])),
+        })
+    return output
+
+
+def summarize_sen1_validation_locked_mtd(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    model_family: str = "supervised_resnet34_unet",
+    modes: Sequence[str] = ("s1_plus_s2", "s2"),
+) -> dict[str, dict[str, float]]:
+    """Summarize canonical validation-locked Sen1 M/T/D over three seeds."""
+    selected = [
+        row for row in rows
+        if str(row.get("family")) == model_family
+        and str(row.get("mode")).lower() in set(modes)
+        and str(row.get("split")) == "combined_held_out"
+        and _truthy(row.get("is_validation_selected_operating_point"))
+    ]
+    by_mode: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    for row in selected:
+        by_mode[str(row.get("mode")).lower()].append(row)
+    output: dict[str, dict[str, float]] = {}
+    metric_columns = {"M": "event_mean_risk", "T": "event_tail_risk", "D": "event_geobwer"}
+    for mode in modes:
+        mode_rows = by_mode.get(mode, [])
+        seeds = {str(row.get("seed")) for row in mode_rows}
+        if seeds != {"42", "73", "101"} or len(mode_rows) != 3:
+            raise SupplementaryAnalysisError(
+                f"Expected one validation-locked row for each seed in Sen1 mode {mode}; "
+                f"found rows={len(mode_rows)}, seeds={sorted(seeds)}."
+            )
+        card: dict[str, float] = {}
+        for metric, column in metric_columns.items():
+            values = np.asarray([_float(row.get(column)) for row in mode_rows], dtype=float)
+            if not np.isfinite(values).all():
+                raise SupplementaryAnalysisError(f"Non-finite {column} in Sen1 mode {mode}.")
+            card[metric] = float(np.mean(values))
+            card[f"{metric}_seed_sd"] = float(np.std(values, ddof=1))
+        output[mode] = card
+    return output
 
 
 def _rates(truth: np.ndarray, prediction: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:

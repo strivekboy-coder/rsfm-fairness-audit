@@ -71,8 +71,12 @@ def find_paired_roots(project: Path) -> dict[str, Path]:
 def preflight(repo: Path, project: Path) -> dict[str, object]:
     output = project / "outputs"
     sen_cache = project / "cache/sen1floods11"
+    sen_results = output / "geobwer_final_v3/sen1_19model_descriptive_v2"
+    sen_locked = output / "geobwer_final_v3/geobwer_evidence_rebuild_v060/sen1_validation_locked_threshold_v12"
     assets = {
-        "slice_atlas": require(repo / "outputs/optimization_1_7_v1/full_slice_distribution.csv", "frozen slice atlas"),
+        "sen_event_metrics": require(sen_results / "event_level_metrics.csv", "canonical Sen1 event metrics"),
+        "sen_source_contract": require(sen_results / "source_contract.json", "canonical Sen1 source contract"),
+        "sen_locked_threshold_profile": require(sen_locked / "validation_locked_threshold_profile.csv", "canonical Sen1 validation-locked threshold profile"),
         "sen_metadata": require(sen_cache / "sen1_geospatial_metadata_446_v0426.csv", "Sen1 coordinates"),
         "sen_s1": require(sen_cache / "S1GRDHand", "Sen1 S1 GeoTIFFs", directory=True),
         "sen_s2": require(sen_cache / "S2L1CHand", "Sen1 S2 GeoTIFFs", directory=True),
@@ -87,6 +91,39 @@ def preflight(repo: Path, project: Path) -> dict[str, object]:
             require(root / f"seed_{seed}/ood_label_audit.csv", f"{model} seed {seed} shifted label audit")
     with Path(assets["sen_metadata"]).open("r", encoding="utf-8-sig", newline="") as handle:
         sen_metadata_rows = sum(1 for _ in csv.DictReader(handle))
+    with Path(assets["sen_event_metrics"]).open("r", encoding="utf-8-sig", newline="") as handle:
+        sen_event_rows = list(csv.DictReader(handle))
+    sen_models = {row.get("model", "") for row in sen_event_rows}
+    sen_events = {
+        row.get("event_id", "") for row in sen_event_rows
+        if row.get("split") == "combined_held_out"
+        and row.get("comparison_role") == "same_grid_primary_panel"
+    }
+    sen_panel_rows = [
+        row for row in sen_event_rows
+        if row.get("split") == "combined_held_out"
+        and row.get("comparison_role") == "same_grid_primary_panel"
+        and row.get("family") in {"supervised_resnet34_unet", "terramind_v1_base"}
+    ]
+    if len(sen_models) != 19 or len(sen_events) != 11 or len(sen_panel_rows) != 198:
+        raise RuntimeError(
+            "Canonical Sen1 event panel is incomplete: "
+            f"models={len(sen_models)}, events={len(sen_events)}, replicated_panel_rows={len(sen_panel_rows)}"
+        )
+    with Path(assets["sen_locked_threshold_profile"]).open("r", encoding="utf-8-sig", newline="") as handle:
+        locked_rows = list(csv.DictReader(handle))
+    locked_primary = [
+        row for row in locked_rows
+        if row.get("family") == "supervised_resnet34_unet"
+        and row.get("mode") in {"s1_plus_s2", "s2"}
+        and row.get("split") == "combined_held_out"
+        and row.get("is_validation_selected_operating_point", "").lower() == "true"
+    ]
+    if len(locked_primary) != 6 or {row.get("seed") for row in locked_primary} != {"42", "73", "101"}:
+        raise RuntimeError(
+            "Canonical Sen1 validation-locked M/T/D panel is incomplete: "
+            f"rows={len(locked_primary)}, seeds={sorted({row.get('seed') for row in locked_primary})}"
+        )
     sen_tiff_counts = {
         key: len(list(Path(assets[key]).glob("*.tif")))
         for key in ("sen_s1", "sen_s2", "sen_label")
@@ -101,6 +138,10 @@ def preflight(repo: Path, project: Path) -> dict[str, object]:
     return {
         "status": "pass",
         "sen_metadata_rows": sen_metadata_rows,
+        "sen_event_model_count": len(sen_models),
+        "sen_event_count": len(sen_events),
+        "sen_replicated_panel_rows": len(sen_panel_rows),
+        "sen_locked_primary_rows": len(locked_primary),
         "sen_tiff_counts": sen_tiff_counts,
         "alpha_shard_count": alpha_shard_count,
         "paired_roots": {k: str(v) for k, v in paired.items()},
@@ -165,7 +206,9 @@ def cpu_stage(repo: Path, project: Path, out: Path, n_boot: int) -> None:
     if manifest_status(decision_manifest, {"complete"}):
         print(f"[resume] decision scenario already complete: {decision_manifest}", flush=True)
     else:
-        run([sys.executable, str(repo / "scripts/analysis/build_sen1_mean_tail_decision_scenario.py"), "--repo", str(repo), "--output-dir", str(out / "sen1_decision_scenario")], repo)
+        event_metrics = project / "outputs/geobwer_final_v3/sen1_19model_descriptive_v2/event_level_metrics.csv"
+        threshold_profile = project / "outputs/geobwer_final_v3/geobwer_evidence_rebuild_v060/sen1_validation_locked_threshold_v12/validation_locked_threshold_profile.csv"
+        run([sys.executable, str(repo / "scripts/analysis/build_sen1_mean_tail_decision_scenario.py"), "--repo", str(repo), "--event-metrics", str(event_metrics), "--threshold-profile", str(threshold_profile), "--output-dir", str(out / "sen1_decision_scenario")], repo)
 
     interval_manifest = out / "cluster_mtd_intervals/manifest.json"
     reben_complete = {
@@ -304,7 +347,8 @@ def finish_ee(repo: Path, project: Path, out: Path, export_folder: str, n_boot: 
     dem_path = out / "sen1_event_descriptors/sen1_dem_descriptors_merged.csv"
     dem_path.parent.mkdir(parents=True, exist_ok=True)
     dem.to_csv(dem_path, index=False)
-    run([sys.executable, str(repo / "scripts/analysis/finish_sen1_event_descriptor_analysis.py"), "--repo", str(repo), "--chip-descriptors", str(out / "sen1_event_descriptors/sen1_chip_descriptors.csv"), "--dem-export", str(dem_path), "--slice-atlas", str(repo / "outputs/optimization_1_7_v1/full_slice_distribution.csv"), "--output-dir", str(out / "sen1_event_descriptors")], repo)
+    event_metrics = project / "outputs/geobwer_final_v3/sen1_19model_descriptive_v2/event_level_metrics.csv"
+    run([sys.executable, str(repo / "scripts/analysis/finish_sen1_event_descriptor_analysis.py"), "--repo", str(repo), "--chip-descriptors", str(out / "sen1_event_descriptors/sen1_chip_descriptors.csv"), "--dem-export", str(dem_path), "--event-metrics", str(event_metrics), "--output-dir", str(out / "sen1_event_descriptors")], repo)
     (out / "final_stage_status.json").write_text(json.dumps({"status": "complete", "alpha_boundary_rows": len(boundary), "sen1_dem_rows": len(dem)}, indent=2), encoding="utf-8")
     verify_outputs(out)
 

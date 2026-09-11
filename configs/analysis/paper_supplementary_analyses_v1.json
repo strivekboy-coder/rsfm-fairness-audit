@@ -5,6 +5,11 @@
   "output_directory": "outputs/paper_supplementary_analyses_v1",
   "beta": 0.1,
   "seeds": [42, 73, 101],
+  "canonical_sen1_inputs": {
+    "event_metrics": "outputs/geobwer_final_v3/sen1_19model_descriptive_v2/event_level_metrics.csv",
+    "validation_locked_mtd": "outputs/geobwer_final_v3/geobwer_evidence_rebuild_v060/sen1_validation_locked_threshold_v12/validation_locked_threshold_profile.csv",
+    "local_thesis_or_optimization_derivatives_allowed": false
+  },
   "analyses": {
     "sen1_event_descriptors": {
       "independent_unit": "flood_event",

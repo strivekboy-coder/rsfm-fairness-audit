@@ -6,12 +6,14 @@ import numpy as np
 
 from rsfm_fairness_audit.paper_supplementary import (
     ClusterSliceSufficient,
+    build_sen1_consensus_event_risk,
     build_sen1_decision_scenario,
     cluster_bootstrap_mtd,
     cluster_bootstrap_standardized_mtd,
     compute_fractional_mtd,
     infer_verified_datetime,
     robust_water_land_contrast,
+    summarize_sen1_validation_locked_mtd,
     summarize_paired_multilabel_arrays,
 )
 from scripts.analysis.build_cluster_mtd_intervals import aggregate, verify_canonical_point
@@ -35,6 +37,54 @@ def test_sen1_decision_scenario_keeps_observed_event_pairing():
     assert len(detail) == 2
     assert {row["mode"] for row in summary} == {"S2", "S1+S2"}
     assert {row["event_winner"] for row in detail} == {"S2", "S1+S2"}
+
+
+def _canonical_sen1_rows():
+    rows = []
+    for event_index, event in enumerate((f"E{i}" for i in range(11))):
+        for family in ("supervised_resnet34_unet", "terramind_v1_base"):
+            for mode in ("S1", "S2", "S1+S2"):
+                for seed in (42, 73, 101):
+                    rows.append({
+                        "family": family, "mode": mode, "seed": seed,
+                        "split": "combined_held_out", "comparison_role": "same_grid_primary_panel",
+                        "event_id": event, "auditable_sample_count": 5,
+                        "mean_chip_iou_risk": 0.1 * event_index + (0.01 if mode == "S1+S2" else 0.02),
+                    })
+    return rows
+
+
+def test_canonical_sen1_event_metrics_replace_local_derivatives():
+    rows = _canonical_sen1_rows()
+    detail, summary = build_sen1_decision_scenario(rows)
+    assert len(detail) == 11
+    assert {row["mode"] for row in summary} == {"S2", "S1+S2"}
+    consensus = build_sen1_consensus_event_risk(rows)
+    assert len(consensus) == 11
+    assert {row["replicate_count"] for row in consensus} == {18}
+
+
+def test_canonical_sen1_consensus_rejects_incomplete_seed_panel():
+    rows = _canonical_sen1_rows()
+    rows.pop()
+    with __import__("pytest").raises(RuntimeError, match="Incomplete canonical Sen1 panel"):
+        build_sen1_consensus_event_risk(rows)
+
+
+def test_validation_locked_sen1_mtd_replaces_thesis_derived_omnibus():
+    rows = []
+    for mode in ("s1_plus_s2", "s2"):
+        for index, seed in enumerate((42, 73, 101)):
+            rows.append({
+                "family": "supervised_resnet34_unet", "mode": mode, "seed": seed,
+                "split": "combined_held_out", "is_validation_selected_operating_point": True,
+                "event_mean_risk": 0.4 + index * 0.01,
+                "event_tail_risk": 0.6 + index * 0.01,
+                "event_geobwer": 0.2,
+            })
+    result = summarize_sen1_validation_locked_mtd(rows)
+    assert math.isclose(result["s2"]["M"], 0.41)
+    assert math.isclose(result["s1_plus_s2"]["T_seed_sd"], 0.01)
 
 
 def test_multilabel_summary_is_transition_not_exclusive_confusion():
